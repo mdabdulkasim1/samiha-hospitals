@@ -1163,3 +1163,28 @@ CREATE TABLE IF NOT EXISTS staff_notifications (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_staff_notif ON staff_notifications(user_id, read_at, id);
+
+-- ------------------------------------------------------ prescription sheets
+-- One sheet is one prescription as the patient receives it: the doctor, the
+-- date, what was found, and the medicines. Individual medicine lines stay in
+-- `prescriptions` so the pharmacy queue and dispensing are unchanged — a sheet
+-- simply groups the lines that were written together and holds what the printed
+-- page needs.
+CREATE TABLE IF NOT EXISTS prescription_sheets (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  rx_no          TEXT NOT NULL UNIQUE,
+  patient_id     INTEGER NOT NULL REFERENCES patients(id),
+  doctor_id      INTEGER NOT NULL REFERENCES users(id),
+  visit_id       INTEGER REFERENCES visits(id),
+  appointment_id INTEGER REFERENCES appointments(id),
+  complaints     TEXT,
+  findings       TEXT,
+  diagnosis      TEXT,
+  advice         TEXT,
+  follow_up_date TEXT,
+  status         TEXT NOT NULL DEFAULT 'issued'
+                   CHECK (status IN ('issued','cancelled')),
+  created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_rx_sheet_doctor ON prescription_sheets(doctor_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_rx_sheet_patient ON prescription_sheets(patient_id);

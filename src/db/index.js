@@ -65,6 +65,20 @@ function migrate() {
   ensureColumn('pharmacy_sales', 'customer_gstin', 'TEXT');
   ensureColumn('pharmacy_sales', 'customer_address', 'TEXT');
 
+  // A prescription line now knows which sheet it belongs to and who signed it,
+  // so a doctor's own prescriptions can be found without walking back through
+  // the consultation and the visit.
+  ensureColumn('prescriptions', 'sheet_id', 'INTEGER REFERENCES prescription_sheets(id)');
+  ensureColumn('prescriptions', 'doctor_id', 'INTEGER REFERENCES users(id)');
+
+  // Why the reading was taken. A reading tied to a visit inherits the visit's
+  // reason; one recorded at the desk carries its own.
+  ensureColumn('vitals', 'purpose', 'TEXT');
+
+  // One mobile number is often one household, so a patient can say how they
+  // relate to the person the number belongs to.
+  ensureColumn('patients', 'relationship_to_primary', 'TEXT');
+
   // Medicaments sit under HSN 3004 unless the formulary says otherwise; a GST
   // invoice must show a code, so nothing is left without one.
   db.exec("UPDATE drugs SET hsn = '3004' WHERE hsn IS NULL OR hsn = ''");

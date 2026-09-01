@@ -146,6 +146,8 @@ documented exception exists. Check-out books the follow-up and issues an exit pa
 | **WhatsApp** | Patients book, confirm, cancel, check report status and request refills in chat. See [`docs/WHATSAPP.md`](docs/WHATSAPP.md). |
 | **Enquiries** | Every first contact — walk-in, phone, WhatsApp, web, camp — tracked to conversion or closure. |
 | **Appointments** | Fixed visiting hours per doctor per date, live slot availability, a doctor picker grouped by speciality, token numbers, no-show handling. |
+| **Prescriptions** | Doctors write from the pharmacy's own formulary with a class-aware allergy check, and print an A5 sheet carrying the polyclinic's name and a blank box for their own stamp — no doctor's name, registration or contact reaches the patient. See [`docs/PRESCRIPTIONS.md`](docs/PRESCRIPTIONS.md). |
+| **Patient identity** | The mobile number is the way in: one number is a household, and the desk picks the person who came. See [`docs/PATIENT-IDENTITY.md`](docs/PATIENT-IDENTITY.md). |
 | **Doctors** | Each doctor signs in, sees their own day on their phone, blocks their own days — and is told on WhatsApp the moment the front desk books a patient with them. See [`docs/DOCTORS.md`](docs/DOCTORS.md). |
 | **Diagnostics** | Order → sample barcode → processing → result entry with automatic abnormal flagging → verification → report released to the patient. |
 | **Pharmacy** | Batch and expiry tracking, first-expiry-first-out allocation, allergy safety check, stock ledger, low-stock and expiry alerts, and over-the-counter sales to walk-ins who are not our patients. |

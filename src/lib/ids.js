@@ -51,6 +51,7 @@ const generators = {
   // Labels the pharmacy prints itself: checksummed internal codes in the "2"
   // range, which manufacturers never use, so ours can never collide with an
   // EAN-13 printed on a pack. 28… identifies a medicine, 29… a single batch.
+  prescription: () => `RX${yymm()}${pad(nextSeq(`rx-${yymm()}`), 5)}`,
   drugBarcode: () => {
     const body = `28${pad(nextSeq('drug-barcode'), 10)}`;
     return body + ean13CheckDigit(body);

@@ -79,11 +79,17 @@ router.get('/dashboard', requireAuth, wrap((req, res) => {
     d.seeing = d.booked - d.completed;
   }
 
+  // A doctor is shown their own clinic and nobody else's — a colleague's
+  // patient numbers are not theirs to read.
+  const visibleDoctors = req.user.role === 'doctor'
+    ? byDoctor.filter((d) => d.id === req.user.id)
+    : byDoctor.filter((d) => d.total > 0 || d.hours);
+
   res.json({
     date,
     opd,
     appointments,
-    byDoctor: byDoctor.filter((d) => d.total > 0 || d.hours),
+    byDoctor: visibleDoctors,
     revenue: {
       collected: revenue.collected, receipts: revenue.receipts,
       billed: billed.billed, slidingDiscount: billed.sliding, assistanceCovered: billed.assistance,

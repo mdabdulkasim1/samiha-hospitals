@@ -133,6 +133,11 @@ status: `400` invalid input · `401` not signed in · `403` wrong role · `404` 
 | POST | `/me/notifications/:id/read` · `/me/notifications/read-all` | the signed-in user |
 | GET/PATCH | `/me/alert-settings` | the signed-in user |
 | POST | `/me/leave` · DELETE `/me/leave/:date` | doctors |
+| GET/POST | `/prescriptions` · GET `/prescriptions/:id` | write: doctor; read: doctor (own), pharmacy, nurse, reception |
+| POST | `/prescriptions/:id/cancel` | the prescriber |
+| GET | `/prescriptions/patients/search?q=` | doctor (their own patients) |
+| POST | `/patients/:id/vitals` | reception, nurse, doctor |
+| GET | `/patients/by-phone?phone=` | desk roles |
 
 ## Billing
 | Method | Path | Roles |

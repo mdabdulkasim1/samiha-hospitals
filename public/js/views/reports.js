@@ -11,9 +11,12 @@
         <div class="tabs" id="r-tabs">
           <button class="active" data-tab="trend">Footfall trend</button>
           <button data-tab="turnaround">Turnaround</button>
-          <button data-tab="revenue">Revenue</button>
-          <button data-tab="doctors">Doctor productivity</button>
-          <button data-tab="doctorMonthly">Doctor month by month</button>
+          ${/* Money and colleague-by-colleague numbers are management's, not a
+                doctor's — a doctor reads their own day in My Clinic. */
+            APP.can(['admin', 'reception', 'cashier']) ? `
+            <button data-tab="revenue">Revenue</button>
+            <button data-tab="doctors">Doctor productivity</button>
+            <button data-tab="doctorMonthly">Doctor month by month</button>` : ''}
           ${APP.can(['admin']) ? '<button data-tab="audit">Audit log</button>' : ''}
         </div>
         <div id="r-body">${UI.loading()}</div>`;

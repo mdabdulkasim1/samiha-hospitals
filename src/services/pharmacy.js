@@ -195,21 +195,70 @@ function expiringSoon(days = 90) {
   ).all(days);
 }
 
-/** Simple duplicate-therapy / allergy check run before dispensing. */
+/**
+ * Drug classes, so an allergy recorded as the class catches the members of it.
+ *
+ * A patient allergic to penicillin is allergic to amoxicillin, and nobody writes
+ * "amoxicillin" in the allergy box — they write "penicillin". Matching only on
+ * the name would miss exactly the allergy that matters most at an OPD counter.
+ *
+ * This is a starter list of the classes that come up daily in general practice.
+ * It is a prompt to check, never a substitute for the prescriber's judgement,
+ * and the clinic should extend it with whatever its own patients react to.
+ */
+const ALLERGY_CLASSES = [
+  { terms: ['penicillin', 'penicillins', 'pencillin'],
+    matches: /penicillin|amoxicillin|amoxycillin|ampicillin|cloxacillin|piperacillin|augmentin|amoxyclav|clavulan/ },
+  { terms: ['cephalosporin', 'cephalosporins'],
+    matches: /cef|ceph/ },
+  { terms: ['sulfa', 'sulpha', 'sulphonamide', 'sulfonamide'],
+    matches: /sulfamethoxazole|sulphamethoxazole|cotrimoxazole|co-trimoxazole|sulfasalazine/ },
+  { terms: ['nsaid', 'nsaids', 'painkiller', 'painkillers'],
+    matches: /ibuprofen|diclofenac|naproxen|aceclofenac|ketorolac|indomethacin|piroxicam|aspirin/ },
+  { terms: ['aspirin', 'salicylate'],
+    matches: /aspirin|acetylsalicylic|salicyl/ },
+  { terms: ['quinolone', 'quinolones', 'fluoroquinolone'],
+    matches: /floxacin/ },
+  { terms: ['macrolide', 'macrolides'],
+    matches: /azithromycin|erythromycin|clarithromycin|roxithromycin/ },
+  { terms: ['tetracycline', 'tetracyclines'],
+    matches: /cycline/ },
+  { terms: ['statin', 'statins'],
+    matches: /statin/ },
+];
+
+/**
+ * Allergy check run before prescribing and before dispensing.
+ *
+ * Matches the recorded allergy against the brand name, the generic name, and
+ * the drug class — so "penicillin" on the file stops an amoxicillin going out.
+ */
 function safetyCheck(patientId, drugIds) {
   const patient = db.prepare('SELECT allergies FROM patients WHERE id = ?').get(patientId);
   const warnings = [];
-  if (patient && patient.allergies) {
-    const allergyTerms = patient.allergies.split(/[,;]/).map((a) => a.trim().toLowerCase()).filter(Boolean);
-    for (const id of drugIds) {
-      const drug = db.prepare('SELECT name, generic_name FROM drugs WHERE id = ?').get(id);
-      if (!drug) continue;
-      const haystack = `${drug.name} ${drug.generic_name || ''}`.toLowerCase();
-      for (const term of allergyTerms) {
-        if (term.length > 2 && haystack.includes(term)) {
-          warnings.push(`Recorded allergy "${term}" may match ${drug.name}. Confirm with the prescriber.`);
-        }
-      }
+  if (!patient || !patient.allergies) return warnings;
+
+  const allergyTerms = patient.allergies.split(/[,;/]/).map((a) => a.trim().toLowerCase()).filter(Boolean);
+  const seen = new Set();
+
+  for (const id of drugIds) {
+    const drug = db.prepare('SELECT name, generic_name FROM drugs WHERE id = ?').get(id);
+    if (!drug) continue;
+    const haystack = `${drug.name} ${drug.generic_name || ''}`.toLowerCase();
+
+    for (const term of allergyTerms) {
+      if (term.length <= 2) continue;
+      const byName = haystack.includes(term);
+      const byClass = ALLERGY_CLASSES.some((c) =>
+        c.terms.some((t) => term.includes(t)) && c.matches.test(haystack));
+      if (!byName && !byClass) continue;
+
+      const key = `${id}|${term}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      warnings.push(byClass && !byName
+        ? `Recorded allergy "${term}" covers the class ${drug.name} belongs to. Confirm with the prescriber.`
+        : `Recorded allergy "${term}" may match ${drug.name}. Confirm with the prescriber.`);
     }
   }
   return warnings;

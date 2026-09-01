@@ -12,6 +12,7 @@
   --teal-soft:    #E8F3F5;
   --orange:       #F47920;
   --orange-soft:  #FEF1E6;
+  --orange-dark:  #A8500C;
 
   --ink:      #16232B;
   --ink-2:    #43555F;
@@ -157,10 +158,44 @@ code, .mono { font-family: var(--mono); font-size: .92em; }
 .stat .label { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-3); font-weight: 600; }
 .stat .value { font-size: 27px; font-weight: 680; margin-top: 5px; letter-spacing: -.02em; line-height: 1.15; }
 .stat .foot { font-size: 12px; color: var(--ink-3); margin-top: 3px; }
-.stat.crimson { border-left: 3px solid var(--crimson); }
-.stat.teal    { border-left: 3px solid var(--teal); }
-.stat.orange  { border-left: 3px solid var(--orange); }
-.stat.ok      { border-left: 3px solid var(--ok); }
+/*
+ * The numbers wear the clinic's own colours — the crimson, teal and orange of
+ * the Samiha mark, with the leaf green of the pharmacy logo for anything
+ * settled. A tinted tile reads faster across a room than a white one with a
+ * thin rule, which is how the dashboard is actually used: glanced at, from a
+ * few feet away, between patients.
+ */
+.stat { position: relative; overflow: hidden; }
+.stat::after {
+  content: ''; position: absolute; inset: 0 0 auto 0; height: 3px; background: currentColor; opacity: .85;
+}
+.stat.crimson { background: var(--crimson-soft); border-color: #F0D3DA; color: var(--crimson); }
+.stat.crimson .value { color: var(--crimson-dark); }
+.stat.crimson .label { color: var(--crimson); }
+
+.stat.teal    { background: var(--teal-soft); border-color: #CFE4E8; color: var(--teal); }
+.stat.teal .value { color: var(--teal-dark); }
+.stat.teal .label { color: var(--teal); }
+
+.stat.orange  { background: var(--orange-soft); border-color: #F8DCC2; color: var(--orange-dark); }
+.stat.orange .value { color: var(--orange-dark); }
+.stat.orange .label { color: var(--orange-dark); }
+
+.stat.ok      { background: var(--ok-soft); border-color: #C9E7D6; color: var(--ok); }
+.stat.ok .value { color: var(--ok); }
+.stat.ok .label { color: var(--ok); }
+
+/* An untinted tile still belongs to the set. */
+.stat:not(.crimson):not(.teal):not(.orange):not(.ok) { color: var(--ink-3); }
+.stat .foot { color: inherit; opacity: .78; }
+
+/* Card headings carry a small mark in the house teal, so a screenful of cards
+   still reads as one system. */
+.card-head > h3 { position: relative; padding-left: 11px; }
+.card-head > h3::before {
+  content: ''; position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+  width: 3px; height: 14px; border-radius: 2px; background: var(--teal);
+}
 
 /* ----------------------------------------------------------------- tables */
 table { width: 100%; border-collapse: collapse; font-size: 13.2px; }
@@ -558,3 +593,21 @@ table.matrix td:first-child { position: sticky; left: 0; background: var(--surfa
 table.matrix tbody tr:hover td:first-child { background: var(--bg); }
 table.matrix tr.tfoot td { border-top: 2px solid var(--line); background: var(--bg); }
 table.matrix tr.tfoot td:first-child { background: var(--bg); }
+
+/* Finding a patient by their mobile number — the first thing on the registry,
+   because it is the one thing every patient knows by heart. */
+.phone-first { border-top: 3px solid var(--crimson); }
+.phone-first input[type="tel"] { font-size: 17px; letter-spacing: .06em; font-variant-numeric: tabular-nums; }
+.family-list { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+.family-card {
+  display: flex; align-items: flex-start; gap: 11px; padding: 11px 13px; text-align: left;
+  border: 1px solid var(--line); border-left: 3px solid var(--teal); border-radius: var(--radius-s);
+  background: var(--surface); cursor: pointer; font: inherit; color: inherit;
+}
+.family-card:hover { border-color: var(--teal); background: var(--teal-soft); }
+.family-card .fam-avatar {
+  flex: 0 0 34px; height: 34px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--crimson); color: #fff; font-weight: 700; font-size: 15px;
+}
+.family-card .fam-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.family-card .fam-name { font-weight: 650; font-size: 14px; }

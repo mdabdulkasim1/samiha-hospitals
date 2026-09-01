@@ -32,6 +32,8 @@ function registrationMap(body) {
     emergency_relation: str(body.emergencyRelation),
     id_type: str(body.idType), id_number: str(body.idNumber),
     blood_group: str(body.bloodGroup), marital_status: str(body.maritalStatus),
+    // How this person relates to whoever else shares their mobile number.
+    relationship_to_primary: str(body.relationshipToPrimary),
 
     // --- insurance and billing --------------------------------------------
     insurance_provider: str(body.insuranceProvider),
@@ -121,6 +123,8 @@ function recordIntake(patientId, body, userId) {
         v.bpDiastolic === undefined || v.bpDiastolic === '' ? null : int(v.bpDiastolic),
         v.spo2 === undefined || v.spo2 === '' ? null : int(v.spo2),
         'Baseline taken at registration', userId);
+  db.prepare('UPDATE vitals SET purpose = ? WHERE id = ?')
+    .run(str(body.presentingComplaint) || 'Registration', info.lastInsertRowid);
   return info.lastInsertRowid;
 }
 
@@ -171,6 +175,47 @@ router.get('/', deskRoles, wrap((req, res) => {
   });
 }));
 
+/**
+ * The mobile number is how a patient is found at the desk — it is the one thing
+ * everybody knows by heart, and it is what they give on the phone and on
+ * WhatsApp. One number is often one family, so this returns everybody on it and
+ * lets the desk pick the person in front of them.
+ */
+router.get('/by-phone', deskRoles, wrap((req, res) => {
+  const ph = phone(req.query.phone);
+  if (!ph || ph.replace(/\D/g, '').length < 6) {
+    throw badRequest('Give at least six digits of the mobile number.');
+  }
+  // Match on the last ten digits, so 9840012345, 09840012345 and +91 98400
+  // 12345 all find the same family.
+  const tail = ph.slice(-10);
+  const like = `%${tail}`;
+
+  const members = db.prepare(
+    `SELECT p.id, p.uhid, p.title, p.first_name, p.last_name, p.gender, p.age_years, p.dob,
+            p.phone, p.whatsapp, p.stage, p.allergies, p.blood_group, p.address, p.city,
+            p.relationship_to_primary, p.registered_at, p.enquiry_at,
+            (SELECT COUNT(*) FROM visits v WHERE v.patient_id = p.id) AS visit_count,
+            (SELECT MAX(v.arrived_at) FROM visits v WHERE v.patient_id = p.id) AS last_visit,
+            (SELECT COALESCE(SUM(i.balance), 0) FROM invoices i
+              WHERE i.patient_id = p.id AND i.status IN ('unpaid','partial')) AS outstanding,
+            (SELECT MIN(a.scheduled_at) FROM appointments a
+              WHERE a.patient_id = p.id AND a.status IN ('booked','confirmed')
+                AND datetime(a.scheduled_at) >= datetime('now')) AS next_appointment
+       FROM patients p
+      WHERE p.active = 1 AND (p.phone LIKE ? OR p.whatsapp LIKE ?)
+      ORDER BY p.stage DESC, COALESCE(p.age_years, 0) DESC, p.first_name`
+  ).all(like, like);
+
+  res.json({
+    phone: ph,
+    count: members.length,
+    // Everyone on one number is treated as one household at the desk.
+    isFamily: members.length > 1,
+    members,
+  });
+}));
+
 // --------------------------------------------------------------- registration
 /**
  * "Demographic, Med. History Paperwork" — the full intake. Open to the front
@@ -184,12 +229,19 @@ router.post('/', requireRole('reception'), wrap((req, res) => {
   const stage = oneOf(req.body.stage, ['enquiry', 'registered'], 'stage') || 'registered';
   const ph = phone(req.body.phone);
 
-  if (ph) {
-    const dup = db.prepare('SELECT uhid, first_name, last_name FROM patients WHERE phone = ? AND active = 1').get(ph);
-    if (dup && !bool(req.body.allowDuplicate)) {
+  // One number is often one family, so an existing number is not an error — it
+  // is a household the desk should see before adding another name to it.
+  if (ph && !bool(req.body.allowDuplicate)) {
+    const family = db.prepare(
+      `SELECT id, uhid, first_name, last_name, age_years, gender FROM patients
+        WHERE (phone = ? OR whatsapp = ?) AND active = 1 ORDER BY id`
+    ).all(ph, ph);
+    if (family.length) {
       throw conflict(
-        `A patient with this phone already exists: ${dup.uhid} — ${dup.first_name} ${dup.last_name || ''}. ` +
-        `Resend with allowDuplicate=true to register anyway (e.g. a family sharing one number).`
+        `${family.length} patient(s) are already registered on ${ph}: ` +
+        family.map((f) => `${f.uhid} — ${f.first_name} ${f.last_name || ''}`.trim()).join('; ') +
+        '. Open one of them, or resend with allowDuplicate=true to add another person to this number.',
+        { family, phone: ph }
       );
     }
   }
@@ -247,7 +299,21 @@ router.get('/:id', deskRoles, wrap((req, res) => {
        LEFT JOIN users u ON u.id = ad.doctor_id
       WHERE ad.patient_id = ? ORDER BY ad.id DESC`
   ).all(id);
-  patient.vitals = db.prepare('SELECT * FROM vitals WHERE patient_id = ? ORDER BY id DESC LIMIT 10').all(id);
+  /*
+   * The dated chart: every weight, height, blood pressure and the reason the
+   * patient came that day, newest first. A reading taken during a visit borrows
+   * that visit's reason; one taken at the desk carries its own.
+   */
+  patient.vitals = db.prepare(
+    `SELECT v.*, u.name AS recorded_by_name, vis.visit_no,
+            COALESCE(v.purpose, vis.reason_for_visit) AS purpose,
+            doc.name AS doctor_name
+       FROM vitals v
+       LEFT JOIN users u ON u.id = v.recorded_by
+       LEFT JOIN visits vis ON vis.id = v.visit_id
+       LEFT JOIN users doc ON doc.id = vis.doctor_id
+      WHERE v.patient_id = ? ORDER BY datetime(v.recorded_at) DESC, v.id DESC LIMIT 100`
+  ).all(id);
   patient.consultations = db.prepare(
     `SELECT c.*, u.name AS doctor_name,
             (SELECT GROUP_CONCAT(title, '; ') FROM consultation_diagnoses WHERE consultation_id = c.id) AS diagnoses
@@ -341,6 +407,50 @@ router.post('/:id/history', requireRole('reception', 'nurse', 'doctor'), wrap((r
  * enquiry record and promotes it to a registered patient, keeping the same row
  * so the enquiry, its source and any appointments already booked stay attached.
  */
+/**
+ * Add a dated reading to a patient's chart without opening a visit — the weight
+ * and blood pressure taken when somebody drops in for a check, and why they
+ * came. These are the rows the patient page charts date-wise.
+ */
+router.post('/:id/vitals', requireRole('reception', 'nurse', 'doctor'), wrap((req, res) => {
+  const id = int(req.params.id);
+  const patient = db.prepare('SELECT * FROM patients WHERE id = ?').get(id);
+  if (!patient) throw notFound('Patient not found');
+
+  const height = num(req.body.heightCm, 0);
+  const weight = num(req.body.weightKg, 0);
+  const value = (v, cast = num) => (v === undefined || v === '' || v === null ? null : cast(v));
+
+  const any = [req.body.tempC, req.body.pulse, req.body.bpSystolic, req.body.bpDiastolic,
+    req.body.spo2, req.body.respRate, req.body.bloodSugar, height, weight]
+    .some((x) => x !== undefined && x !== '' && x !== null && Number(x) > 0);
+  if (!any) throw badRequest('Record at least one reading — weight, height, blood pressure or another observation.');
+
+  // Height changes rarely; carry the last one forward so BMI still works when
+  // only the weight is taken.
+  const lastHeight = db.prepare(
+    'SELECT height_cm FROM vitals WHERE patient_id = ? AND height_cm > 0 ORDER BY id DESC LIMIT 1'
+  ).get(id);
+  const effectiveHeight = height > 0 ? height : (lastHeight ? lastHeight.height_cm : 0);
+
+  const info = db.prepare(
+    `INSERT INTO vitals (patient_id, visit_id, height_cm, weight_kg, bmi, temp_c, pulse, resp_rate,
+                         bp_systolic, bp_diastolic, spo2, blood_sugar, purpose, notes, recorded_by, recorded_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')))`
+  ).run(id, int(req.body.visitId) || null,
+        height > 0 ? height : null, weight > 0 ? weight : null,
+        effectiveHeight > 0 && weight > 0
+          ? Math.round((weight / ((effectiveHeight / 100) ** 2)) * 10) / 10 : null,
+        value(req.body.tempC), value(req.body.pulse, int), value(req.body.respRate, int),
+        value(req.body.bpSystolic, int), value(req.body.bpDiastolic, int),
+        value(req.body.spo2, int), value(req.body.bloodSugar),
+        str(req.body.purpose), str(req.body.notes), req.user.id,
+        str(req.body.recordedAt));
+
+  audit.log(req, 'record_vitals', 'patient', id, { vitalsId: info.lastInsertRowid });
+  res.status(201).json(db.prepare('SELECT * FROM vitals WHERE id = ?').get(info.lastInsertRowid));
+}));
+
 router.post('/:id/register', requireRole('reception'), wrap((req, res) => {
   const id = int(req.params.id);
   const patient = db.prepare('SELECT * FROM patients WHERE id = ?').get(id);

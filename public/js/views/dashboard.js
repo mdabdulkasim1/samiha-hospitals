@@ -10,6 +10,9 @@ APP.register('dashboard', {
       API.get('/api/masters/departments'),
     ]);
 
+    // A doctor signed in sees their own clinic, not the whole rota.
+    const isDoctor = APP.user.role === 'doctor';
+
     const stat = (cls, label, value, foot) =>
       `<div class="stat ${cls}"><div class="label">${UI.esc(label)}</div>
        <div class="value">${value}</div><div class="foot">${foot || ''}</div></div>`;
@@ -61,10 +64,13 @@ APP.register('dashboard', {
           </div>
 
           <div class="card">
-            <div class="card-head"><h3>Appointments by doctor today</h3>
-              <span class="muted small">Who is sitting, and how full they are</span>
-              <a class="btn ghost sm" href="#/appointments">Open the diary</a></div>
-            <div class="card-body tight" id="doctor-board">${doctorBoard(d.byDoctor || [])}</div>
+            <div class="card-head"><h3>${isDoctor ? 'My clinic today' : 'Appointments by doctor today'}</h3>
+              <span class="muted small">${isDoctor
+                ? 'Your own list — a colleague\'s patients are not shown'
+                : 'Who is sitting, and how full they are'}</span>
+              <a class="btn ghost sm" href="#/${isDoctor ? 'myclinic' : 'appointments'}">${
+                isDoctor ? 'Open my clinic' : 'Open the diary'}</a></div>
+            <div class="card-body tight" id="doctor-board">${doctorBoard(d.byDoctor || [], isDoctor)}</div>
           </div>
 
           <div class="card">
@@ -184,10 +190,11 @@ APP.register('dashboard', {
  * has Dr Sheikh got?" — so it belongs on the first screen rather than three
  * clicks into the diary.
  */
-function doctorBoard(rows) {
+function doctorBoard(rows, isDoctor = false) {
   if (!rows.length) {
-    return UI.empty('No doctor is sitting today, and nothing is booked. ' +
-      'Fix visiting hours under Staff & Doctors.', '🗓');
+    return UI.empty(isDoctor
+      ? 'You are not sitting today and nobody is booked with you.'
+      : 'No doctor is sitting today, and nothing is booked. Fix visiting hours under Staff & Doctors.', '🗓');
   }
 
   const total = rows.reduce((a, r) => a + r.booked, 0);
@@ -195,7 +202,7 @@ function doctorBoard(rows) {
 
   const table = UI.table([
     { label: 'Doctor', render: (r) => `<b>${UI.esc(r.name)}</b>` +
-      (APP.user && APP.user.id === r.id ? ' ' + UI.badge('you', 'teal') : '') +
+      (!isDoctor && APP.user && APP.user.id === r.id ? ' ' + UI.badge('you', 'teal') : '') +
       `<div class="muted small">${UI.esc(r.specialization || r.department_name || '')}` +
       `${r.room_no ? ' · ' + UI.esc(r.room_no) : ''}</div>` },
     { label: 'Hours', render: (r) => r.on_leave
@@ -216,12 +223,12 @@ function doctorBoard(rows) {
     } },
     { label: 'Missed', num: true, render: (r) => (r.cancelled + r.no_shows)
       ? `<span class="muted small">${UI.num(r.cancelled)} canc · ${UI.num(r.no_shows)} n/s</span>` : '' },
-    { label: '', render: (r) => r.booked
+    { label: '', render: (r) => (r.booked && !isDoctor)
       ? `<button class="btn ghost sm" data-doc-day="${r.id}">List</button>` : '' },
   ], rows, { emptyText: 'Nothing booked with anybody today.' });
 
   return table + `<div class="row-between small muted" style="padding:8px 14px 2px;border-top:1px solid var(--line)">
-    <span><b>${UI.num(total)}</b> patient(s) booked across ${UI.num(rows.length)} doctor(s)</span>
+    <span><b>${UI.num(total)}</b> patient(s) booked${isDoctor ? '' : ` across ${UI.num(rows.length)} doctor(s)`}</span>
     <span>${UI.num(seen)} seen so far</span>
   </div>`;
 }

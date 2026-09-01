@@ -38,7 +38,7 @@ module.exports = {
   },
   clinic: {
     name: env.CLINIC_NAME || 'SAMIHA POLYCLINIC & DIAGNOSTICS',
-    address: env.CLINIC_ADDRESS || 'Main Road, Your City',
+    address: env.CLINIC_ADDRESS || 'Nethaji Road, Melapalayam – 627 005',
     phone: env.CLINIC_PHONE || '+91 72007 50420',
     email: env.CLINIC_EMAIL || 'care@samihapolyclinic.com',
     gstin: env.CLINIC_GSTIN || '',
@@ -62,7 +62,7 @@ module.exports = {
   pharmacy: {
     name: env.PHARMACY_NAME || 'SAMIHA PHARMACEUTICALS',
     tagline: env.PHARMACY_TAGLINE || 'Caring Beyond Medicine',
-    address: env.PHARMACY_ADDRESS || env.CLINIC_ADDRESS || 'Main Road, Your City',
+    address: env.PHARMACY_ADDRESS || env.CLINIC_ADDRESS || 'Nethaji Road, Melapalayam – 627 005',
     phone: env.PHARMACY_PHONE || env.CLINIC_PHONE || '+91 72007 50420',
     gstin: env.PHARMACY_GSTIN || env.CLINIC_GSTIN || '',
     dlNumbers: env.PHARMACY_DL_NUMBERS || '',      // e.g. "TN/CHN/20B/1234, TN/CHN/21B/1234"

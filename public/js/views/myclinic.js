@@ -23,6 +23,8 @@
 
       APP.setSubtitle(`${data.doctor.name}${data.doctor.specialization ? ' · ' + data.doctor.specialization : ''}`);
       APP.actions([
+        { id: 'rx', label: '℞ Write a prescription', onClick: () => openPrescriptionPicker() },
+        { id: 'rxlist', label: 'My prescriptions', onClick: openMyPrescriptions },
         { id: 'settings', label: 'Alert settings', onClick: openAlertSettings },
         { id: 'leave', label: 'Block a day', onClick: () => openBlockDay(date) },
       ]);
@@ -83,12 +85,30 @@
           r.visit_kind === 'new' ? 'teal' : '') },
         { label: 'Flags', render: (r) => r.allergies ? UI.badge('⚠ Allergy', 'danger') : '' },
         { label: 'Status', render: (r) => UI.statusBadge(r.visit_status || r.status) },
-        { label: '', render: (r) => r.visit_id
-          ? `<button class="btn sm" data-visit="${r.visit_id}">Open</button>` : '' },
+        { label: '', render: (r) => `${r.patient_id
+          ? `<button class="btn sm" data-rx="${r.patient_id}"
+               data-visit-id="${r.visit_id || ''}" data-appt="${r.id}">℞ Prescribe</button> ` : ''}` +
+          (r.visit_id ? `<button class="btn ghost sm" data-visit="${r.visit_id}">Open</button>` : '') },
       ], data.rows, { emptyText: 'No patient is booked with you on this day.' });
 
       el.querySelectorAll('[data-visit]').forEach((b) => b.addEventListener('click', () =>
         APP.navigate('consult', { visitId: b.dataset.visit })));
+
+      // Straight from the list to the pad: the patient in front of them is the
+      // one they are prescribing for.
+      el.querySelectorAll('[data-rx]').forEach((b) => b.addEventListener('click', async () => {
+        const row = data.rows.find((r) => String(r.patient_id) === b.dataset.rx);
+        Prescribe.open({
+          id: Number(b.dataset.rx), uhid: row.uhid,
+          first_name: (row.patient_name || row.display_name || '').split(' ')[0],
+          last_name: (row.patient_name || '').split(' ').slice(1).join(' '),
+          age_years: row.age_years, gender: row.gender, allergies: row.allergies,
+        }, {
+          visitId: b.dataset.visitId ? Number(b.dataset.visitId) : null,
+          appointmentId: Number(b.dataset.appt),
+          onDone: () => APP.reload(),
+        });
+      }));
 
       el.querySelector('#d-upcoming').innerHTML = UI.table([
         { label: 'Day', render: (u) => `<b>${UI.esc(u.label)}</b>` +
@@ -109,6 +129,68 @@
       el.querySelector('#d-next').addEventListener('click', () => go(shift(date, 1)));
     },
   });
+
+  /** Choosing whom to prescribe for when they are not on today's list. */
+  async function openPrescriptionPicker() {
+    UI.modal({
+      title: 'Write a prescription',
+      size: 'narrow',
+      body: `<p class="muted">Your own patients — anyone booked with you, seen by you, or
+        prescribed for by you before.</p>
+        <div class="search-row"><input type="search" id="pp-q" placeholder="Search name, UHID or mobile…" autofocus></div>
+        <div id="pp-list" class="mt">${UI.loading()}</div>`,
+      footer: '<button class="btn ghost" data-act="__close">Close</button>',
+      onMount(modal) {
+        const host = modal.querySelector('#pp-list');
+        const load = async () => {
+          const rows = await API.get('/api/prescriptions/patients/search' +
+            API.qs({ q: modal.querySelector('#pp-q').value.trim() }));
+          host.innerHTML = rows.length ? rows.map((p) => `
+            <button type="button" class="btn ghost sm block mb" data-pick="${p.id}"
+                    style="justify-content:space-between">
+              <span><b>${UI.esc(p.first_name)} ${UI.esc(p.last_name || '')}</b>
+                <span class="muted">${UI.esc(p.uhid)}</span></span>
+              <span class="muted small">${UI.esc(p.age_years || '—')} ${p.age_years ? 'y' : ''} ·
+                ${UI.esc(UI.titleise(p.gender || ''))}${p.allergies ? ' · ⚠' : ''}</span>
+            </button>`).join('')
+            : UI.empty('No patient of yours matched.', '🔍');
+          host.querySelectorAll('[data-pick]').forEach((b) => b.addEventListener('click', () => {
+            const patient = rows.find((p) => p.id === Number(b.dataset.pick));
+            UI.closeAllModals();
+            Prescribe.open(patient, { onDone: () => APP.reload() });
+          }));
+        };
+        let t;
+        modal.querySelector('#pp-q').addEventListener('input', () => { clearTimeout(t); t = setTimeout(load, 220); });
+        load();
+      },
+    });
+  }
+
+  /** Everything this doctor has signed, reprintable. */
+  async function openMyPrescriptions() {
+    const rows = await API.get('/api/prescriptions?limit=50');
+    UI.modal({
+      title: 'Prescriptions you have written',
+      size: 'wide',
+      body: UI.table([
+        { label: 'Rx', render: (r) => `<code>${UI.esc(r.rx_no)}</code>` },
+        { label: 'Date', render: (r) => UI.esc(UI.dateTime(r.created_at)) },
+        { label: 'Patient', render: (r) => `<b>${UI.esc(r.patient_name)}</b>` +
+          `<div class="muted small">${UI.esc(r.uhid)} · ${UI.esc(r.age_years || '—')}` +
+          `${r.age_years ? 'y' : ''} ${UI.esc(UI.titleise(r.gender || ''))}</div>` },
+        { label: 'Diagnosis', render: (r) => UI.esc(r.diagnosis || '—') },
+        { label: 'Medicines', render: (r) => `<div class="small">${UI.esc(r.medicines || '')}</div>` },
+        { label: 'Status', render: (r) => UI.statusBadge(r.status) },
+        { label: '', render: (r) => `<button class="btn ghost sm" data-print="${r.id}">Print</button>` },
+      ], rows, { emptyText: 'You have not written a prescription yet.' }),
+      footer: '<button class="btn ghost" data-act="__close">Close</button>',
+      onMount(modal) {
+        modal.querySelectorAll('[data-print]').forEach((b) =>
+          b.addEventListener('click', () => Prescribe.reprint(Number(b.dataset.print))));
+      },
+    });
+  }
 
   function shift(dateStr, days) {
     const d = new Date(dateStr + 'T00:00:00');
