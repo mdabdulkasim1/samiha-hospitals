@@ -6,6 +6,7 @@ const { db } = require('./db');
 const auth = require('./lib/auth');
 const { ApiError } = require('./lib/http');
 const whatsapp = require('./services/whatsapp');
+const backup = require('./services/backup');
 
 const app = express();
 app.disable('x-powered-by');
@@ -59,6 +60,7 @@ app.use('/api/billing', require('./routes/billing'));
 app.use('/api/ipd', require('./routes/ipd'));
 app.use('/api/insurance', require('./routes/insurance'));
 app.use('/api/reports', require('./routes/reports'));
+app.use('/api/admin', require('./routes/admin'));
 
 // --------------------------------------------------------------- static + SPA
 app.use(express.static(path.join(config.root, 'public'), { index: false, maxAge: config.isProd ? '1h' : 0 }));
@@ -92,6 +94,7 @@ function startBackgroundJobs() {
   setInterval(() => {
     try {
       auth.purgeExpiredSessions();
+      auth.purgeExpiredResets();
       db.prepare(
         "UPDATE payment_plan_installments SET status = 'overdue' WHERE status = 'due' AND date(due_date) < date('now')"
       ).run();
@@ -103,16 +106,43 @@ function startBackgroundJobs() {
       console.error('[housekeeping]', err.message);
     }
   }, 3_600_000).unref();
+
+  // Nightly database snapshot, with a notice to the recovery mailbox.
+  backup.startSchedule();
+}
+
+/**
+ * A fresh deployment starts with an empty database and nobody can sign in.
+ * Seeding once, only when there are no users at all, turns that into a working
+ * install without ever touching an existing one.
+ */
+function seedIfEmpty() {
+  if (!config.autoSeed) return;
+  const users = db.prepare('SELECT COUNT(*) AS c FROM users').get().c;
+  if (users > 0) return;
+  console.log('[setup] No accounts found — creating the starter data.');
+  try {
+    require('./db/seed');
+    console.log('[setup] Done. Sign in as admin@samiha.local with the seeded password.');
+    console.warn('[setup] ⚠ Change every seeded password before using this with real patient data.');
+  } catch (err) {
+    console.error('[setup] Seeding failed:', err.message);
+  }
 }
 
 if (require.main === module) {
+  seedIfEmpty();
   const server = app.listen(config.port, () => {
     console.log(`\n  ${config.clinic.name} — ERP`);
     console.log(`  ▸ http://localhost:${config.port}`);
     console.log(`  ▸ environment: ${config.nodeEnv}`);
     console.log(`  ▸ database:    ${config.dbFile}`);
     console.log(`  ▸ WhatsApp:    ${config.whatsapp.provider}` +
-      (config.whatsapp.provider === 'mock' ? ' (simulator — no messages leave this machine)' : '') + '\n');
+      (config.whatsapp.provider === 'mock' ? ' (simulator — no messages leave this machine)' : ''));
+    console.log(`  ▸ Email:       ${config.mail.provider} → recovery copies to ${config.mail.recoveryEmail}` +
+      (config.mail.provider === 'mock' ? ' (offline — reset links appear in the outbox)' : ''));
+    console.log(`  ▸ Backups:     ${config.backup.dir}` +
+      (config.backup.hour !== null ? ` (daily at ${String(config.backup.hour).padStart(2, '0')}:00)` : ' (automatic backup off)') + '\n');
   });
   startBackgroundJobs();
 

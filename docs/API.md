@@ -25,6 +25,19 @@ status: `400` invalid input · `401` not signed in · `403` wrong role · `404` 
 | POST | `/auth/logout` | any |
 | GET | `/auth/me` | any |
 | POST | `/auth/change-password` | any |
+| POST | `/auth/forgot-password` | **public** — always answers the same, rate-limited |
+| GET | `/auth/reset-password/:token` | **public** — checks a link before showing the form |
+| POST | `/auth/reset-password` | **public** — single-use token |
+
+## Account & system
+| Method | Path | Roles |
+|---|---|---|
+| GET | `/admin/system` | admin — recovery mailbox, mail health, backup state |
+| POST | `/admin/system/test-email` | admin |
+| GET/POST | `/admin/backups` | admin — list, take a snapshot |
+| GET | `/admin/backups/:filename/download` | admin |
+| DELETE | `/admin/backups/:filename` | admin |
+| POST | `/admin/users/:id/send-reset` | admin — email a staff member a reset link |
 
 ## Masters
 | Method | Path | Roles |

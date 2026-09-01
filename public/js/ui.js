@@ -203,6 +203,100 @@
       return `<label class="field"><span>${esc(label)}${req}</span>${control}` +
         (hint ? `<span class="muted small">${esc(hint)}</span>` : '') + '</label>';
     },
+    /**
+     * A password field with a show/hide eye. Mistyping a password you cannot
+     * see is the most common cause of a "wrong" login, so every password input
+     * in the app uses this.
+     */
+    password({ name, label, required = false, placeholder = '', autocomplete = 'current-password', hint, meter = false }) {
+      const id = `pw-${name}-${Math.random().toString(36).slice(2, 8)}`;
+      return `<label class="field" for="${id}">
+        <span>${esc(label)}${required ? ' <span class="req">*</span>' : ''}</span>
+        <span class="pw-wrap">
+          <input type="password" id="${id}" name="${esc(name)}" placeholder="${esc(placeholder)}"
+                 autocomplete="${esc(autocomplete)}"${required ? ' required' : ''}
+                 ${meter ? 'data-meter="1"' : ''}>
+          <button type="button" class="pw-eye" data-eye="${id}"
+                  aria-label="Show password" aria-pressed="false" tabindex="0">${UI.eyeIcon(false)}</button>
+        </span>
+        ${meter ? '<span class="pw-meter"><i></i></span><span class="pw-hint"></span>' : ''}
+        ${hint ? `<span class="muted small">${esc(hint)}</span>` : ''}
+      </label>`;
+    },
+
+    eyeIcon(shown) {
+      return shown
+        ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+             <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
+             <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
+             <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/><path d="m1 1 22 22"/></svg>`
+        : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z"/><circle cx="12" cy="12" r="3"/></svg>`;
+    },
+
+    /** Wire every eye toggle and strength meter inside a container. */
+    wirePasswords(scope) {
+      scope.querySelectorAll('[data-eye]').forEach((btn) => {
+        if (btn.dataset.wired) return;
+        btn.dataset.wired = '1';
+        btn.addEventListener('click', () => {
+          const input = scope.querySelector(`#${CSS.escape(btn.dataset.eye)}`);
+          if (!input) return;
+          const show = input.type === 'password';
+          input.type = show ? 'text' : 'password';
+          btn.innerHTML = UI.eyeIcon(show);
+          btn.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+          btn.setAttribute('aria-pressed', String(show));
+          // Keep the caret where the user left it.
+          const pos = input.value.length;
+          input.focus();
+          try { input.setSelectionRange(pos, pos); } catch { /* type change can reset it */ }
+        });
+      });
+
+      scope.querySelectorAll('input[data-meter]').forEach((input) => {
+        if (input.dataset.wired) return;
+        input.dataset.wired = '1';
+        const field = input.closest('.field');
+        const bar = field && field.querySelector('.pw-meter i');
+        const hint = field && field.querySelector('.pw-hint');
+        input.addEventListener('input', () => {
+          const s = UI.passwordStrength(input.value);
+          if (bar) { bar.style.width = s.pct + '%'; bar.style.background = s.colour; }
+          if (hint) { hint.textContent = s.label; hint.className = 'pw-hint ' + s.cls; }
+        });
+      });
+    },
+
+    /** Mirrors the rules the server enforces, so the message matches. */
+    passwordStrength(value) {
+      const v = String(value || '');
+      if (!v) return { pct: 0, colour: 'var(--line)', label: '', cls: '' };
+      const problems = [];
+      if (v.length < 8) problems.push('at least 8 characters');
+      if (!/[A-Za-z]/.test(v)) problems.push('a letter');
+      if (!/[0-9]/.test(v)) problems.push('a number');
+      if (['password', '12345678', 'samiha@123', 'qwerty123', 'admin123', 'welcome1'].includes(v.toLowerCase())) {
+        return { pct: 20, colour: 'var(--danger)', label: 'Too common — pick something else', cls: 'bad' };
+      }
+      if (problems.length) {
+        return { pct: 30, colour: 'var(--danger)', label: 'Still needs ' + problems.join(', '), cls: 'bad' };
+      }
+      let score = 55;
+      if (v.length >= 12) score += 20;
+      if (/[^A-Za-z0-9]/.test(v)) score += 15;
+      if (/[a-z]/.test(v) && /[A-Z]/.test(v)) score += 10;
+      const pct = Math.min(score, 100);
+      return {
+        pct,
+        colour: pct >= 85 ? 'var(--ok)' : pct >= 70 ? 'var(--teal)' : 'var(--warn)',
+        label: pct >= 85 ? 'Strong' : pct >= 70 ? 'Good' : 'Acceptable — longer would be better',
+        cls: 'ok',
+      };
+    },
+
     checkbox({ name, label, checked = false }) {
       return `<label class="inline-check"><input type="checkbox" name="${esc(name)}"${checked ? ' checked' : ''}><span>${esc(label)}</span></label>`;
     },

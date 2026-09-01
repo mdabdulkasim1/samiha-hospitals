@@ -980,3 +980,32 @@ CREATE TABLE IF NOT EXISTS insurance_documents (
   recorded_by INTEGER REFERENCES users(id),
   created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- =============================================================================
+-- Account recovery
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS password_resets (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  -- Only the hash is stored; the raw token exists solely in the emailed link.
+  token_hash  TEXT NOT NULL UNIQUE,
+  requested_by TEXT,               -- what the user typed, for the audit trail
+  ip          TEXT,
+  expires_at  TEXT NOT NULL,
+  used_at     TEXT,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_resets_user ON password_resets(user_id);
+
+CREATE TABLE IF NOT EXISTS backups (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  filename   TEXT NOT NULL UNIQUE,
+  size_bytes INTEGER NOT NULL DEFAULT 0,
+  kind       TEXT NOT NULL DEFAULT 'manual' CHECK (kind IN ('manual','scheduled')),
+  emailed_to TEXT,
+  status     TEXT NOT NULL DEFAULT 'ok' CHECK (status IN ('ok','failed')),
+  error      TEXT,
+  created_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);

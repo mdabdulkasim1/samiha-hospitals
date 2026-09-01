@@ -152,6 +152,7 @@ documented exception exists. Check-out books the follow-up and issues an exit pa
 | **Billing** | Invoices, receipts, instalment agreements, documented exceptions, assistance cover, day book. |
 | **Insurance & TPA** | Empanelled insurers and TPAs, patient policies with sum-insured, co-pay and room-rent caps, cashless pre-authorisation with queries and enhancements, claims from the bill through to settlement, and receivables ageing. See [`docs/INSURANCE.md`](docs/INSURANCE.md). |
 | **Reports** | Footfall and revenue trends, doctor productivity, **stage-by-stage turnaround**, audit log. |
+| **Account & system** | Password reset by email with single-use links, show/hide on every password field, nightly database backups with off-site notices, and mail health checks. See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md). |
 
 ## Guardrails
 
@@ -171,6 +172,8 @@ These are enforced in the API, not just the interface:
   silently written off.
 - Discharge posts bed-day charges automatically and blocks on an unsettled bill.
 - Every state change is written to an immutable **visit trail** and the **audit log**.
+- Password reset answers identically for real and unknown accounts, is rate-limited, stores
+  only a token hash, works once, and signs out every session on that account.
 
 ## Architecture
 
@@ -206,14 +209,23 @@ Everything lives in `.env` — see [`.env.example`](.env.example). The essential
 | Variable | Purpose |
 |---|---|
 | `SESSION_SECRET` | **Set this.** Generate with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
-| `DB_FILE` | Database path (default `./data/samiha.db`) |
+| `DB_FILE` | Database path (default `./data/samiha.db`) — put it on a persistent disk |
+| `APP_URL` | Public URL; password-reset links are built from it |
+| `RECOVERY_EMAIL` | Clinic mailbox that receives every reset link and backup notice (`samihahospital@gmail.com`) |
+| `MAIL_PROVIDER` | `mock` (offline, the default) or `smtp` (Gmail App Password) |
+| `BACKUP_DIR`, `BACKUP_HOUR`, `BACKUP_RETENTION` | Nightly snapshots and how many to keep |
 | `CLINIC_*` | Name, address, phone, GSTIN — printed on every invoice and report |
 | `WHATSAPP_PROVIDER` | `mock` (offline simulator, the default) or `meta` (live) |
 
+Deploying, account recovery and backups are covered in
+[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
+
 ## Before going live
 
-1. Change every seeded password and set a real `SESSION_SECRET`.
+1. Change every seeded password, set a real `SESSION_SECRET`, then set `AUTO_SEED=false`.
 2. Put the app behind HTTPS (a reverse proxy is fine) and set `NODE_ENV=production`.
+   **Put `DB_FILE` and `BACKUP_DIR` on a persistent disk** — on Railway, Render or Fly the
+   filesystem is wiped on every deploy without a volume.
 3. Replace the seeded formulary, service prices, lab tariffs and ward tariffs with your own.
 4. Set the poverty guideline and sliding-scale bands to your clinic's actual policy —
    the seeded figures are illustrative.

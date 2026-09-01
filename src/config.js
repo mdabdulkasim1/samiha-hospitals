@@ -45,6 +45,26 @@ module.exports = {
     currency: env.CURRENCY || 'INR',
     currencySymbol: env.CURRENCY_SYMBOL || '₹',
   },
+  appUrl: (env.APP_URL || `http://localhost:${Number(env.PORT || 3000)}`).replace(/\/$/, ''),
+  autoSeed: String(env.AUTO_SEED || 'true').toLowerCase() !== 'false',
+  mail: {
+    provider: env.MAIL_PROVIDER || 'mock',       // 'mock' | 'smtp'
+    // Every recovery link and backup notice is copied to this mailbox.
+    recoveryEmail: env.RECOVERY_EMAIL || 'samihahospital@gmail.com',
+    from: env.MAIL_FROM || `SAMIHA Healthcare <${env.RECOVERY_EMAIL || 'samihahospital@gmail.com'}>`,
+    host: env.SMTP_HOST || 'smtp.gmail.com',
+    port: Number(env.SMTP_PORT || 587),
+    secure: String(env.SMTP_SECURE || 'false').toLowerCase() === 'true',
+    user: env.SMTP_USER || env.RECOVERY_EMAIL || '',
+    pass: env.SMTP_PASS || '',
+    resetTtlMinutes: Number(env.RESET_TTL_MINUTES || 30),
+  },
+  backup: {
+    dir: path.resolve(root, env.BACKUP_DIR || './data/backups'),
+    retention: Number(env.BACKUP_RETENTION || 14),
+    hour: env.BACKUP_HOUR === '' ? null : Number(env.BACKUP_HOUR ?? 2),
+    emailAttach: String(env.BACKUP_EMAIL_ATTACH || 'false').toLowerCase() === 'true',
+  },
   whatsapp: {
     provider: env.WHATSAPP_PROVIDER || 'mock',   // 'mock' | 'meta'
     verifyToken: env.WHATSAPP_VERIFY_TOKEN || 'samiha-verify-token',

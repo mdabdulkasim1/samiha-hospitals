@@ -28,6 +28,7 @@
       { id: 'whatsapp',    label: 'WhatsApp',         icon: '✆', roles: '*' },
       { id: 'reports',     label: 'Reports',          icon: '◔', roles: '*' },
       { id: 'workflow',    label: 'Workflow Map',     icon: '⇄', roles: '*' },
+      { id: 'account',     label: 'Account & System', icon: '⚙', roles: '*' },
     ]},
   ];
 
@@ -55,6 +56,11 @@
     register(id, view) { APP.views[id] = view; },
 
     async boot() {
+      // A reset link must work whether or not anyone is signed in.
+      const reset = parseHash();
+      if (reset.route === 'reset' && reset.params.token) {
+        return renderReset(reset.params.token);
+      }
       try {
         const me = await API.get('/api/auth/me');
         APP.user = me.user;
@@ -80,6 +86,7 @@
 
   // ------------------------------------------------------------------ login
   function renderLogin() {
+    if (window.UI && UI.closeAllModals) UI.closeAllModals();
     document.getElementById('root').innerHTML = `
       <div class="login-shell">
         <div class="login-hero">
@@ -99,7 +106,11 @@
             <div class="muted">Use your staff email or employee code.</div>
             <form id="login-form">
               ${UI.field({ name: 'username', label: 'Email or staff code', required: true, placeholder: 'reception@samiha.local' })}
-              ${UI.field({ name: 'password', label: 'Password', type: 'password', required: true })}
+              ${UI.password({ name: 'password', label: 'Password', required: true })}
+              <div class="row-between mb" style="margin-top:-6px">
+                <span></span>
+                <button type="button" class="link-btn" id="forgot-link">Forgotten your password?</button>
+              </div>
               <button class="btn block" type="submit">Sign in</button>
             </form>
             <div id="login-error"></div>
@@ -119,6 +130,10 @@
       </div>`;
 
     const form = document.getElementById('login-form');
+    UI.wirePasswords(document.getElementById('root'));
+    document.getElementById('forgot-link').addEventListener('click', () =>
+      openForgotPassword(form.querySelector('[name=username]').value.trim()));
+
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       const btn = form.querySelector('button[type=submit]');
@@ -130,8 +145,17 @@
         API.setToken(res.token);
         await APP.boot();
       } catch (err) {
+        // "Invalid credentials" most often means a mistyped password, so point
+        // at the eye and the reset link rather than just restating the error.
         document.getElementById('login-error').innerHTML =
-          `<div class="alert danger mt">${UI.esc(err.message)}</div>`;
+          `<div class="alert danger mt"><b>${UI.esc(err.message)}</b>
+             <div class="small mt">Check the spelling, and use the eye icon to see what you typed.
+             Caps Lock is a common culprit.
+             <button type="button" class="link-btn" id="err-forgot">Reset your password</button>.</div>
+           </div>`;
+        const link = document.getElementById('err-forgot');
+        if (link) link.addEventListener('click', () =>
+          openForgotPassword(form.querySelector('[name=username]').value.trim()));
         btn.disabled = false;
         btn.textContent = 'Sign in';
       }
@@ -146,8 +170,117 @@
     });
   }
 
+  // ------------------------------------------------------- password recovery
+  function openForgotPassword(prefill) {
+    UI.modal({
+      title: 'Reset your password',
+      size: 'narrow',
+      body: `<p class="muted">Enter your staff email or employee code. We will email a reset link to
+          your address, with a copy to the clinic's recovery mailbox so you can always get back in.</p>
+        <form id="fp-form">
+          ${UI.field({ name: 'username', label: 'Email or staff code', required: true, value: prefill || '' })}
+        </form>
+        <div id="fp-out"></div>`,
+      footer: `<button class="btn ghost" data-act="__close">Cancel</button>
+               <button class="btn" data-act="send">Send reset link</button>`,
+      onMount(modal) {
+        const input = modal.querySelector('[name=username]');
+        if (input && !prefill) input.focus();
+      },
+      async onAction(act, modal) {
+        if (act !== 'send') return;
+        const form = modal.querySelector('#fp-form');
+        if (!form.reportValidity()) return 'keep';
+        const out = modal.querySelector('#fp-out');
+        out.innerHTML = '<div class="loading"><span class="spinner"></span></div>';
+        try {
+          const res = await API.post('/api/auth/forgot-password', UI.formValues(form));
+          out.innerHTML = `<div class="alert ok mt">${UI.esc(res.message)}</div>` +
+            (res.devLink
+              ? `<div class="alert warn"><b>Offline mode.</b> ${UI.esc(res.devNote || '')}
+                   <div class="mt"><a href="${UI.esc(res.devLink)}" class="btn sm block">Open the reset link</a></div>
+                 </div>`
+              : '');
+        } catch (err) {
+          out.innerHTML = `<div class="alert danger mt">${UI.esc(err.message)}</div>`;
+        }
+        return 'keep';
+      },
+    });
+  }
+
+  /**
+   * The screen a reset link opens. Reachable signed out, so it lives outside
+   * the normal router.
+   */
+  async function renderReset(token) {
+    if (window.UI && UI.closeAllModals) UI.closeAllModals();
+    const root = document.getElementById('root');
+    root.innerHTML = `
+      <div class="login-shell">
+        <div class="login-hero">
+          <img class="logo-full" src="/assets/logo.svg" alt="Samiha Healthcare">
+          <h1>Choose a new password</h1>
+          <p>Pick something you have not used elsewhere. Everyone signed in with the old
+             password will be signed out.</p>
+        </div>
+        <div class="login-panel">
+          <div class="login-card" id="reset-card"><div class="loading"><span class="spinner"></span></div></div>
+        </div>
+      </div>`;
+
+    const card = document.getElementById('reset-card');
+    let info;
+    try {
+      info = await API.get(`/api/auth/reset-password/${encodeURIComponent(token)}`);
+    } catch (err) {
+      card.innerHTML = `<h2>Link no longer valid</h2>
+        <div class="alert danger mt">${UI.esc(err.message)}</div>
+        <button class="btn block mt" id="back-login">Back to sign in</button>`;
+      document.getElementById('back-login').addEventListener('click', () => {
+        window.location.hash = '';
+        renderLogin();
+      });
+      return;
+    }
+
+    card.innerHTML = `
+      <h2>New password</h2>
+      <div class="muted mb">for <b>${UI.esc(info.name)}</b> · ${UI.esc(info.email || info.staffCode)}</div>
+      <form id="reset-form">
+        ${UI.password({ name: 'newPassword', label: 'New password', required: true,
+          autocomplete: 'new-password', meter: true,
+          hint: 'At least 8 characters, with a letter and a number.' })}
+        ${UI.password({ name: 'confirm', label: 'Type it again', required: true, autocomplete: 'new-password' })}
+        <button class="btn block" type="submit">Set the new password</button>
+      </form>
+      <div id="reset-out"></div>`;
+
+    UI.wirePasswords(card);
+    document.getElementById('reset-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const v = UI.formValues(e.target);
+      const out = document.getElementById('reset-out');
+      if (v.newPassword !== v.confirm) {
+        out.innerHTML = '<div class="alert danger mt">The two passwords do not match. Use the eye icon to compare them.</div>';
+        return;
+      }
+      const btn = e.target.querySelector('button[type=submit]');
+      btn.disabled = true;
+      try {
+        const res = await API.post('/api/auth/reset-password', { token, newPassword: v.newPassword });
+        out.innerHTML = `<div class="alert ok mt">${UI.esc(res.message)}</div>`;
+        setTimeout(() => { window.location.hash = ''; renderLogin(); }, 1600);
+      } catch (err) {
+        out.innerHTML = `<div class="alert danger mt">${UI.esc(err.message)}</div>`;
+        btn.disabled = false;
+      }
+    });
+  }
+
   // ------------------------------------------------------------------ shell
   function renderShell() {
+    if (window.UI && UI.closeAllModals) UI.closeAllModals();
     document.getElementById('root').innerHTML = `
       <div class="app">
         <aside class="sidebar">
@@ -159,7 +292,10 @@
           <div class="sidebar-foot">
             <div class="who">${UI.esc(APP.user.name)}</div>
             <div class="role">${UI.esc(APP.user.role)}${APP.user.departmentName ? ' · ' + UI.esc(APP.user.departmentName) : ''}</div>
-            <button id="logout">Sign out</button>
+            <div class="btn-row" style="margin-top:9px">
+              <button id="my-account" style="flex:1">My account</button>
+              <button id="logout" style="flex:1">Sign out</button>
+            </div>
           </div>
         </aside>
         <div class="main">
@@ -177,6 +313,7 @@
 
     renderNav();
     document.getElementById('logout').addEventListener('click', APP.logout);
+    document.getElementById('my-account').addEventListener('click', () => APP.navigate('account'));
   }
 
   function renderNav() {
@@ -283,7 +420,11 @@
     if (el) el.textContent = text;
   };
 
-  window.addEventListener('hashchange', router);
+  window.addEventListener('hashchange', () => {
+    const { route, params } = parseHash();
+    if (route === 'reset' && params.token) return renderReset(params.token);
+    router();
+  });
   window.addEventListener('samiha:unauthorised', renderLogin);
   document.addEventListener('DOMContentLoaded', APP.boot);
   if (document.readyState !== 'loading') APP.boot();
