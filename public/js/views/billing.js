@@ -260,6 +260,7 @@
           <button class="btn ghost" data-inv="exception">Document exception</button>
           <button class="btn ghost" data-inv="assistance">Cover by assistance programme</button>` : ''}
         <button class="btn ghost" data-inv="item">Add a charge</button>
+        <button class="btn ghost" data-inv="claim">Raise an insurance claim</button>
       </div>`;
   }
 
@@ -271,6 +272,7 @@
       if (act === 'exception') openException(inv, refresh);
       if (act === 'assistance') openAssistance(inv, refresh);
       if (act === 'item') openAddItem(inv, refresh);
+      if (act === 'claim') openClaimFromInvoice(inv, refresh);
     }));
     document.querySelectorAll('[data-pay-inst]').forEach((b) => b.addEventListener('click', async () => {
       const amount = prompt('Amount to collect for this instalment?');
@@ -439,6 +441,43 @@
     });
   }
 
+  /** Shortcut from a bill straight into a claim, using the patient's policies. */
+  async function openClaimFromInvoice(inv, refresh) {
+    const ins = await API.get(`/api/insurance/patient/${inv.patient_id}`);
+    if (!ins.policies.length) {
+      return UI.err('No insurance policy on file for this patient. Add one under Insurance & TPA.');
+    }
+    const approved = ins.preauths.filter((p) => ['approved', 'partially_approved'].includes(p.status));
+    UI.modal({
+      title: `Raise a claim on ${inv.invoice_no}`,
+      body: `<div class="alert info">The claim is built from this bill's own lines. Obvious exclusions are
+          pre-marked as non-admissible for you to confirm.</div>
+        <form id="cfi-form">
+          ${UI.field({ name: 'policyId', label: 'Policy', required: true,
+            options: ins.policies.map((p) => ({ value: p.id, label: `${p.insurer_name} · ${p.policy_no} (balance ${p.balance})` })) })}
+          ${UI.field({ name: 'preauthId', label: 'Against pre-authorisation',
+            options: [{ value: '', label: '— none —' }].concat(approved.map((p) =>
+              ({ value: p.id, label: `${p.preauth_no} · approved ${p.approved_amount}` }))) })}
+          ${UI.field({ name: 'claimType', label: 'Claim type', value: approved.length ? 'cashless' : 'reimbursement',
+            options: [{ value: 'cashless', label: 'Cashless — insurer pays the clinic' },
+                      { value: 'reimbursement', label: 'Reimbursement — insurer pays the patient' }] })}
+        </form>`,
+      footer: `<button class="btn ghost" data-act="__close">Cancel</button>
+               <button class="btn" data-act="save">Build the claim</button>`,
+      async onAction(act, modal) {
+        if (act !== 'save') return;
+        const form = modal.querySelector('#cfi-form');
+        if (!form.reportValidity()) return 'keep';
+        const claim = await API.post('/api/insurance/claims', {
+          invoiceId: inv.id, ...UI.formValues(form),
+        });
+        UI.ok(`Claim ${claim.claim_no} built.`);
+        APP.navigate('insurance', { claimId: claim.id });
+      },
+    });
+    void refresh;
+  }
+
   // ----------------------------------------------------------- invoice modal
   async function openInvoice(id) {
     const inv = await API.get(`/api/billing/invoices/${id}`);
@@ -448,7 +487,7 @@
       body: invoiceBody(inv),
       footer: `<button class="btn ghost" data-act="print">Print invoice</button>
                <button class="btn ghost" data-act="__close">Close</button>`,
-      onMount() { wireInvoiceActions(inv, () => { UI.closeModal(); openInvoice(id); }); },
+      onMount() { wireInvoiceActions(inv, () => { UI.closeAllModals(); openInvoice(id); }); },
       onAction(act) { if (act === 'print') { printInvoice(inv); return 'keep'; } },
     });
   }

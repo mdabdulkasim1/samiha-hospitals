@@ -129,6 +129,28 @@ status: `400` invalid input · `401` not signed in · `403` wrong role · `404` 
 | POST | `/ipd/admissions/:id/discharge` | doctor, ward, cashier |
 | GET | `/ipd/admissions/:id/discharge-summary` | clinical desks |
 
+## Insurance / TPA
+Full detail and the accounting model in [`INSURANCE.md`](INSURANCE.md).
+
+| Method | Path | Roles |
+|---|---|---|
+| GET | `/insurance/insurers?kind=` | cashier, reception, counselor, doctor, ward, nurse |
+| POST/PATCH | `/insurance/insurers[/:id]` | admin, cashier |
+| GET | `/insurance/policies?patientId=` | view roles |
+| POST/PATCH | `/insurance/policies[/:id]` | cashier, reception, counselor |
+| POST | `/insurance/policies/:id/verify` | cashier, reception, counselor |
+| GET | `/insurance/policies/:id/eligibility?estimate=&roomTariff=&stayDays=` | view roles |
+| GET | `/insurance/preauths?status=&patientId=` · `/preauths/:id` | view roles |
+| POST | `/insurance/preauths` | cashier, reception, counselor, doctor, ward |
+| PATCH | `/insurance/preauths/:id` | cashier, reception, counselor, doctor |
+| POST | `/insurance/preauths/:id/submit` · `/query` · `/decision` · `/enhance` · `/withdraw` | cashier, reception, counselor |
+| GET | `/insurance/claims?status=&insurerId=&patientId=` · `/claims/:id` | view roles |
+| POST | `/insurance/claims` | cashier, reception, counselor |
+| PATCH | `/insurance/claims/:id/items/:itemId` | cashier, reception, counselor |
+| POST | `/insurance/claims/:id/submit` · `/query` · `/decision` · `/settle` · `/cancel` | cashier, reception, counselor |
+| GET/POST/PATCH | `/insurance/documents[/:id]` | view roles |
+| GET | `/insurance/receivables` · `/insurance/patient/:patientId` | view roles |
+
 ## WhatsApp
 | Method | Path | Roles |
 |---|---|---|

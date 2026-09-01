@@ -26,6 +26,11 @@ APP.register('dashboard', {
           `${d.ipd.beds.occupancyPct}% occupancy · ${UI.num(d.ipd.currentInPatients)} in-patient(s)`)}
       </div>
 
+      ${d.insurance && d.insurance.receivable > 0 ? `<div class="alert info mb" style="cursor:pointer" onclick="APP.navigate('insurance')">
+        <b>${UI.money(d.insurance.receivable)}</b> approved by insurers but not yet received.
+        ${d.insurance.overdueClaims ? `<b>${d.insurance.overdueClaims}</b> claim(s) are past their settlement date.` : ''}
+      </div>` : ''}
+
       <div class="grid sidebar-right">
         <div>
           <div class="card">
@@ -135,6 +140,14 @@ function attentionList(d) {
   if (d.pharmacy.lowStockCount) items.push(['danger', `${d.pharmacy.lowStockCount} medicine(s) at or below reorder level`, 'pharmacy']);
   if (d.enquiries.open) items.push(['info', `${d.enquiries.open} open enquiry/enquiries to follow up`, 'enquiries']);
   if (d.revenue.outstanding > 0) items.push(['warn', `${UI.money(d.revenue.outstanding)} outstanding across unpaid bills`, 'billing']);
+  if (d.insurance) {
+    const ins = d.insurance;
+    if (ins.preauthQueries) items.push(['orange', `${ins.preauthQueries} pre-authorisation query/queries from insurers to answer`, 'insurance']);
+    if (ins.claimQueries) items.push(['orange', `${ins.claimQueries} claim query/queries to answer`, 'insurance']);
+    if (ins.preauthDraft) items.push(['info', `${ins.preauthDraft} pre-authorisation(s) drafted but not sent`, 'insurance']);
+    if (ins.claimDraft) items.push(['info', `${ins.claimDraft} claim(s) built but not submitted`, 'insurance']);
+    if (ins.overdueClaims) items.push(['danger', `${ins.overdueClaims} claim(s) past their settlement date — chase the insurer`, 'insurance']);
+  }
   if (!items.length) return UI.empty('Nothing needs chasing. 👏', '✅');
   return items.map(([kind, text, route]) =>
     `<div class="alert ${kind}" style="cursor:pointer" onclick="APP.navigate('${route}')">${UI.esc(text)}</div>`).join('');

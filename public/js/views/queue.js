@@ -204,7 +204,7 @@
             ${visit.is_new_patient ? UI.badge('New patient', 'crimson') : ''}
             ${visit.screening_due ? UI.badge('Yearly screening due', 'orange') : ''}
           </div>
-          <a class="btn ghost sm" href="#/patients?id=${visit.patient_id}" onclick="UI.closeModal()">Open patient record</a>
+          <a class="btn ghost sm" href="#/patients?id=${visit.patient_id}" onclick="UI.closeAllModals()">Open patient record</a>
         </div>
 
         ${visit.allergies ? `<div class="alert danger">⚠ <b>Allergies:</b> ${UI.esc(visit.allergies)}</div>` : ''}
@@ -286,7 +286,7 @@
   /** Suggest the next workflow step, filtered by what this user may do. */
   function nextActions(visit) {
     const out = [];
-    const go = (route, params) => () => { UI.closeModal(); APP.navigate(route, params); };
+    const go = (route, params) => () => { UI.closeAllModals(); APP.navigate(route, params); };
 
     if (visit.status === 'financial_screening' && APP.can(['counselor', 'reception', 'cashier'])) {
       out.push({ id: 'fs', label: 'Financial screening', kind: '', run: go('financial', { visitId: visit.id, patientId: visit.patient_id }) });
@@ -329,6 +329,7 @@
         if (!values.reasonForVisit) { UI.err('Reason for visit is required.'); return 'keep'; }
         await API.post(`/api/visits/${visit.id}/check-in`, values);
         UI.ok('Checked in — the patient can move to the vitals station.');
+        UI.closeAllModals();
         APP.reload();
       },
     });
@@ -336,7 +337,7 @@
 
   /** "Provider Gives Results Page to Patient" — the printable carry sheet. */
   async function printResultsPage(visitId) {
-    UI.closeModal();
+    UI.closeAllModals();
     const p = await API.get(`/api/visits/${visitId}/results-page`);
     const v = p.vitals;
     const html = `<div class="doc">

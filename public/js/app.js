@@ -22,6 +22,7 @@
     ]},
     { group: 'Money', items: [
       { id: 'billing',     label: 'Billing & Payments', icon: '₹', roles: ['admin','cashier','reception','counselor'] },
+      { id: 'insurance',   label: 'Insurance & TPA',    icon: '⛨', roles: ['admin','cashier','reception','counselor','doctor','ward','nurse'] },
     ]},
     { group: 'Channels & insight', items: [
       { id: 'whatsapp',    label: 'WhatsApp',         icon: '✆', roles: '*' },
@@ -211,6 +212,7 @@
       set('lab', d.lab.pending || 0);
       set('financial', (d.financialScreening.waiting || 0) + (d.financialScreening.docs_pending || 0));
       set('pharmacy', d.pharmacy.lowStockCount || 0);
+      set('insurance', d.insurance ? (d.insurance.actionable || 0) : 0);
       APP.badges = d;
     } catch { /* the dashboard is best-effort */ }
   }
@@ -227,6 +229,9 @@
 
   async function router() {
     if (!APP.user) return;
+    // Any dialog belongs to the page it was opened from — including when the
+    // hash changes through the browser's back button rather than APP.navigate.
+    if (window.UI && UI.closeAllModals) UI.closeAllModals();
     const { route, params } = parseHash();
     const view = APP.views[route];
 

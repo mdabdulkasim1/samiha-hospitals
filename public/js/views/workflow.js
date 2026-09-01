@@ -64,6 +64,7 @@
     ['⌸ In-patient records', 'Bed board, admission, transfers, doctor rounds and nursing notes, medication administration record, accrued charges, discharge summary.', 'ipd'],
     ['◔ Turnaround analytics', 'Average minutes in each lane, so you can see exactly where the queue jams.', 'reports'],
     ['⚖ Sliding scale', 'Income against the poverty guideline gives an FPL percentage, a band, a discount, and the programmes the patient qualifies for.', 'financial'],
+    ['⛨ Insurance & TPA', 'Policies with sum-insured, co-pay and room-rent caps; cashless pre-authorisation with queries and enhancements; claims from the bill through to settlement and receivables ageing.', 'insurance'],
   ];
 
   APP.register('workflow', {
@@ -124,6 +125,9 @@
                 <li>A bed cannot be double-booked, and a patient cannot be admitted twice.</li>
                 <li>Two appointments cannot take the same slot with the same doctor.</li>
                 <li>Discharge posts bed-day charges automatically and blocks on an unsettled bill.</li>
+                <li>An insurer's approval sits on the bill as cover, so a cashless patient owes only their
+                    own share — and any settlement <b>shortfall returns to their balance</b> automatically.</li>
+                <li>A pre-authorisation cannot be approved beyond the sum insured left on the policy.</li>
                 <li>Every state change is written to an immutable <b>visit trail</b> and the <b>audit log</b>.</li>
               </ul>
             </div>

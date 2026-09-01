@@ -95,6 +95,12 @@ function applySlidingScale(invoiceId, discountPct) {
   return recalc(invoiceId);
 }
 
+/** Set what the insurer is currently standing behind on this invoice. */
+function applyInsurance(invoiceId, amount) {
+  db.prepare('UPDATE invoices SET insurance_covered = ? WHERE id = ?').run(round2(amount), invoiceId);
+  return recalc(invoiceId);
+}
+
 function applyAssistance(invoiceId, amount) {
   db.prepare('UPDATE invoices SET assistance_covered = ? WHERE id = ?').run(round2(amount), invoiceId);
   return recalc(invoiceId);
@@ -136,5 +142,5 @@ function fullInvoice(invoiceId) {
 
 module.exports = {
   round2, recalc, createInvoice, addItem, hasItem,
-  applySlidingScale, applyAssistance, addPayment, fullInvoice,
+  applySlidingScale, applyAssistance, applyInsurance, addPayment, fullInvoice,
 };

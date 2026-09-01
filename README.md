@@ -150,6 +150,7 @@ documented exception exists. Check-out books the follow-up and issues an exit pa
 | **Pharmacy** | Batch and expiry tracking, first-expiry-first-out allocation, allergy safety check, stock ledger, low-stock and expiry alerts. |
 | **In-patient** | Bed board, admission, transfers, doctor rounds and nursing notes, medication administration record, accrued charges, discharge summary and settlement. |
 | **Billing** | Invoices, receipts, instalment agreements, documented exceptions, assistance cover, day book. |
+| **Insurance & TPA** | Empanelled insurers and TPAs, patient policies with sum-insured, co-pay and room-rent caps, cashless pre-authorisation with queries and enhancements, claims from the bill through to settlement, and receivables ageing. See [`docs/INSURANCE.md`](docs/INSURANCE.md). |
 | **Reports** | Footfall and revenue trends, doctor productivity, **stage-by-stage turnaround**, audit log. |
 
 ## Guardrails
@@ -163,6 +164,11 @@ These are enforced in the API, not just the interface:
 - A diagnostic report cannot be released until every test in the order has a result.
 - A bed cannot be double-booked; a patient cannot be admitted twice; two appointments cannot
   take the same slot with the same doctor.
+- A pre-authorisation cannot be approved beyond the sum insured left on the policy, and a
+  settlement cannot exceed what was approved.
+- An insurer's approval sits on the bill as cover, so a cashless patient owes only their own
+  share — and any settlement **shortfall returns to their balance** rather than being
+  silently written off.
 - Discharge posts bed-day charges automatically and blocks on an unsettled bill.
 - Every state change is written to an immutable **visit trail** and the **audit log**.
 
@@ -176,12 +182,13 @@ src/
 │   ├── schema.sql       The full data model (~40 tables)
 │   └── seed.js          Departments, staff, formulary, tests, wards, sliding scale
 ├── lib/                 auth (scrypt + sessions), ids, validation, audit, http errors
-├── services/            slidingScale · billing · pharmacy · scheduling
+├── services/            slidingScale · billing · pharmacy · scheduling · insurance
 │                        whatsapp (transport) · whatsappBot (conversation) · notifications
 └── routes/              auth · masters · patients · enquiries · appointments · visits
-                         financial · lab · pharmacy · billing · ipd · whatsapp · reports
+                         financial · lab · pharmacy · billing · ipd · insurance
+                         whatsapp · reports
 public/                  Zero-build front end: vanilla JS SPA, hash routing, printable documents
-tests/smoke.test.js      End-to-end walk of the whole workflow
+tests/                   End-to-end walks of the whole workflow and the insurance lifecycle
 ```
 
 **Stack:** Node.js 20+, Express and SQLite (via `better-sqlite3`) — two runtime dependencies,
@@ -210,6 +217,8 @@ Everything lives in `.env` — see [`.env.example`](.env.example). The essential
 3. Replace the seeded formulary, service prices, lab tariffs and ward tariffs with your own.
 4. Set the poverty guideline and sliding-scale bands to your clinic's actual policy —
    the seeded figures are illustrative.
-5. Schedule a backup of the database file, and test restoring it.
-6. Check local requirements for medical-record retention, prescription rules for Schedule H
+5. Replace the seeded insurer turnaround times, settlement periods and tariff discounts with
+   the terms in your own empanelment agreements.
+6. Schedule a backup of the database file, and test restoring it.
+7. Check local requirements for medical-record retention, prescription rules for Schedule H
    medicines, and invoice/GST formats.

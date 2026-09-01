@@ -37,6 +37,8 @@ const generators = {
   paymentPlan: () => `PPA${yymm()}${pad(nextSeq(`ppa-${yymm()}`), 4)}`,
   exitPass:    () => `EX${yymm()}${pad(nextSeq(`exit-${yymm()}`), 5)}`,
   staff:       () => `EMP${pad(nextSeq('staff'), 4)}`,
+  preauth:     () => `PA${yymm()}${pad(nextSeq(`pa-${yymm()}`), 4)}`,
+  claim:       () => `CLM${yymm()}${pad(nextSeq(`clm-${yymm()}`), 5)}`,
 };
 
 function generate(kind) {

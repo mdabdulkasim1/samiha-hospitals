@@ -95,10 +95,10 @@
      */
     modal({ title, body, footer = '', size = '', onMount, onAction }) {
       const root = document.getElementById('modal-root');
-      // Tear down any modal already open, so its handlers cannot fire on this one.
-      UI.closeModal();
-
-      root.innerHTML = `
+      // Modals stack: a confirmation opened from inside a modal sits on top of
+      // it, and dismissing the confirmation returns you to what you were doing.
+      const holder = document.createElement('div');
+      holder.innerHTML = `
         <div class="modal-backdrop">
           <div class="modal ${size}" role="dialog" aria-modal="true">
             <header><h2>${esc(title)}</h2><button class="x" data-act="__close" aria-label="Close">×</button></header>
@@ -107,16 +107,19 @@
           </div>
         </div>`;
 
-      // Listeners live on the backdrop, which is replaced with every modal —
+      // Listeners live on this modal's own backdrop, so they die with it —
       // binding them to #modal-root would leak handlers between modals.
-      const backdrop = root.querySelector('.modal-backdrop');
-      const onKey = (e) => { if (e.key === 'Escape') close(); };
+      const backdrop = holder.firstElementChild;
+      root.appendChild(backdrop);
+
+      const onKey = (e) => { if (e.key === 'Escape' && UI._modals[UI._modals.length - 1] === close) close(); };
       const close = () => {
         document.removeEventListener('keydown', onKey);
-        if (UI._activeModalClose === close) UI._activeModalClose = null;
+        const i = UI._modals.indexOf(close);
+        if (i !== -1) UI._modals.splice(i, 1);
         if (backdrop.isConnected) backdrop.remove();
       };
-      UI._activeModalClose = close;
+      UI._modals.push(close);
       document.addEventListener('keydown', onKey);
 
       backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(); });
@@ -143,9 +146,15 @@
       if (focusable) focusable.focus();
       return { close, el: modalEl };
     },
-    _activeModalClose: null,
+    _modals: [],
+    /** Close the top-most modal, returning to whatever is underneath. */
     closeModal() {
-      if (UI._activeModalClose) UI._activeModalClose();
+      const top = UI._modals[UI._modals.length - 1];
+      if (top) top();
+    },
+    /** Close every open modal — used when navigating away. */
+    closeAllModals() {
+      while (UI._modals.length) UI._modals[UI._modals.length - 1]();
       document.getElementById('modal-root').innerHTML = '';
     },
 

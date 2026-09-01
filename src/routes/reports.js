@@ -78,6 +78,30 @@ router.get('/dashboard', requireAuth, wrap((req, res) => {
               SUM(CASE WHEN source = 'whatsapp' THEN 1 ELSE 0 END) AS via_whatsapp
          FROM enquiries WHERE date(created_at) = ?`
     ).get(date),
+    insurance: (() => {
+      const pa = db.prepare(
+        `SELECT SUM(CASE WHEN status = 'draft' THEN 1 ELSE 0 END) AS draft,
+                SUM(CASE WHEN status = 'query_raised' THEN 1 ELSE 0 END) AS queries,
+                SUM(CASE WHEN status = 'submitted' THEN 1 ELSE 0 END) AS awaiting
+           FROM preauths`
+      ).get();
+      const cl = db.prepare(
+        `SELECT SUM(CASE WHEN status = 'draft' THEN 1 ELSE 0 END) AS draft,
+                SUM(CASE WHEN status = 'query_raised' THEN 1 ELSE 0 END) AS queries,
+                COALESCE(SUM(CASE WHEN status IN ('approved','partially_settled')
+                             THEN approved_amount - settled_amount ELSE 0 END), 0) AS receivable,
+                SUM(CASE WHEN status IN ('submitted','under_process','query_raised','approved','partially_settled')
+                         AND due_at IS NOT NULL AND date(due_at) < date('now') THEN 1 ELSE 0 END) AS overdue
+           FROM claims`
+      ).get();
+      return {
+        preauthDraft: pa.draft || 0, preauthQueries: pa.queries || 0, preauthAwaiting: pa.awaiting || 0,
+        claimDraft: cl.draft || 0, claimQueries: cl.queries || 0,
+        receivable: cl.receivable || 0, overdueClaims: cl.overdue || 0,
+        // Everything a human has to act on right now.
+        actionable: (pa.draft || 0) + (pa.queries || 0) + (cl.draft || 0) + (cl.queries || 0) + (cl.overdue || 0),
+      };
+    })(),
     financialScreening: db.prepare(
       `SELECT SUM(CASE WHEN status = 'awaiting_counselor' THEN 1 ELSE 0 END) AS waiting,
               SUM(CASE WHEN status = 'docs_pending' THEN 1 ELSE 0 END) AS docs_pending,

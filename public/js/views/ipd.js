@@ -194,6 +194,7 @@
         <button data-tab="vitals">Vitals</button>
         <button data-tab="charges">Charges &amp; bill</button>
         <button data-tab="orders">Diagnostics</button>
+        <button data-tab="insurance">Insurance</button>
       </div>
       <div id="ad-body"></div>`;
 
@@ -318,6 +319,49 @@
         if (ac) ac.addEventListener('click', () => openCharge(a.id));
         const oi = body.querySelector('#open-inv');
         if (oi) oi.addEventListener('click', () => APP.openInvoice(a.invoice.id));
+      },
+
+      async insurance() {
+        body.innerHTML = UI.loading();
+        const ins = await API.get(`/api/insurance/patient/${a.patient_id}`);
+        const forThis = ins.preauths.filter((p) => p.admission_id === a.id);
+        const covered = a.invoice ? a.invoice.insurance_covered : 0;
+        body.innerHTML = `
+          <div class="card">
+            <div class="card-head"><h3>Cashless position</h3>
+              ${canWrite && APP.can(['cashier', 'reception', 'counselor', 'ward'])
+                ? '<button class="btn ghost sm" id="raise-pa">+ Pre-authorisation</button>' : ''}</div>
+            <div class="card-body">
+              ${ins.policies.length ? '' : '<div class="alert warn">No policy on file for this patient — the bill is entirely self-pay.</div>'}
+              <div class="grid c3">
+                <div class="stat teal"><div class="label">Bill so far</div>
+                  <div class="value" style="font-size:20px">${a.invoice ? UI.money(a.invoice.gross) : UI.money(0)}</div></div>
+                <div class="stat ok"><div class="label">Insurer carrying</div>
+                  <div class="value" style="font-size:20px">${UI.money(covered)}</div>
+                  <div class="foot">From approved pre-authorisation</div></div>
+                <div class="stat crimson"><div class="label">Patient owes</div>
+                  <div class="value" style="font-size:20px">${a.invoice ? UI.money(a.invoice.balance) : UI.money(0)}</div>
+                  <div class="foot">Co-pay and non-admissible</div></div>
+              </div>
+            </div>
+            <div class="card-body tight">${UI.table([
+              { label: 'Ref', render: (p) => `<code>${UI.esc(p.preauth_no)}</code>` +
+                (p.kind === 'enhancement' ? ' ' + UI.badge('Enhancement', 'orange') : '') },
+              { label: 'Insurer', render: (p) => UI.esc(p.insurer_name) },
+              { label: 'Requested', num: true, render: (p) => UI.money(p.requested_amount) },
+              { label: 'Approved', num: true, render: (p) => UI.money(p.approved_amount) },
+              { label: 'Co-pay', num: true, render: (p) => UI.money(p.copay_amount) },
+              { label: 'Status', render: (p) => UI.statusBadge(p.status) },
+            ], forThis, { emptyText: 'No pre-authorisation raised for this admission.' })}</div>
+          </div>`;
+        const tw = body.querySelector('.table-wrap');
+        if (tw) UI.bindRows(tw, forThis, (p) => APP.openPreauth(p.id, () => tabs.insurance()));
+        const raise = body.querySelector('#raise-pa');
+        if (raise) raise.addEventListener('click', async () => {
+          if (!ins.policies.length) return UI.err('Add a policy for this patient first.');
+          const policies = await API.get(`/api/insurance/policies?patientId=${a.patient_id}`);
+          APP.openPreauthForm(policies[0]);
+        });
       },
 
       orders() {
@@ -445,7 +489,7 @@
             modal.querySelector('#dc-out').innerHTML =
               `<div class="alert danger mt"><b>${UI.esc(res.error)}</b><br>${UI.esc(res.hint)}
                <button class="btn sm mt" id="dc-bill">Open the bill</button></div>`;
-            modal.querySelector('#dc-bill').addEventListener('click', () => { UI.closeModal(); APP.openInvoice(res.invoice.id); });
+            modal.querySelector('#dc-bill').addEventListener('click', () => { UI.closeAllModals(); APP.openInvoice(res.invoice.id); });
             return 'keep';
           }
           UI.ok(`Discharged after ${res.days} day(s). Bed released for cleaning.`);

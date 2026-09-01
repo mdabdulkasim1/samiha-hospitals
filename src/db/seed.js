@@ -285,6 +285,40 @@ for (const [code, title, chapter] of icd) {
   db.prepare('INSERT OR IGNORE INTO icd_codes (code, title, chapter) VALUES (?, ?, ?)').run(code, title, chapter);
 }
 
+// --------------------------------------------------------- insurers & TPAs
+const tpas = [
+  { code: 'MEDIASSIST', name: 'Medi Assist Insurance TPA', kind: 'tpa', settlement_days: 30, preauth_tat_hours: 6 },
+  { code: 'PARAMOUNT', name: 'Paramount Health Services TPA', kind: 'tpa', settlement_days: 45, preauth_tat_hours: 8 },
+  { code: 'VIDAL', name: 'Vidal Health TPA', kind: 'tpa', settlement_days: 30, preauth_tat_hours: 6 },
+  { code: 'MDINDIA', name: 'MDIndia Health Insurance TPA', kind: 'tpa', settlement_days: 45, preauth_tat_hours: 12 },
+];
+for (const t of tpas) upsert('insurers', 'code', { ...t, cashless: 1 });
+
+const tpaId = (code) => db.prepare('SELECT id FROM insurers WHERE code = ?').get(code).id;
+
+const insurers = [
+  { code: 'STAR', name: 'Star Health & Allied Insurance', kind: 'insurer',
+    administered_by: null, settlement_days: 30, preauth_tat_hours: 4, tariff_discount_pct: 10 },
+  { code: 'ICICILOM', name: 'ICICI Lombard General Insurance', kind: 'insurer',
+    administered_by: tpaId('MEDIASSIST'), settlement_days: 30, preauth_tat_hours: 6, tariff_discount_pct: 12 },
+  { code: 'NIVABUPA', name: 'Niva Bupa Health Insurance', kind: 'insurer',
+    administered_by: null, settlement_days: 30, preauth_tat_hours: 4, tariff_discount_pct: 10 },
+  { code: 'HDFCERGO', name: 'HDFC ERGO General Insurance', kind: 'insurer',
+    administered_by: tpaId('VIDAL'), settlement_days: 45, preauth_tat_hours: 8, tariff_discount_pct: 10 },
+  { code: 'NIACL', name: 'New India Assurance', kind: 'insurer',
+    administered_by: tpaId('MDINDIA'), settlement_days: 60, preauth_tat_hours: 12, tariff_discount_pct: 15 },
+  { code: 'ORIENTAL', name: 'Oriental Insurance', kind: 'insurer',
+    administered_by: tpaId('PARAMOUNT'), settlement_days: 60, preauth_tat_hours: 12, tariff_discount_pct: 15 },
+  { code: 'PMJAY', name: 'Ayushman Bharat PM-JAY', kind: 'government_scheme',
+    administered_by: null, settlement_days: 15, preauth_tat_hours: 6, tariff_discount_pct: 30,
+    notes: 'Package rates are fixed by the scheme; no co-pay for beneficiaries.' },
+  { code: 'CGHS', name: 'CGHS', kind: 'government_scheme',
+    administered_by: null, settlement_days: 90, preauth_tat_hours: 48, tariff_discount_pct: 25 },
+  { code: 'ESIC', name: 'ESIC', kind: 'government_scheme',
+    administered_by: null, settlement_days: 90, preauth_tat_hours: 48, tariff_discount_pct: 25 },
+];
+for (const i of insurers) upsert('insurers', 'code', { ...i, cashless: 1 });
+
 // ---------------------------------------------------------------- settings
 for (const [key, value] of [
   ['clinic.tagline', 'Care • Compassion • Commitment'],
@@ -329,6 +363,8 @@ console.log('  Staff       :', db.prepare('SELECT COUNT(*) AS c FROM users').get
 console.log('  Lab tests   :', db.prepare('SELECT COUNT(*) AS c FROM lab_tests').get().c);
 console.log('  Drugs       :', db.prepare('SELECT COUNT(*) AS c FROM drugs').get().c);
 console.log('  Beds        :', db.prepare('SELECT COUNT(*) AS c FROM beds').get().c);
+console.log('  Insurers    :', db.prepare("SELECT COUNT(*) AS c FROM insurers WHERE kind != 'tpa'").get().c,
+  '+', db.prepare("SELECT COUNT(*) AS c FROM insurers WHERE kind = 'tpa'").get().c, 'TPAs');
 console.log('  Patients    :', db.prepare('SELECT COUNT(*) AS c FROM patients').get().c);
 console.log('\n  Sign in with any staff email and password  samiha@123');
 console.log('  e.g. admin@samiha.local / reception@samiha.local / imran@samiha.local\n');

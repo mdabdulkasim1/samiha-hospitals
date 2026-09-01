@@ -199,6 +199,7 @@
         <button data-tab="ipd">In-patient</button>
         <button data-tab="billing">Billing</button>
         <button data-tab="financial">Financial screening</button>
+        <button data-tab="insurance">Insurance</button>
       </div>
       <div id="ptab-body"></div>`;
 
@@ -286,6 +287,8 @@
         { label: 'Status', render: (i) => UI.statusBadge(i.status) },
       ], p.invoices, { emptyText: 'No invoices raised.' })),
 
+      insurance: () => card('Insurance', '<div id="ins-pane">' + UI.loading() + '</div>'),
+
       financial: () => card('Financial screenings', UI.table([
         { label: 'Ref', key: 'screening_no' },
         { label: 'Date', render: (s) => UI.esc(UI.date(s.created_at)) },
@@ -307,9 +310,64 @@
       if (name === 'visits') UI.bindRows(body, p.visits, (v) => APP.openVisit(v.id));
       if (name === 'billing') UI.bindRows(body, p.invoices, (i) => APP.openInvoice(i.id));
       if (name === 'ipd') UI.bindRows(body, p.admissions, (a) => APP.navigate('ipd', { admissionId: a.id }));
+      if (name === 'insurance') loadInsurancePane(p);
     };
     el.querySelectorAll('#ptabs button').forEach((b) => b.addEventListener('click', () => show(b.dataset.tab)));
     show('overview');
+  }
+
+  /** Policies, pre-auths and claims for this patient, loaded on demand. */
+  async function loadInsurancePane(patient) {
+    const host = document.getElementById('ins-pane');
+    if (!host) return;
+    try {
+      const ins = await API.get(`/api/insurance/patient/${patient.id}`);
+      host.innerHTML = `
+        <div class="card-body">
+          <div class="row-between mb"><h4>Policies</h4>
+            ${APP.can(['cashier', 'reception', 'counselor'])
+              ? '<button class="btn ghost sm" id="add-policy">+ Add policy</button>' : ''}</div>
+          ${ins.policies.length ? UI.table([
+            { label: 'Insurer', render: (x) => `<b>${UI.esc(x.insurer_name)}</b> ${UI.badge(UI.titleise(x.insurer_kind), 'teal')}` },
+            { label: 'Policy no.', render: (x) => `<code>${UI.esc(x.policy_no)}</code>` },
+            { label: 'Sum insured', num: true, render: (x) => UI.money(x.sum_insured) },
+            { label: 'Balance', num: true, render: (x) => UI.money(x.balance) },
+            { label: 'Co-pay', num: true, render: (x) => `${UI.esc(x.copay_pct)}%` },
+            { label: 'Valid to', render: (x) => UI.esc(x.valid_to ? UI.date(x.valid_to) : '—') },
+            { label: 'Status', render: (x) => UI.statusBadge(x.status) },
+          ], ins.policies) : UI.empty('No policy on file — this patient is treated as uninsured.', '🛡')}
+
+          <h4 class="mt mb">Pre-authorisations</h4>
+          ${UI.table([
+            { label: 'Ref', render: (x) => `<code>${UI.esc(x.preauth_no)}</code>` },
+            { label: 'Insurer', render: (x) => UI.esc(x.insurer_name) },
+            { label: 'Diagnosis', render: (x) => UI.esc(x.diagnosis || '—') },
+            { label: 'Requested', num: true, render: (x) => UI.money(x.requested_amount) },
+            { label: 'Approved', num: true, render: (x) => UI.money(x.approved_amount) },
+            { label: 'Status', render: (x) => UI.statusBadge(x.status) },
+          ], ins.preauths, { emptyText: 'No pre-authorisation raised.' })}
+
+          <h4 class="mt mb">Claims</h4>
+          ${UI.table([
+            { label: 'Claim', render: (x) => `<code>${UI.esc(x.claim_no)}</code>` },
+            { label: 'Insurer', render: (x) => UI.esc(x.insurer_name) },
+            { label: 'Bill', render: (x) => UI.esc(x.invoice_no || '—') },
+            { label: 'Claimed', num: true, render: (x) => UI.money(x.claimed_amount) },
+            { label: 'Approved', num: true, render: (x) => UI.money(x.approved_amount) },
+            { label: 'Received', num: true, render: (x) => UI.money(x.settled_amount) },
+            { label: 'Status', render: (x) => UI.statusBadge(x.status) },
+          ], ins.claims, { emptyText: 'No claim raised.' })}
+        </div>`;
+
+      const add = host.querySelector('#add-policy');
+      if (add) add.addEventListener('click', () => APP.openPolicyForm(patient, () => loadInsurancePane(patient)));
+
+      const tables = host.querySelectorAll('.table-wrap');
+      if (tables[1]) UI.bindRows(tables[1], ins.preauths, (x) => APP.openPreauth(x.id, () => loadInsurancePane(patient)));
+      if (tables[2]) UI.bindRows(tables[2], ins.claims, (x) => APP.openClaim(x.id, () => loadInsurancePane(patient)));
+    } catch (err) {
+      host.innerHTML = `<div class="alert warn">${UI.esc(err.message)}</div>`;
+    }
   }
 
   function openEdit(p) {

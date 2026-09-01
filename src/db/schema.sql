@@ -801,3 +801,182 @@ CREATE TABLE IF NOT EXISTS counters (
   name  TEXT PRIMARY KEY,
   value INTEGER NOT NULL DEFAULT 0
 );
+
+-- =============================================================================
+-- Insurance / TPA: policies, pre-authorisation and claims
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS insurers (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  code              TEXT NOT NULL UNIQUE,
+  name              TEXT NOT NULL,
+  kind              TEXT NOT NULL DEFAULT 'insurer'
+                      CHECK (kind IN ('insurer','tpa','government_scheme','corporate')),
+  -- The TPA that administers claims for this insurer, when they differ.
+  administered_by   INTEGER REFERENCES insurers(id),
+  contact_person    TEXT,
+  phone             TEXT,
+  email             TEXT,
+  claim_email       TEXT,
+  portal_url        TEXT,
+  address           TEXT,
+  cashless          INTEGER NOT NULL DEFAULT 1,
+  preauth_tat_hours INTEGER NOT NULL DEFAULT 24,
+  settlement_days   INTEGER NOT NULL DEFAULT 30,
+  tariff_discount_pct REAL NOT NULL DEFAULT 0,
+  notes             TEXT,
+  active            INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS patient_policies (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  patient_id      INTEGER NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+  insurer_id      INTEGER NOT NULL REFERENCES insurers(id),
+  policy_no       TEXT NOT NULL,
+  member_id       TEXT,
+  card_number     TEXT,
+  scheme          TEXT DEFAULT 'retail'
+                    CHECK (scheme IN ('retail','corporate','group','government','esic','cghs')),
+  policy_holder   TEXT,
+  relationship    TEXT DEFAULT 'self',
+  sum_insured     REAL NOT NULL DEFAULT 0,
+  sum_utilised    REAL NOT NULL DEFAULT 0,
+  copay_pct       REAL NOT NULL DEFAULT 0,
+  room_rent_limit REAL,                 -- per-day cap; excess triggers proportionate deduction
+  valid_from      TEXT,
+  valid_to        TEXT,
+  waiting_till    TEXT,                 -- initial waiting period for planned procedures
+  status          TEXT NOT NULL DEFAULT 'active'
+                    CHECK (status IN ('active','expired','suspended','exhausted')),
+  verified_at     TEXT,
+  verified_by     INTEGER REFERENCES users(id),
+  notes           TEXT,
+  created_by      INTEGER REFERENCES users(id),
+  created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (patient_id, insurer_id, policy_no)
+);
+CREATE INDEX IF NOT EXISTS idx_policies_patient ON patient_policies(patient_id);
+
+-- ------------------------------------------------------- pre-authorisation
+CREATE TABLE IF NOT EXISTS preauths (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  preauth_no       TEXT NOT NULL UNIQUE,
+  patient_id       INTEGER NOT NULL REFERENCES patients(id),
+  policy_id        INTEGER NOT NULL REFERENCES patient_policies(id),
+  insurer_id       INTEGER NOT NULL REFERENCES insurers(id),
+  admission_id     INTEGER REFERENCES admissions(id),
+  visit_id         INTEGER REFERENCES visits(id),
+  doctor_id        INTEGER REFERENCES users(id),
+  kind             TEXT NOT NULL DEFAULT 'planned'
+                     CHECK (kind IN ('planned','emergency','enhancement','daycare')),
+  parent_id        INTEGER REFERENCES preauths(id),   -- set on an enhancement
+  status           TEXT NOT NULL DEFAULT 'draft'
+                     CHECK (status IN ('draft','submitted','query_raised','approved',
+                                       'partially_approved','rejected','withdrawn','expired','cancelled')),
+  icd_code         TEXT,
+  diagnosis        TEXT,
+  procedure_name   TEXT,
+  treatment_plan   TEXT,
+  clinical_notes   TEXT,
+  past_history     TEXT,
+  estimated_stay_days INTEGER,
+  room_category    TEXT,
+  requested_amount REAL NOT NULL DEFAULT 0,
+  approved_amount  REAL NOT NULL DEFAULT 0,
+  copay_amount     REAL NOT NULL DEFAULT 0,
+  approval_no      TEXT,
+  valid_till       TEXT,
+  submitted_at     TEXT,
+  decision_at      TEXT,
+  reference_no     TEXT,                              -- the insurer's own reference
+  rejection_reason TEXT,
+  remarks          TEXT,
+  created_by       INTEGER REFERENCES users(id),
+  created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_preauth_status ON preauths(status);
+CREATE INDEX IF NOT EXISTS idx_preauth_patient ON preauths(patient_id);
+
+CREATE TABLE IF NOT EXISTS preauth_events (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  preauth_id INTEGER NOT NULL REFERENCES preauths(id) ON DELETE CASCADE,
+  event      TEXT NOT NULL,
+  detail     TEXT,
+  amount     REAL,
+  actor_id   INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- --------------------------------------------------------------- claims
+CREATE TABLE IF NOT EXISTS claims (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  claim_no          TEXT NOT NULL UNIQUE,
+  patient_id        INTEGER NOT NULL REFERENCES patients(id),
+  policy_id         INTEGER NOT NULL REFERENCES patient_policies(id),
+  insurer_id        INTEGER NOT NULL REFERENCES insurers(id),
+  invoice_id        INTEGER REFERENCES invoices(id),
+  admission_id      INTEGER REFERENCES admissions(id),
+  visit_id          INTEGER REFERENCES visits(id),
+  preauth_id        INTEGER REFERENCES preauths(id),
+  claim_type        TEXT NOT NULL DEFAULT 'cashless'
+                      CHECK (claim_type IN ('cashless','reimbursement')),
+  status            TEXT NOT NULL DEFAULT 'draft'
+                      CHECK (status IN ('draft','submitted','query_raised','under_process',
+                                        'approved','settled','partially_settled','rejected','closed','cancelled')),
+  billed_amount     REAL NOT NULL DEFAULT 0,
+  claimed_amount    REAL NOT NULL DEFAULT 0,
+  approved_amount   REAL NOT NULL DEFAULT 0,
+  disallowed_amount REAL NOT NULL DEFAULT 0,
+  copay_amount      REAL NOT NULL DEFAULT 0,
+  tds_amount        REAL NOT NULL DEFAULT 0,
+  settled_amount    REAL NOT NULL DEFAULT 0,
+  disallow_reason   TEXT,
+  rejection_reason  TEXT,
+  utr_no            TEXT,
+  submitted_at      TEXT,
+  decision_at       TEXT,
+  settled_at        TEXT,
+  due_at            TEXT,                 -- expected settlement date, from the insurer's TAT
+  remarks           TEXT,
+  created_by        INTEGER REFERENCES users(id),
+  created_at        TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_claims_status ON claims(status);
+CREATE INDEX IF NOT EXISTS idx_claims_patient ON claims(patient_id);
+
+CREATE TABLE IF NOT EXISTS claim_items (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  claim_id        INTEGER NOT NULL REFERENCES claims(id) ON DELETE CASCADE,
+  invoice_item_id INTEGER REFERENCES invoice_items(id),
+  description     TEXT NOT NULL,
+  category        TEXT,
+  billed          REAL NOT NULL DEFAULT 0,
+  claimed         REAL NOT NULL DEFAULT 0,
+  approved        REAL NOT NULL DEFAULT 0,
+  disallowed      REAL NOT NULL DEFAULT 0,
+  disallow_reason TEXT,
+  admissible      INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS claim_events (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  claim_id   INTEGER NOT NULL REFERENCES claims(id) ON DELETE CASCADE,
+  event      TEXT NOT NULL,
+  detail     TEXT,
+  amount     REAL,
+  actor_id   INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Checklist of papers the insurer wants; tracked as metadata, not file storage.
+CREATE TABLE IF NOT EXISTS insurance_documents (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  preauth_id  INTEGER REFERENCES preauths(id) ON DELETE CASCADE,
+  claim_id    INTEGER REFERENCES claims(id) ON DELETE CASCADE,
+  doc_type    TEXT NOT NULL,
+  reference   TEXT,
+  provided    INTEGER NOT NULL DEFAULT 0,
+  notes       TEXT,
+  recorded_by INTEGER REFERENCES users(id),
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
