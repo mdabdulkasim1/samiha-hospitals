@@ -1,9 +1,9 @@
 'use strict';
 const express = require('express');
 const { db } = require('../db');
-const { wrap, notFound, conflict } = require('../lib/http');
+const { wrap, notFound, conflict, badRequest } = require('../lib/http');
 const { requireRole } = require('../lib/auth');
-const { required, str, int, num, bool, phone, paging } = require('../lib/validate');
+const { required, str, int, num, bool, phone, paging, oneOf } = require('../lib/validate');
 const { generate } = require('../lib/ids');
 const audit = require('../lib/audit');
 
@@ -11,6 +11,118 @@ const router = express.Router();
 const deskRoles = requireRole('reception', 'nurse', 'doctor', 'counselor', 'cashier', 'lab', 'pharmacy', 'ward');
 
 const fullName = (p) => `${p.first_name} ${p.last_name || ''}`.trim();
+
+/**
+ * The full registration dataset, mapped once so a walk-in registration and the
+ * promotion of an enquiry can never capture different things.
+ */
+function registrationMap(body) {
+  const dob = str(body.dob);
+  return {
+    // --- personal and demographic -----------------------------------------
+    title: str(body.title), first_name: str(body.firstName), last_name: str(body.lastName),
+    dob,
+    age_years: body.age !== undefined && body.age !== '' ? int(body.age) : ageFromDob(dob),
+    gender: str(body.gender),
+    sex_at_birth: oneOf(body.sexAtBirth, ['male', 'female', 'intersex'], 'sexAtBirth'),
+    phone: phone(body.phone), whatsapp: phone(body.whatsapp) || phone(body.phone),
+    email: str(body.email),
+    address: str(body.address), city: str(body.city), state: str(body.state), pincode: str(body.pincode),
+    emergency_name: str(body.emergencyName), emergency_phone: phone(body.emergencyPhone),
+    emergency_relation: str(body.emergencyRelation),
+    id_type: str(body.idType), id_number: str(body.idNumber),
+    blood_group: str(body.bloodGroup), marital_status: str(body.maritalStatus),
+
+    // --- insurance and billing --------------------------------------------
+    insurance_provider: str(body.insuranceProvider),
+    insurance_policy_no: str(body.insurancePolicyNo),
+    insurance_valid_till: str(body.insuranceValidTill),
+    // An insurer on file means they are not uninsured, whatever the tick said.
+    ...(str(body.insuranceProvider) || str(body.insurancePolicyNo) ? { is_uninsured: 0 } : {}),
+    // Falls back to the home address when the desk leaves it blank.
+    billing_address: str(body.billingAddress) || str(body.address),
+
+    // --- medical history ---------------------------------------------------
+    presenting_complaint: str(body.presentingComplaint),
+    allergies: str(body.allergies),
+    chronic_conditions: str(body.chronicConditions),
+    current_medications: str(body.currentMedications),
+    immunisations: str(body.immunisations),
+
+    // --- social history ----------------------------------------------------
+    occupation: str(body.occupation),
+    smoking_status: oneOf(body.smokingStatus, ['never', 'former', 'current', 'unknown'], 'smokingStatus'),
+    alcohol_use: oneOf(body.alcoholUse, ['never', 'occasional', 'regular', 'former', 'unknown'], 'alcoholUse'),
+
+    // --- preferred pharmacy -------------------------------------------------
+    pharmacy_name: str(body.pharmacyName), pharmacy_phone: phone(body.pharmacyPhone),
+    pharmacy_address: str(body.pharmacyAddress),
+    notes: str(body.notes),
+  };
+}
+
+/**
+ * Consent is not optional paperwork — treatment cannot lawfully proceed
+ * without it, so registration refuses to complete until it is recorded.
+ */
+function consentMap(body, userId) {
+  const treatment = bool(body.consentTreatment, false);
+  if (!treatment) {
+    throw badRequest(
+      'Consent to treatment has not been recorded. The patient (or their guardian) must agree ' +
+      'before registration can be completed.'
+    );
+  }
+  return {
+    consent_treatment: 1,
+    consent_privacy: bool(body.consentPrivacy, false) ? 1 : 0,
+    consent_contact: bool(body.consentContact, false) ? 1 : 0,
+    consent_signed_at: new Date().toISOString(),
+    consent_signed_by: str(body.consentSignedBy) || str(body.firstName),
+    consent_taken_by: userId,
+  };
+}
+
+/** History lines and any baseline vitals taken at the desk. */
+function recordIntake(patientId, body, userId) {
+  const insHistory = db.prepare(
+    'INSERT INTO patient_history (patient_id, kind, detail, since, recorded_by) VALUES (?, ?, ?, ?, ?)'
+  );
+  const add = (kind, detail) => { if (detail) insHistory.run(patientId, kind, str(detail), null, userId); };
+
+  add('past_illness', body.pastIllness);
+  add('surgery', body.surgeries);
+  add('family', body.familyHistory);
+  add('social', body.socialHistory);
+  add('allergy', body.allergies);
+  add('immunisation', body.immunisations);
+  for (const h of (Array.isArray(body.history) ? body.history : [])) {
+    if (h && h.detail) insHistory.run(patientId, h.kind || 'past_illness', str(h.detail), str(h.since), userId);
+  }
+
+  // Baseline observations, if the desk took any. Not tied to a visit.
+  const v = body.vitals || {};
+  const height = num(v.heightCm, 0);
+  const weight = num(v.weightKg, 0);
+  const any = [v.tempC, v.pulse, v.bpSystolic, v.bpDiastolic, v.spo2, v.respRate, height, weight]
+    .some((x) => x !== undefined && x !== '' && Number(x) > 0);
+  if (!any) return null;
+
+  const info = db.prepare(
+    `INSERT INTO vitals (patient_id, height_cm, weight_kg, bmi, temp_c, pulse, resp_rate,
+                         bp_systolic, bp_diastolic, spo2, notes, recorded_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(patientId, height || null, weight || null,
+        height > 0 && weight > 0 ? Math.round((weight / ((height / 100) ** 2)) * 10) / 10 : null,
+        v.tempC === undefined || v.tempC === '' ? null : num(v.tempC),
+        v.pulse === undefined || v.pulse === '' ? null : int(v.pulse),
+        v.respRate === undefined || v.respRate === '' ? null : int(v.respRate),
+        v.bpSystolic === undefined || v.bpSystolic === '' ? null : int(v.bpSystolic),
+        v.bpDiastolic === undefined || v.bpDiastolic === '' ? null : int(v.bpDiastolic),
+        v.spo2 === undefined || v.spo2 === '' ? null : int(v.spo2),
+        'Baseline taken at registration', userId);
+  return info.lastInsertRowid;
+}
 
 function ageFromDob(dob) {
   if (!dob) return null;
@@ -23,27 +135,53 @@ function ageFromDob(dob) {
 // ------------------------------------------------------------------- search
 router.get('/', deskRoles, wrap((req, res) => {
   const q = str(req.query.q, '');
+  const stage = oneOf(req.query.stage, ['enquiry', 'registered'], 'stage');
   const { limit, offset, page } = paging(req.query, 25);
   const like = `%${q}%`;
-  const where = q
-    ? `WHERE active = 1 AND (uhid LIKE ? OR first_name LIKE ? OR last_name LIKE ? OR phone LIKE ? OR whatsapp LIKE ?
-        OR (first_name || ' ' || COALESCE(last_name,'')) LIKE ?)`
-    : 'WHERE active = 1';
-  const params = q ? [like, like, like, like, like, like] : [];
+
+  const clauses = ['p.active = 1'];
+  const params = [];
+  if (q) {
+    clauses.push(`(p.uhid LIKE ? OR p.first_name LIKE ? OR p.last_name LIKE ? OR p.phone LIKE ?
+      OR p.whatsapp LIKE ? OR (p.first_name || ' ' || COALESCE(p.last_name,'')) LIKE ?)`);
+    params.push(like, like, like, like, like, like);
+  }
+  if (stage) { clauses.push('p.stage = ?'); params.push(stage); }
+  const where = `WHERE ${clauses.join(' AND ')}`;
 
   const rows = db.prepare(
-    `SELECT id, uhid, title, first_name, last_name, gender, age_years, dob, phone, whatsapp, city,
-            blood_group, is_uninsured, sliding_scale_band, allergies, registered_at
-       FROM patients ${where} ORDER BY id DESC LIMIT ? OFFSET ?`
+    `SELECT p.id, p.uhid, p.title, p.first_name, p.last_name, p.gender, p.age_years, p.dob,
+            p.phone, p.whatsapp, p.city, p.blood_group, p.is_uninsured, p.sliding_scale_band,
+            p.allergies, p.stage, p.enquiry_at, p.registered_at,
+            (SELECT COUNT(*) FROM visits v WHERE v.patient_id = p.id) AS visit_count,
+            (SELECT e.ref_no FROM enquiries e WHERE e.patient_id = p.id ORDER BY e.id LIMIT 1) AS enquiry_ref,
+            (SELECT e.source FROM enquiries e WHERE e.patient_id = p.id ORDER BY e.id LIMIT 1) AS enquiry_source
+       FROM patients p ${where}
+      ORDER BY p.id DESC LIMIT ? OFFSET ?`
   ).all(...params, limit, offset);
-  const total = db.prepare(`SELECT COUNT(*) AS c FROM patients ${where}`).get(...params).c;
-  res.json({ rows, total, page, limit });
+
+  const total = db.prepare(`SELECT COUNT(*) AS c FROM patients p ${where}`).get(...params).c;
+  const counts = db.prepare(
+    "SELECT stage, COUNT(*) AS c FROM patients WHERE active = 1 GROUP BY stage"
+  ).all().reduce((a, r) => ({ ...a, [r.stage]: r.c }), {});
+
+  res.json({
+    rows, total, page, limit,
+    counts: { enquiry: counts.enquiry || 0, registered: counts.registered || 0 },
+  });
 }));
 
 // --------------------------------------------------------------- registration
+/**
+ * "Demographic, Med. History Paperwork" — the full intake. Open to the front
+ * desk and to administrators.
+ *
+ * `stage: 'enquiry'` opens a lightweight lead record instead, which skips the
+ * consent and paperwork requirements until the person actually turns up.
+ */
 router.post('/', requireRole('reception'), wrap((req, res) => {
   required(req.body, ['firstName']);
-  const wa = phone(req.body.whatsapp || req.body.phone);
+  const stage = oneOf(req.body.stage, ['enquiry', 'registered'], 'stage') || 'registered';
   const ph = phone(req.body.phone);
 
   if (ph) {
@@ -57,41 +195,31 @@ router.post('/', requireRole('reception'), wrap((req, res) => {
   }
 
   const uhid = generate('uhid');
-  const dob = str(req.body.dob);
+  const fields = {
+    stage,
+    enquiry_at: stage === 'enquiry' ? new Date().toISOString() : null,
+    uhid,
+    is_uninsured: bool(req.body.isUninsured, true) ? 1 : 0,
+    created_by: req.user.id,
+    ...registrationMap(req.body),
+    // A lead is not asked to sign anything yet.
+    ...(stage === 'registered' ? consentMap(req.body, req.user.id) : {}),
+  };
+
+  const cols = Object.keys(fields);
   const info = db.prepare(
-    `INSERT INTO patients
-       (uhid, title, first_name, last_name, dob, age_years, gender, phone, whatsapp, email,
-        address, city, state, pincode, blood_group, marital_status, occupation,
-        emergency_name, emergency_phone, emergency_relation, id_type, id_number,
-        is_uninsured, insurance_provider, insurance_policy_no, insurance_valid_till,
-        allergies, chronic_conditions, pharmacy_name, pharmacy_phone, pharmacy_address, notes, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(
-    uhid, str(req.body.title), str(req.body.firstName), str(req.body.lastName), dob,
-    req.body.age !== undefined && req.body.age !== '' ? int(req.body.age) : ageFromDob(dob),
-    str(req.body.gender), ph, wa, str(req.body.email),
-    str(req.body.address), str(req.body.city), str(req.body.state), str(req.body.pincode),
-    str(req.body.bloodGroup), str(req.body.maritalStatus), str(req.body.occupation),
-    str(req.body.emergencyName), phone(req.body.emergencyPhone), str(req.body.emergencyRelation),
-    str(req.body.idType), str(req.body.idNumber),
-    bool(req.body.isUninsured, true) ? 1 : 0,
-    str(req.body.insuranceProvider), str(req.body.insurancePolicyNo), str(req.body.insuranceValidTill),
-    str(req.body.allergies), str(req.body.chronicConditions),
-    str(req.body.pharmacyName), phone(req.body.pharmacyPhone), str(req.body.pharmacyAddress),
-    str(req.body.notes), req.user.id
-  );
+    `INSERT INTO patients (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`
+  ).run(...cols.map((c) => fields[c]));
 
-  // "Demographic + Med History Paperwork" — history lines captured at registration.
-  const history = Array.isArray(req.body.history) ? req.body.history : [];
-  const insHistory = db.prepare(
-    'INSERT INTO patient_history (patient_id, kind, detail, since, recorded_by) VALUES (?, ?, ?, ?, ?)'
-  );
-  for (const h of history) {
-    if (h && h.detail) insHistory.run(info.lastInsertRowid, h.kind || 'past_illness', str(h.detail), str(h.since), req.user.id);
-  }
+  const patientId = info.lastInsertRowid;
+  const vitalsId = stage === 'registered' ? recordIntake(patientId, req.body, req.user.id) : null;
 
-  audit.log(req, 'register', 'patient', info.lastInsertRowid, { uhid });
-  res.status(201).json(db.prepare('SELECT * FROM patients WHERE id = ?').get(info.lastInsertRowid));
+  audit.log(req, stage === 'enquiry' ? 'create_enquiry_patient' : 'register', 'patient',
+    patientId, { uhid, stage });
+  res.status(201).json({
+    ...db.prepare('SELECT * FROM patients WHERE id = ?').get(patientId),
+    baselineVitalsRecorded: Boolean(vitalsId),
+  });
 }));
 
 // ------------------------------------------------------------------ 360 view
@@ -165,9 +293,29 @@ router.patch('/:id', requireRole('reception', 'nurse', 'doctor', 'counselor'), w
     // "Update Patient Pharmacy Information" step of the workflow
     pharmacy_name: str(req.body.pharmacyName), pharmacy_phone: phone(req.body.pharmacyPhone),
     pharmacy_address: str(req.body.pharmacyAddress),
+    // Fuller dataset, editable after registration
+    sex_at_birth: oneOf(req.body.sexAtBirth, ['male', 'female', 'intersex'], 'sexAtBirth'),
+    billing_address: str(req.body.billingAddress),
+    current_medications: str(req.body.currentMedications),
+    immunisations: str(req.body.immunisations),
+    presenting_complaint: str(req.body.presentingComplaint),
+    smoking_status: oneOf(req.body.smokingStatus, ['never', 'former', 'current', 'unknown'], 'smokingStatus'),
+    alcohol_use: oneOf(req.body.alcoholUse, ['never', 'occasional', 'regular', 'former', 'unknown'], 'alcoholUse'),
+    id_type: str(req.body.idType), id_number: str(req.body.idNumber),
+    marital_status: str(req.body.maritalStatus),
   };
   if (req.body.age !== undefined && req.body.age !== '') map.age_years = int(req.body.age);
   if (req.body.isUninsured !== undefined) map.is_uninsured = bool(req.body.isUninsured) ? 1 : 0;
+
+  // Consent can be captured or corrected later; the signature is re-stamped.
+  if (req.body.consentTreatment !== undefined) {
+    map.consent_treatment = bool(req.body.consentTreatment) ? 1 : 0;
+    map.consent_privacy = bool(req.body.consentPrivacy) ? 1 : 0;
+    map.consent_contact = bool(req.body.consentContact) ? 1 : 0;
+    map.consent_signed_by = str(req.body.consentSignedBy);
+    map.consent_signed_at = new Date().toISOString();
+    map.consent_taken_by = req.user.id;
+  }
 
   const entries = Object.entries(map).filter(([, v]) => v !== null && v !== undefined);
   if (entries.length) {
@@ -184,6 +332,49 @@ router.post('/:id/history', requireRole('reception', 'nurse', 'doctor'), wrap((r
     'INSERT INTO patient_history (patient_id, kind, detail, since, recorded_by) VALUES (?, ?, ?, ?, ?)'
   ).run(int(req.params.id), str(req.body.kind), str(req.body.detail), str(req.body.since), req.user.id);
   res.status(201).json(db.prepare('SELECT * FROM patient_history WHERE id = ?').get(info.lastInsertRowid));
+}));
+
+/**
+ * "They enquired, and now they have turned up."
+ *
+ * Completes the demographic and medical-history paperwork on an existing
+ * enquiry record and promotes it to a registered patient, keeping the same row
+ * so the enquiry, its source and any appointments already booked stay attached.
+ */
+router.post('/:id/register', requireRole('reception'), wrap((req, res) => {
+  const id = int(req.params.id);
+  const patient = db.prepare('SELECT * FROM patients WHERE id = ?').get(id);
+  if (!patient) throw notFound('Patient not found');
+  if (patient.stage === 'registered') {
+    throw conflict(`${patient.first_name} is already a registered patient (${patient.uhid}).`);
+  }
+  required(req.body, ['firstName']);
+
+  const fields = { stage: 'registered', ...registrationMap(req.body), ...consentMap(req.body, req.user.id) };
+  if (req.body.isUninsured !== undefined) fields.is_uninsured = bool(req.body.isUninsured) ? 1 : 0;
+
+  // Keep whatever the enquiry already had where the form left a blank.
+  const entries = Object.entries(fields).filter(([, v]) => v !== null && v !== undefined && v !== '');
+  db.prepare(
+    `UPDATE patients SET ${entries.map(([k]) => `${k} = ?`).join(', ')},
+            registered_at = datetime('now'), created_by = COALESCE(created_by, ?)
+      WHERE id = ?`
+  ).run(...entries.map(([, v]) => v), req.user.id, id);
+
+  const vitalsId = recordIntake(id, req.body, req.user.id);
+
+  // Close off the enquiries that brought them in.
+  db.prepare(
+    `UPDATE enquiries SET status = 'converted', closed_at = datetime('now')
+      WHERE patient_id = ? AND status IN ('new','contacted')`
+  ).run(id);
+
+  audit.log(req, 'convert_to_registered', 'patient', id, { uhid: patient.uhid });
+  res.json({
+    patient: db.prepare('SELECT * FROM patients WHERE id = ?').get(id),
+    baselineVitalsRecorded: Boolean(vitalsId),
+    message: `${fields.first_name || patient.first_name} is now a registered patient (${patient.uhid}).`,
+  });
 }));
 
 /** Yearly-screening due check — drives the "Time for Yearly Screening?" branch. */

@@ -28,26 +28,37 @@ function writeLedger({ drugId, batchId, txnType, qtyDelta, refType, refId, notes
   ).run(drugId, batchId || null, txnType, qtyDelta, balance, refType || null, refId || null, notes || null, userId || null);
 }
 
-function receiveStock({ drugId, batchNo, expiryDate, qty, mrp, purchasePrice, supplier, userId }) {
+/**
+ * Take stock into a batch. Every batch carries its own scannable label so the
+ * counter can pick the exact expiry it is selling, not just the medicine.
+ * `refType`/`refId` let a goods-received note own the ledger entry.
+ */
+function receiveStock({ drugId, batchNo, expiryDate, qty, mrp, purchasePrice, supplier, userId,
+                        barcode, refType, refId, notes }) {
   const existing = db.prepare('SELECT * FROM drug_batches WHERE drug_id = ? AND batch_no = ?').get(drugId, batchNo);
   let batchId;
   if (existing) {
     db.prepare(
       `UPDATE drug_batches
           SET qty_received = qty_received + ?, qty_available = qty_available + ?,
-              mrp = ?, purchase_price = ?, expiry_date = ?, supplier = COALESCE(?, supplier)
+              mrp = ?, purchase_price = ?, expiry_date = ?, supplier = COALESCE(?, supplier),
+              barcode = COALESCE(barcode, ?)
         WHERE id = ?`
-    ).run(qty, qty, mrp, purchasePrice, expiryDate, supplier, existing.id);
+    ).run(qty, qty, mrp, purchasePrice, expiryDate, supplier, barcode || null, existing.id);
     batchId = existing.id;
   } else {
     const info = db.prepare(
-      `INSERT INTO drug_batches (drug_id, batch_no, expiry_date, qty_received, qty_available, mrp, purchase_price, supplier)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(drugId, batchNo, expiryDate, qty, qty, mrp, purchasePrice, supplier || null);
+      `INSERT INTO drug_batches (drug_id, batch_no, expiry_date, qty_received, qty_available,
+                                 mrp, purchase_price, supplier, barcode)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(drugId, batchNo, expiryDate, qty, qty, mrp, purchasePrice, supplier || null, barcode || null);
     batchId = info.lastInsertRowid;
   }
-  writeLedger({ drugId, batchId, txnType: 'purchase', qtyDelta: qty, refType: 'batch', refId: batchId, userId,
-    notes: `Received batch ${batchNo}` });
+  writeLedger({
+    drugId, batchId, txnType: 'purchase', qtyDelta: qty,
+    refType: refType || 'batch', refId: refId || batchId, userId,
+    notes: notes || `Received batch ${batchNo}`,
+  });
   return db.prepare('SELECT * FROM drug_batches WHERE id = ?').get(batchId);
 }
 

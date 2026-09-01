@@ -77,6 +77,7 @@ test('insurer directory separates insurers, TPAs and government schemes', async 
 
 test('eligibility applies room-rent cap, co-pay and the sum-insured balance', async () => {
   const patient = (await api('POST', '/api/patients', {
+      consentTreatment: true, consentPrivacy: true,
     firstName: 'Eligibility', lastName: 'Case', gender: 'male', age: 50, phone: '9700000001',
   }, 'reception')).body;
 
@@ -121,6 +122,7 @@ test('eligibility applies room-rent cap, co-pay and the sum-insured balance', as
 
 test('an expired or exhausted policy blocks a pre-authorisation', async () => {
   const patient = (await api('POST', '/api/patients', {
+      consentTreatment: true, consentPrivacy: true,
     firstName: 'Expired', lastName: 'Policy', gender: 'female', age: 40, phone: '9700000002',
   }, 'reception')).body;
 
@@ -151,6 +153,7 @@ test('an expired or exhausted policy blocks a pre-authorisation', async () => {
 test('cashless admission: pre-auth → query → approval → enhancement → claim → settlement', async () => {
   // ---- patient and policy -----------------------------------------------
   const patient = (await api('POST', '/api/patients', {
+      consentTreatment: true, consentPrivacy: true,
     firstName: 'Cashless', lastName: 'Journey', gender: 'male', age: 58, phone: '9700000003',
   }, 'reception')).body;
 
@@ -370,6 +373,7 @@ test('cashless admission: pre-auth → query → approval → enhancement → cl
 
 test('settlements arriving in tranches accumulate and close the claim', async () => {
   const patient = (await api('POST', '/api/patients', {
+      consentTreatment: true, consentPrivacy: true,
     firstName: 'Tranche', lastName: 'Payer', gender: 'male', age: 47, phone: '9700000006',
   }, 'reception')).body;
   const policy = (await api('POST', '/api/insurance/policies', {
@@ -418,6 +422,7 @@ test('settlements arriving in tranches accumulate and close the claim', async ()
 
 test('a rejected claim puts the whole bill back on the patient', async () => {
   const patient = (await api('POST', '/api/patients', {
+      consentTreatment: true, consentPrivacy: true,
     firstName: 'Rejected', lastName: 'Claim', gender: 'female', age: 44, phone: '9700000004',
   }, 'reception')).body;
   const policy = (await api('POST', '/api/insurance/policies', {
@@ -458,6 +463,7 @@ test('a rejected claim puts the whole bill back on the patient', async () => {
 
 test('reimbursement claims do not touch the invoice', async () => {
   const patient = (await api('POST', '/api/patients', {
+      consentTreatment: true, consentPrivacy: true,
     firstName: 'Reimburse', lastName: 'Case', gender: 'male', age: 36, phone: '9700000005',
   }, 'reception')).body;
   const policy = (await api('POST', '/api/insurance/policies', {

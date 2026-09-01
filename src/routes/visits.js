@@ -92,6 +92,12 @@ router.post('/arrive', requireRole('reception'), wrap((req, res) => {
   const patientId = int(req.body.patientId);
   const patient = db.prepare('SELECT * FROM patients WHERE id = ?').get(patientId);
   if (!patient) throw notFound('Patient not found');
+  if (patient.stage === 'enquiry') {
+    throw conflict(
+      `${patient.first_name} is still an enquiry, not a registered patient. ` +
+      'Complete the registration paperwork first — the enquiry record carries over.'
+    );
+  }
 
   const open = db.prepare(
     "SELECT * FROM visits WHERE patient_id = ? AND status NOT IN ('checked_out','cancelled')"

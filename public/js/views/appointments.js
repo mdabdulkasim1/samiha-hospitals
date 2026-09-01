@@ -58,16 +58,13 @@
       API.get('/api/masters/staff?role=doctor'),
       API.get('/api/masters/departments?kind=specialist'),
     ]);
-    // Group the picker by the clinic's specialist categories.
-    const doctorOptions = [{ value: '', label: '— select a doctor —' }];
-    for (const dept of departments) {
-      const inDept = doctors.filter((d) => d.department_id === dept.id);
-      if (!inDept.length) continue;
-      doctorOptions.push({ value: '', label: `── ${dept.name} ──`, disabled: true });
-      for (const d of inDept) {
-        doctorOptions.push({ value: d.id, label: `   ${d.name}${d.qualification ? ' · ' + d.qualification : ''}` });
-      }
-    }
+    // The front desk picks the doctor the patient asked for, so the list is a
+    // scrollable panel grouped by speciality rather than a cramped dropdown.
+    const groups = departments
+      .map((dept) => ({ dept, doctors: doctors.filter((d) => d.department_id === dept.id && d.active !== 0) }))
+      .filter((g) => g.doctors.length);
+    const ungrouped = doctors.filter((d) => d.active !== 0 && !departments.some((x) => x.id === d.department_id));
+    if (ungrouped.length) groups.push({ dept: { name: 'Other doctors' }, doctors: ungrouped });
 
     UI.modal({
       title: 'Book an appointment',
@@ -93,7 +90,13 @@
             </fieldset>
 
             <fieldset><legend>Appointment</legend>
-              ${UI.field({ name: 'doctorId', label: 'Doctor', required: true, options: doctorOptions })}
+              <label class="field"><span>Doctor <span class="req">*</span></span></label>
+              <input type="hidden" name="doctorId" value="">
+              <div class="picker">
+                <input type="search" id="bk-docq" placeholder="Search a doctor or speciality…" autocomplete="off">
+                <div class="picker-list" id="bk-doclist"></div>
+              </div>
+              <div id="bk-doc-chosen"></div>
               <div class="grid c2">
                 ${UI.field({ name: 'visitKind', label: 'Type', value: 'new',
                   options: [{ value: 'new', label: 'New consultation' }, { value: 'follow_up', label: 'Follow-up' },
@@ -118,7 +121,7 @@
         </div>`,
       footer: `<button class="btn ghost" data-act="__close">Cancel</button>
                <button class="btn" data-act="save" disabled>Confirm booking</button>`,
-      onMount(modal) { wireBooking(modal, params); },
+      onMount(modal) { modal.__docGroups = groups; wireBooking(modal, params); },
       async onAction(act, modal) {
         if (act !== 'save') return;
         const state = modal.__booking;
@@ -204,8 +207,49 @@
       }, 220);
     });
 
+    // Doctor picker: scroll or search, then click. Setting the hidden input and
+    // firing `change` keeps the availability lookup below unchanged.
+    const docField = modal.querySelector('[name=doctorId]');
+    const docList = modal.querySelector('#bk-doclist');
+    const docQuery = modal.querySelector('#bk-docq');
+
+    const drawDoctors = () => {
+      const q = docQuery.value.trim().toLowerCase();
+      const matches = (d, dept) => !q ||
+        `${d.name} ${d.specialization || ''} ${d.qualification || ''} ${dept.name || ''}`.toLowerCase().includes(q);
+      const html = modal.__docGroups.map(({ dept, doctors: list }) => {
+        const hits = list.filter((d) => matches(d, dept));
+        if (!hits.length) return '';
+        return `<div class="picker-group">${UI.esc(dept.name)}</div>` + hits.map((d) => `
+          <button type="button" class="picker-item${String(docField.value) === String(d.id) ? ' on' : ''}"
+                  data-doc="${d.id}">
+            <span class="avatar">${UI.esc((d.name || '?').replace(/^Dr\.?\s*/i, '').charAt(0).toUpperCase())}</span>
+            <span class="picker-text">
+              <b>${UI.esc(d.name)}</b>
+              <span class="muted small">${UI.esc(d.specialization || dept.name || '')}${
+                d.qualification ? ' · ' + UI.esc(d.qualification) : ''}</span>
+            </span>
+            <span class="muted small">${d.consult_fee ? UI.money(d.consult_fee) : ''}${
+              d.room_no ? '<br>Room ' + UI.esc(d.room_no) : ''}</span>
+          </button>`).join('');
+      }).join('');
+      docList.innerHTML = html || '<div class="muted small" style="padding:10px">No doctor matched.</div>';
+      docList.querySelectorAll('[data-doc]').forEach((b) => b.addEventListener('click', () => {
+        docField.value = b.dataset.doc;
+        const chosen = modal.__docGroups.flatMap((g) => g.doctors).find((d) => String(d.id) === b.dataset.doc);
+        modal.querySelector('#bk-doc-chosen').innerHTML = `<div class="alert ok">
+          Booking with <b>${UI.esc(chosen.name)}</b>${chosen.specialization
+            ? ' — ' + UI.esc(chosen.specialization) : ''}</div>`;
+        drawDoctors();
+        docField.dispatchEvent(new Event('change'));
+      }));
+    };
+
+    docQuery.addEventListener('input', drawDoctors);
+    drawDoctors();
+
     // Doctor → available days → slots
-    modal.querySelector('[name=doctorId]').addEventListener('change', async (e) => {
+    docField.addEventListener('change', async (e) => {
       state.date = null; state.time = null;
       modal.querySelector('#bk-slots').innerHTML = '';
       refresh();

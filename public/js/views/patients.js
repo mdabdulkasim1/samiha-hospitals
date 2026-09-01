@@ -7,36 +7,58 @@
     subtitle: 'Registry and medical records',
 
     async render(el, params) {
-      if (params.id) return renderRecord(el, Number(params.id));
+      if (params.id) return renderRecord(el, Number(params.id), params);
 
       APP.actions(APP.can(['reception'])
         ? [{ id: 'new', label: '+ Register patient', kind: '', onClick: openRegistration }]
         : []);
 
+      const stage = params.stage || '';
       el.innerHTML = `
+        <div class="tabs" id="stage-tabs">
+          <button data-stage="" class="${stage === '' ? 'active' : ''}">All patients</button>
+          <button data-stage="enquiry" class="${stage === 'enquiry' ? 'active' : ''}">Enquiries <span data-c="enquiry"></span></button>
+          <button data-stage="registered" class="${stage === 'registered' ? 'active' : ''}">Registered <span data-c="registered"></span></button>
+        </div>
         <div class="search-row">
           <input type="search" id="pq" placeholder="Search by name, UHID or phone…" value="${UI.esc(params.q || '')}" autofocus>
         </div>
+        ${stage === 'enquiry' ? `<div class="alert info">These people have contacted the clinic but have not
+          been registered yet. Open one and press <b>Complete registration</b> when they arrive — the enquiry,
+          its source and any appointment already booked carry over to the same file.</div>` : ''}
         <div class="card"><div class="card-body tight" id="plist">${UI.loading()}</div></div>`;
+
+      el.querySelectorAll('#stage-tabs button').forEach((b) => b.addEventListener('click', () =>
+        APP.navigate('patients', { ...(b.dataset.stage ? { stage: b.dataset.stage } : {}) })));
 
       const input = el.querySelector('#pq');
       const load = async () => {
         const host = el.querySelector('#plist');
         host.innerHTML = UI.loading();
-        const res = await API.get('/api/patients' + API.qs({ q: input.value.trim(), limit: 40 }));
+        const res = await API.get('/api/patients' + API.qs({ q: input.value.trim(), stage, limit: 40 }));
         host.innerHTML = UI.table([
           { label: 'UHID', render: (p) => `<code>${UI.esc(p.uhid)}</code>` },
           { label: 'Name', render: (p) => `<b>${UI.esc(p.first_name)} ${UI.esc(p.last_name || '')}</b>` },
+          { label: 'Stage', render: (p) => p.stage === 'enquiry'
+            ? UI.badge('Enquiry', 'orange') : UI.badge('Registered', 'ok') },
           { label: 'Age / Sex', render: (p) => `${UI.esc(p.age_years || '—')} / ${UI.esc(UI.titleise(p.gender || '—'))}` },
           { label: 'Phone', render: (p) => UI.esc(p.phone || '—') },
-          { label: 'Cover', render: (p) => p.is_uninsured
-            ? UI.badge('Uninsured' + (p.sliding_scale_band ? ` · Band ${p.sliding_scale_band}` : ''), 'orange')
-            : UI.badge('Insured', 'ok') },
+          { label: 'Came via', render: (p) => p.enquiry_source
+            ? UI.badge(UI.titleise(p.enquiry_source), p.enquiry_source === 'whatsapp' ? 'wa' : 'info') : '—' },
+          { label: 'Visits', num: true, render: (p) => UI.esc(p.visit_count || 0) },
           { label: 'Flags', render: (p) => p.allergies ? UI.badge('⚠ Allergy', 'danger') : '' },
-          { label: 'Registered', render: (p) => UI.esc(UI.date(p.registered_at)) },
-        ], res.rows, { emptyText: 'No patient matched that search.' });
+          { label: 'Since', render: (p) => UI.esc(UI.date(p.stage === 'enquiry'
+            ? (p.enquiry_at || p.registered_at) : p.registered_at)) },
+        ], res.rows, { emptyText: stage === 'enquiry'
+          ? 'No enquiries waiting to be registered.' : 'No patient matched that search.' });
         UI.bindRows(host, res.rows, (p) => APP.navigate('patients', { id: p.id }));
-        APP.setSubtitle(`${res.total} patient(s) on file`);
+
+        el.querySelectorAll('[data-c]').forEach((sp) => {
+          const n = res.counts[sp.dataset.c] || 0;
+          sp.innerHTML = n ? ` <span class="badge ${sp.dataset.c === 'enquiry' ? 'orange' : 'ok'}">${n}</span>` : '';
+        });
+        APP.setSubtitle(`${res.counts.enquiry} enquiry · ${res.counts.registered} registered` +
+          (input.value.trim() || stage ? ` · showing ${res.total}` : ''));
       };
 
       let t;
@@ -46,100 +68,221 @@
   });
 
   // ------------------------------------------------------- registration form
-  /** "Demographic, Med. History Paperwork" from the workflow. */
+  /**
+   * "Demographic, Med. History Paperwork" from the workflow. The same fields
+   * serve a walk-in registration and the promotion of an existing enquiry, so
+   * the two can never drift apart.
+   */
+  function registrationFields(p = {}) {
+    const v = (k, d = '') => (p[k] === null || p[k] === undefined ? d : p[k]);
+    return `
+      <fieldset><legend>Personal &amp; demographic</legend>
+        <div class="grid c4">
+          ${UI.field({ name: 'title', label: 'Title', value: v('title'),
+            options: ['', 'Mr', 'Mrs', 'Ms', 'Master', 'Baby', 'Dr'] })}
+          ${UI.field({ name: 'firstName', label: 'First name (as on ID)', required: true, value: v('first_name') })}
+          ${UI.field({ name: 'lastName', label: 'Last name', value: v('last_name') })}
+          ${UI.field({ name: 'maritalStatus', label: 'Marital status', value: v('marital_status'),
+            options: ['', 'Single', 'Married', 'Widowed', 'Divorced'] })}
+        </div>
+        <div class="grid c4">
+          ${UI.field({ name: 'dob', label: 'Date of birth', type: 'date', value: v('dob'),
+            hint: 'Verifies age and identity' })}
+          ${UI.field({ name: 'age', label: 'Age (years)', type: 'number', min: 0, max: 130,
+            value: v('age_years'), hint: 'Only if the date of birth is unknown' })}
+          ${UI.field({ name: 'gender', label: 'Gender', required: true, value: v('gender'),
+            options: [{ value: '', label: '— select —' }, { value: 'male', label: 'Male' },
+                      { value: 'female', label: 'Female' }, { value: 'other', label: 'Other' }] })}
+          ${UI.field({ name: 'sexAtBirth', label: 'Sex at birth', value: v('sex_at_birth'),
+            options: [{ value: '', label: '— select —' }, { value: 'male', label: 'Male' },
+                      { value: 'female', label: 'Female' }, { value: 'intersex', label: 'Intersex' }],
+            hint: 'Drives reference ranges and screening' })}
+        </div>
+        <div class="grid c3">
+          ${UI.field({ name: 'phone', label: 'Mobile', required: true, value: v('phone'), placeholder: '10-digit number' })}
+          ${UI.field({ name: 'whatsapp', label: 'WhatsApp number', value: v('whatsapp'),
+            hint: 'Blank uses the mobile number' })}
+          ${UI.field({ name: 'email', label: 'Email', type: 'email', value: v('email'),
+            hint: 'Appointment reminders and reports' })}
+        </div>
+        ${UI.field({ name: 'address', label: 'Home address', type: 'textarea', rows: 2, value: v('address') })}
+        <div class="grid c4">
+          ${UI.field({ name: 'city', label: 'City', value: v('city') })}
+          ${UI.field({ name: 'state', label: 'State', value: v('state') })}
+          ${UI.field({ name: 'pincode', label: 'PIN code', value: v('pincode') })}
+          ${UI.field({ name: 'bloodGroup', label: 'Blood group', value: v('blood_group'),
+            options: ['', 'A+','A-','B+','B-','AB+','AB-','O+','O-'] })}
+        </div>
+        <div class="grid c3">
+          ${UI.field({ name: 'emergencyName', label: 'Emergency contact name', value: v('emergency_name') })}
+          ${UI.field({ name: 'emergencyPhone', label: 'Emergency contact phone', value: v('emergency_phone') })}
+          ${UI.field({ name: 'emergencyRelation', label: 'Relationship', value: v('emergency_relation'),
+            placeholder: 'e.g. spouse, son, friend' })}
+        </div>
+        <div class="grid c2">
+          ${UI.field({ name: 'idType', label: 'Photo ID type', value: v('id_type'),
+            options: ['', 'Aadhaar', 'PAN', 'Voter ID', 'Passport', 'Driving licence'] })}
+          ${UI.field({ name: 'idNumber', label: 'ID number', value: v('id_number') })}
+        </div>
+      </fieldset>
+
+      <fieldset><legend>Insurance &amp; billing</legend>
+        ${UI.checkbox({ name: 'isUninsured', label: 'Patient is uninsured (routes them to financial screening)',
+          checked: p.is_uninsured === undefined ? true : !!p.is_uninsured })}
+        <div class="grid c3" id="ins-fields">
+          ${UI.field({ name: 'insuranceProvider', label: 'Insurance provider', value: v('insurance_provider'),
+            placeholder: 'The company paying for care' })}
+          ${UI.field({ name: 'insurancePolicyNo', label: 'Policy / member ID', value: v('insurance_policy_no') })}
+          ${UI.field({ name: 'insuranceValidTill', label: 'Valid until', type: 'date', value: v('insurance_valid_till') })}
+        </div>
+        ${UI.field({ name: 'billingAddress', label: 'Billing address', type: 'textarea', rows: 2,
+          value: v('billing_address'), hint: 'Where invoices and claims are sent. Blank uses the home address.' })}
+      </fieldset>
+
+      <fieldset><legend>Medical history</legend>
+        ${UI.field({ name: 'presentingComplaint', label: 'Current symptoms — why they are here today',
+          type: 'textarea', rows: 2, value: v('presenting_complaint') })}
+        <div class="grid c2">
+          ${UI.field({ name: 'allergies', label: 'Allergies', value: v('allergies'),
+            placeholder: 'Medication, food, latex — and the reaction' })}
+          ${UI.field({ name: 'chronicConditions', label: 'Ongoing conditions', value: v('chronic_conditions'),
+            placeholder: 'e.g. type 2 diabetes, hypertension' })}
+        </div>
+        ${UI.field({ name: 'currentMedications', label: 'Current medications', type: 'textarea', rows: 2,
+          value: v('current_medications'), hint: 'Include vitamins and supplements, with doses' })}
+        <div class="grid c2">
+          ${UI.field({ name: 'pastIllness', label: 'Past illnesses', type: 'textarea', rows: 2 })}
+          ${UI.field({ name: 'surgeries', label: 'Surgeries &amp; major health events', type: 'textarea', rows: 2 })}
+        </div>
+        ${UI.field({ name: 'familyHistory', label: 'Family medical history', type: 'textarea', rows: 2,
+          placeholder: 'Conditions that run in the family' })}
+        ${UI.field({ name: 'immunisations', label: 'Immunisation history', type: 'textarea', rows: 2,
+          value: v('immunisations'), placeholder: 'e.g. childhood schedule complete; Td booster 2021' })}
+      </fieldset>
+
+      <fieldset><legend>Social history</legend>
+        <div class="grid c3">
+          ${UI.field({ name: 'occupation', label: 'Occupation', value: v('occupation') })}
+          ${UI.field({ name: 'smokingStatus', label: 'Smoking', value: v('smoking_status'),
+            options: [{ value: '', label: '— not asked —' }, { value: 'never', label: 'Never' },
+                      { value: 'former', label: 'Former smoker' }, { value: 'current', label: 'Current smoker' },
+                      { value: 'unknown', label: 'Unknown' }] })}
+          ${UI.field({ name: 'alcoholUse', label: 'Alcohol', value: v('alcohol_use'),
+            options: [{ value: '', label: '— not asked —' }, { value: 'never', label: 'Never' },
+                      { value: 'occasional', label: 'Occasional' }, { value: 'regular', label: 'Regular' },
+                      { value: 'former', label: 'Former' }, { value: 'unknown', label: 'Unknown' }] })}
+        </div>
+        ${UI.field({ name: 'socialHistory', label: 'Other social history', type: 'textarea', rows: 2,
+          placeholder: 'Living situation, exposures at work, anything else relevant' })}
+      </fieldset>
+
+      <fieldset><legend>Baseline vital signs <span class="muted" style="font-weight:400;text-transform:none;letter-spacing:0">— optional at the desk</span></legend>
+        <div class="grid c4">
+          ${UI.field({ name: 'vitalsHeightCm', label: 'Height (cm)', type: 'number', step: '0.1' })}
+          ${UI.field({ name: 'vitalsWeightKg', label: 'Weight (kg)', type: 'number', step: '0.1' })}
+          ${UI.field({ name: 'vitalsTempC', label: 'Temperature (°C)', type: 'number', step: '0.1' })}
+          ${UI.field({ name: 'vitalsPulse', label: 'Heart rate (bpm)', type: 'number' })}
+        </div>
+        <div class="grid c4">
+          ${UI.field({ name: 'vitalsBpSystolic', label: 'BP systolic', type: 'number' })}
+          ${UI.field({ name: 'vitalsBpDiastolic', label: 'BP diastolic', type: 'number' })}
+          ${UI.field({ name: 'vitalsSpo2', label: 'SpO₂ (%)', type: 'number', min: 0, max: 100 })}
+          ${UI.field({ name: 'vitalsRespRate', label: 'Respiratory rate', type: 'number' })}
+        </div>
+        <div class="muted small">Leave blank if the vitals station will take these. BMI is worked out for you.</div>
+      </fieldset>
+
+      <fieldset><legend>Preferred pharmacy</legend>
+        <div class="grid c3">
+          ${UI.field({ name: 'pharmacyName', label: 'Pharmacy name', value: v('pharmacy_name') })}
+          ${UI.field({ name: 'pharmacyPhone', label: 'Pharmacy phone', value: v('pharmacy_phone') })}
+          ${UI.field({ name: 'pharmacyAddress', label: 'Pharmacy address', value: v('pharmacy_address') })}
+        </div>
+      </fieldset>
+
+      <fieldset><legend>Consent</legend>
+        <div class="alert info">Read these to the patient and tick what they agree to.
+          <b>Treatment consent is required</b> — registration cannot be completed without it.</div>
+        <label class="inline-check">
+          <input type="checkbox" name="consentTreatment" required${p.consent_treatment ? ' checked' : ''}>
+          <span><b>Consent to treatment</b> — the patient agrees to examination and treatment at this clinic.</span>
+        </label>
+        <label class="inline-check">
+          <input type="checkbox" name="consentPrivacy"${p.consent_privacy ? ' checked' : ''}>
+          <span><b>Privacy notice</b> — the patient has been told how their records are held and shared.</span>
+        </label>
+        <label class="inline-check">
+          <input type="checkbox" name="consentContact"${p.consent_contact ? ' checked' : ''}>
+          <span><b>Contact consent</b> — the patient agrees to reminders and reports by WhatsApp, SMS or email.</span>
+        </label>
+        ${UI.field({ name: 'consentSignedBy', label: 'Signed by', value: v('consent_signed_by'),
+          placeholder: 'The patient, or the guardian who signed on their behalf' })}
+        ${UI.field({ name: 'notes', label: 'Front-desk notes', value: v('notes') })}
+      </fieldset>`;
+  }
+
+  /**
+   * Keeps the cover fields coherent: filling in an insurer contradicts the
+   * "uninsured" tick, and a patient recorded as uninsured should not carry a
+   * policy number. Left inconsistent, this later mis-routes the financial
+   * screening and the sliding-scale discount.
+   */
+  function wireCoverFields(scope) {
+    const uninsured = scope.querySelector('[name=isUninsured]');
+    const fields = scope.querySelector('#ins-fields');
+    if (!uninsured || !fields) return;
+
+    const provider = fields.querySelector('[name=insuranceProvider]');
+    const policy = fields.querySelector('[name=insurancePolicyNo]');
+
+    const paint = () => { fields.style.opacity = uninsured.checked ? '.45' : '1'; };
+    uninsured.addEventListener('change', () => {
+      if (uninsured.checked && (provider.value.trim() || policy.value.trim())) {
+        UI.warn('Marked uninsured — the insurer details will not be saved as cover.');
+      }
+      paint();
+    });
+
+    // Typing an insurer means they are insured.
+    for (const input of [provider, policy]) {
+      if (!input) continue;
+      input.addEventListener('input', () => {
+        if (input.value.trim() && uninsured.checked) {
+          uninsured.checked = false;
+          paint();
+        }
+      });
+    }
+    paint();
+  }
+
+  /** Pulls the history lines out of the shared form into the API shape. */
+  function collectRegistration(form) {
+    const values = UI.formValues(form);
+    // The vitals inputs are flat in the form; the API takes them nested.
+    values.vitals = {};
+    for (const key of Object.keys(values)) {
+      if (!key.startsWith('vitals') || key === 'vitals') continue;
+      const name = key.slice(6);
+      values.vitals[name.charAt(0).toLowerCase() + name.slice(1)] = values[key];
+      delete values[key];
+    }
+    return values;
+  }
+
   function openRegistration() {
     UI.modal({
       title: 'Register a new patient',
       size: 'wide',
-      body: `<form id="reg-form">
-        <fieldset><legend>Demographics</legend>
-          <div class="grid c4">
-            ${UI.field({ name: 'title', label: 'Title', options: ['', 'Mr', 'Mrs', 'Ms', 'Master', 'Baby', 'Dr'] })}
-            ${UI.field({ name: 'firstName', label: 'First name', required: true })}
-            ${UI.field({ name: 'lastName', label: 'Last name' })}
-            ${UI.field({ name: 'gender', label: 'Gender', required: true,
-              options: [{ value: '', label: '— select —' }, { value: 'male', label: 'Male' },
-                        { value: 'female', label: 'Female' }, { value: 'other', label: 'Other' }] })}
-          </div>
-          <div class="grid c4">
-            ${UI.field({ name: 'dob', label: 'Date of birth', type: 'date' })}
-            ${UI.field({ name: 'age', label: 'Age (years)', type: 'number', min: 0, max: 130, hint: 'If DOB is unknown' })}
-            ${UI.field({ name: 'bloodGroup', label: 'Blood group', options: ['', 'A+','A-','B+','B-','AB+','AB-','O+','O-'] })}
-            ${UI.field({ name: 'maritalStatus', label: 'Marital status', options: ['', 'Single', 'Married', 'Widowed', 'Divorced'] })}
-          </div>
-        </fieldset>
-
-        <fieldset><legend>Contact</legend>
-          <div class="grid c3">
-            ${UI.field({ name: 'phone', label: 'Mobile', required: true, placeholder: '10-digit number' })}
-            ${UI.field({ name: 'whatsapp', label: 'WhatsApp number', hint: 'Leave blank to use the mobile number' })}
-            ${UI.field({ name: 'email', label: 'Email', type: 'email' })}
-          </div>
-          ${UI.field({ name: 'address', label: 'Address', type: 'textarea', rows: 2 })}
-          <div class="grid c4">
-            ${UI.field({ name: 'city', label: 'City' })}
-            ${UI.field({ name: 'state', label: 'State' })}
-            ${UI.field({ name: 'pincode', label: 'PIN code' })}
-            ${UI.field({ name: 'occupation', label: 'Occupation' })}
-          </div>
-          <div class="grid c3">
-            ${UI.field({ name: 'emergencyName', label: 'Emergency contact' })}
-            ${UI.field({ name: 'emergencyPhone', label: 'Emergency phone' })}
-            ${UI.field({ name: 'emergencyRelation', label: 'Relationship' })}
-          </div>
-        </fieldset>
-
-        <fieldset><legend>Identity &amp; cover</legend>
-          <div class="grid c2">
-            ${UI.field({ name: 'idType', label: 'ID type', options: ['', 'Aadhaar', 'PAN', 'Voter ID', 'Passport', 'Driving licence'] })}
-            ${UI.field({ name: 'idNumber', label: 'ID number' })}
-          </div>
-          ${UI.checkbox({ name: 'isUninsured', label: 'Patient is uninsured (routes to financial screening)', checked: true })}
-          <div class="grid c3" id="ins-fields">
-            ${UI.field({ name: 'insuranceProvider', label: 'Insurer / TPA' })}
-            ${UI.field({ name: 'insurancePolicyNo', label: 'Policy number' })}
-            ${UI.field({ name: 'insuranceValidTill', label: 'Valid until', type: 'date' })}
-          </div>
-        </fieldset>
-
-        <fieldset><legend>Medical history</legend>
-          <div class="grid c2">
-            ${UI.field({ name: 'allergies', label: 'Known allergies', placeholder: 'e.g. penicillin, sulfa drugs' })}
-            ${UI.field({ name: 'chronicConditions', label: 'Chronic conditions', placeholder: 'e.g. type 2 diabetes, hypertension' })}
-          </div>
-          ${UI.field({ name: 'pastIllness', label: 'Past illnesses / surgeries', type: 'textarea', rows: 2 })}
-          ${UI.field({ name: 'familyHistory', label: 'Family history', type: 'textarea', rows: 2 })}
-        </fieldset>
-
-        <fieldset><legend>Preferred pharmacy</legend>
-          <div class="grid c3">
-            ${UI.field({ name: 'pharmacyName', label: 'Pharmacy name' })}
-            ${UI.field({ name: 'pharmacyPhone', label: 'Pharmacy phone' })}
-            ${UI.field({ name: 'pharmacyAddress', label: 'Pharmacy address' })}
-          </div>
-        </fieldset>
-      </form>`,
+      body: `<form id="reg-form">${registrationFields()}</form>`,
       footer: `<button class="btn ghost" data-act="__close">Cancel</button>
                <button class="btn" data-act="save">Register patient</button>`,
-      onMount(modal) {
-        const uninsured = modal.querySelector('[name=isUninsured]');
-        const fields = modal.querySelector('#ins-fields');
-        const sync = () => { fields.style.opacity = uninsured.checked ? '.45' : '1'; };
-        uninsured.addEventListener('change', sync);
-        sync();
-      },
+      onMount(modal) { wireCoverFields(modal); },
       async onAction(act, modal) {
         if (act !== 'save') return;
         const form = modal.querySelector('#reg-form');
         if (!form.reportValidity()) return 'keep';
-        const values = UI.formValues(form);
-
-        values.history = [];
-        if (values.pastIllness) values.history.push({ kind: 'past_illness', detail: values.pastIllness });
-        if (values.familyHistory) values.history.push({ kind: 'family', detail: values.familyHistory });
-        if (values.allergies) values.history.push({ kind: 'allergy', detail: values.allergies });
-        delete values.pastIllness;
-        delete values.familyHistory;
+        const values = collectRegistration(form);
 
         try {
           const patient = await API.post('/api/patients', values);
@@ -161,24 +304,43 @@
   }
 
   // ------------------------------------------------------------ 360° record
-  async function renderRecord(el, id) {
+  async function renderRecord(el, id, params = {}) {
     const p = await API.get(`/api/patients/${id}`);
-    APP.setSubtitle(`${p.uhid} · ${p.name}`);
+    const isEnquiry = p.stage === 'enquiry';
+    APP.setSubtitle(`${p.uhid} · ${p.name}${isEnquiry ? ' · enquiry, not yet registered' : ''}`);
     APP.actions([
       { id: 'back', label: '← All patients', onClick: () => APP.navigate('patients') },
+      ...(isEnquiry && APP.can(['reception'])
+        ? [{ id: 'convert', label: 'Complete registration', kind: '', onClick: () => openConvert(p) }] : []),
       ...(APP.can(['reception', 'nurse', 'doctor', 'counselor'])
         ? [{ id: 'edit', label: 'Edit details', onClick: () => openEdit(p) }] : []),
-      ...(APP.can(['reception'])
-        ? [{ id: 'arrive', label: 'Record arrival', kind: '', onClick: () => { APP.navigate('queue'); UI.toast('Use “+ Patient arrived” on the queue board.'); } }] : []),
+      ...(!isEnquiry && APP.can(['reception'])
+        ? [{ id: 'arrive', label: 'Record arrival', onClick: () => { APP.navigate('queue'); UI.toast('Use “+ Patient arrived” on the queue board.'); } }] : []),
     ]);
 
+    // Deep link from the dashboard opens the registration form straight away.
+    if (isEnquiry && params && params.register === '1' && APP.can(['reception'])) {
+      setTimeout(() => openConvert(p), 80);
+    }
+
     el.innerHTML = `
+      ${isEnquiry ? `<div class="alert warn">
+        <b>This is an enquiry, not a registered patient.</b>
+        ${p.enquiry_at ? `First contacted ${UI.esc(UI.dateTime(p.enquiry_at))}.` : ''}
+        They cannot be sent through to the clinic queue until the demographic and medical-history
+        paperwork is completed. Everything already on file — the enquiry, its source and any
+        appointment booked — carries over to the same record.
+        ${APP.can(['reception']) ? '<div class="mt"><button class="btn sm" id="banner-convert">Complete registration now</button></div>' : ''}
+      </div>` : ''}
       ${p.allergies ? `<div class="alert danger">⚠ <b>Allergies:</b> ${UI.esc(p.allergies)}</div>` : ''}
       ${p.outstanding > 0 ? `<div class="alert warn"><b>Outstanding balance:</b> ${UI.money(p.outstanding)} across unpaid bills.</div>` : ''}
 
       <div class="grid c4 mb">
-        <div class="stat teal"><div class="label">UHID</div><div class="value" style="font-size:19px">${UI.esc(p.uhid)}</div>
-          <div class="foot">Registered ${UI.esc(UI.date(p.registered_at))}</div></div>
+        <div class="stat ${isEnquiry ? 'orange' : 'teal'}"><div class="label">UHID</div>
+          <div class="value" style="font-size:19px">${UI.esc(p.uhid)}</div>
+          <div class="foot">${isEnquiry
+            ? 'Enquiry since ' + UI.esc(UI.date(p.enquiry_at || p.registered_at))
+            : 'Registered ' + UI.esc(UI.date(p.registered_at))}</div></div>
         <div class="stat crimson"><div class="label">Age / Sex</div><div class="value">${UI.esc(p.age_years || '—')}</div>
           <div class="foot">${UI.esc(UI.titleise(p.gender || '—'))}${p.blood_group ? ' · ' + UI.esc(p.blood_group) : ''}</div></div>
         <div class="stat orange"><div class="label">Cover</div>
@@ -203,31 +365,76 @@
       </div>
       <div id="ptab-body"></div>`;
 
+    const banner = el.querySelector('#banner-convert');
+    if (banner) banner.addEventListener('click', () => openConvert(p));
+
     const tabs = {
       overview: () => `
+        ${isEnquiry ? '' : consentCard(p)}
         <div class="grid c2">
-          <div class="card"><div class="card-head"><h3>Contact</h3></div><div class="card-body"><dl class="kv">
+          <div class="card"><div class="card-head"><h3>Personal &amp; contact</h3></div><div class="card-body"><dl class="kv">
+            <dt>Full name</dt><dd>${UI.esc([p.title, p.first_name, p.last_name].filter(Boolean).join(' '))}</dd>
+            <dt>Date of birth</dt><dd>${p.dob ? UI.esc(UI.date(p.dob)) : '—'}${p.age_years ? ` · ${UI.esc(p.age_years)} yrs` : ''}</dd>
+            <dt>Gender / sex</dt><dd>${UI.esc(UI.titleise(p.gender || '—'))}${p.sex_at_birth
+              ? ` · sex at birth ${UI.esc(UI.titleise(p.sex_at_birth))}` : ''}</dd>
             <dt>Phone</dt><dd>${UI.esc(p.phone || '—')}</dd>
             <dt>WhatsApp</dt><dd>${UI.esc(p.whatsapp || '—')}</dd>
             <dt>Email</dt><dd>${UI.esc(p.email || '—')}</dd>
-            <dt>Address</dt><dd>${UI.esc([p.address, p.city, p.state, p.pincode].filter(Boolean).join(', ') || '—')}</dd>
+            <dt>Home address</dt><dd>${UI.esc([p.address, p.city, p.state, p.pincode].filter(Boolean).join(', ') || '—')}</dd>
             <dt>Emergency</dt><dd>${UI.esc(p.emergency_name || '—')} ${UI.esc(p.emergency_phone || '')}
               ${p.emergency_relation ? '(' + UI.esc(p.emergency_relation) + ')' : ''}</dd>
-            <dt>ID</dt><dd>${UI.esc(p.id_type || '—')} ${UI.esc(p.id_number || '')}</dd>
-            <dt>Occupation</dt><dd>${UI.esc(p.occupation || '—')}</dd>
+            <dt>Photo ID</dt><dd>${UI.esc(p.id_type || '—')} ${UI.esc(p.id_number || '')}</dd>
+            <dt>Blood group</dt><dd>${UI.esc(p.blood_group || '—')}</dd>
           </dl></div></div>
-          <div class="card"><div class="card-head"><h3>Clinical background</h3></div><div class="card-body">
+
+          <div class="card"><div class="card-head"><h3>Insurance &amp; billing</h3></div><div class="card-body"><dl class="kv">
+            <dt>Cover</dt><dd>${p.is_uninsured ? UI.badge('Uninsured', 'orange') : UI.badge('Insured', 'ok')}</dd>
+            <dt>Provider</dt><dd>${UI.esc(p.insurance_provider || '—')}</dd>
+            <dt>Policy / member ID</dt><dd>${UI.esc(p.insurance_policy_no || '—')}</dd>
+            <dt>Valid until</dt><dd>${p.insurance_valid_till ? UI.esc(UI.date(p.insurance_valid_till)) : '—'}</dd>
+            <dt>Billing address</dt><dd>${UI.esc(p.billing_address || p.address || '—')}</dd>
+            <dt>Outstanding</dt><dd>${p.outstanding > 0
+              ? `<b style="color:var(--danger)">${UI.money(p.outstanding)}</b>` : UI.money(0)}</dd>
+          </dl></div></div>
+        </div>
+
+        <div class="grid c2">
+          <div class="card"><div class="card-head"><h3>Medical history</h3></div><div class="card-body">
             <dl class="kv">
-              <dt>Allergies</dt><dd>${UI.esc(p.allergies || 'None recorded')}</dd>
-              <dt>Chronic</dt><dd>${UI.esc(p.chronic_conditions || 'None recorded')}</dd>
-              <dt>Last screening</dt><dd>${p.last_screening_date ? UI.esc(UI.date(p.last_screening_date)) : UI.badge('Never', 'warn')}</dd>
-              <dt>Preferred pharmacy</dt><dd>${UI.esc(p.pharmacy_name || '—')} ${UI.esc(p.pharmacy_phone || '')}</dd>
+              <dt>Reason first seen</dt><dd>${UI.esc(p.presenting_complaint || '—')}</dd>
+              <dt>Allergies</dt><dd>${p.allergies
+                ? `<b style="color:var(--danger)">${UI.esc(p.allergies)}</b>` : 'None recorded'}</dd>
+              <dt>Ongoing conditions</dt><dd>${UI.esc(p.chronic_conditions || 'None recorded')}</dd>
+              <dt>Current medications</dt><dd>${UI.esc(p.current_medications || 'None recorded')}</dd>
+              <dt>Immunisations</dt><dd>${UI.esc(p.immunisations || 'Not recorded')}</dd>
+              <dt>Last screening</dt><dd>${p.last_screening_date
+                ? UI.esc(UI.date(p.last_screening_date)) : UI.badge('Never', 'warn')}</dd>
             </dl>
-            <h4 class="mt mb">History</h4>
+            <h4 class="mt mb">Recorded history</h4>
             ${p.history.length ? p.history.map((h) =>
               `<div class="small mb"><b>${UI.esc(UI.titleise(h.kind))}:</b> ${UI.esc(h.detail)}
                <span class="muted">${UI.esc(UI.date(h.recorded_at))}</span></div>`).join('')
               : '<div class="muted small">No history recorded.</div>'}
+          </div></div>
+
+          <div class="card"><div class="card-head"><h3>Social history &amp; pharmacy</h3></div><div class="card-body">
+            <dl class="kv">
+              <dt>Occupation</dt><dd>${UI.esc(p.occupation || '—')}</dd>
+              <dt>Smoking</dt><dd>${p.smoking_status
+                ? UI.badge(UI.titleise(p.smoking_status), p.smoking_status === 'current' ? 'warn' : '') : '—'}</dd>
+              <dt>Alcohol</dt><dd>${p.alcohol_use
+                ? UI.badge(UI.titleise(p.alcohol_use), p.alcohol_use === 'regular' ? 'warn' : '') : '—'}</dd>
+              <dt>Marital status</dt><dd>${UI.esc(p.marital_status || '—')}</dd>
+              <dt>Preferred pharmacy</dt><dd>${UI.esc(p.pharmacy_name || '—')} ${UI.esc(p.pharmacy_phone || '')}</dd>
+            </dl>
+            <h4 class="mt mb">Latest vital signs</h4>
+            ${p.vitals.length ? (() => { const v = p.vitals[0]; return `<dl class="kv">
+              <dt>Taken</dt><dd>${UI.esc(UI.dateTime(v.recorded_at))}</dd>
+              <dt>BP</dt><dd>${UI.esc(v.bp_systolic || '—')}/${UI.esc(v.bp_diastolic || '—')} mmHg</dd>
+              <dt>Heart rate</dt><dd>${UI.esc(v.pulse || '—')} bpm</dd>
+              <dt>Temperature</dt><dd>${UI.esc(v.temp_c || '—')} °C</dd>
+              <dt>Weight / BMI</dt><dd>${UI.esc(v.weight_kg || '—')} kg / ${UI.esc(v.bmi || '—')}</dd>
+            </dl>`; })() : '<div class="muted small">No vital signs recorded yet.</div>'}
           </div></div>
         </div>`,
 
@@ -370,11 +577,61 @@
     }
   }
 
+  /** Consent is a legal record, so it is shown plainly with who signed and when. */
+  function consentCard(p) {
+    const yes = (on) => on ? UI.badge('Given', 'ok') : UI.badge('Not given', 'warn');
+    if (!p.consent_treatment) {
+      return `<div class="alert danger"><b>No treatment consent on file.</b>
+        This record predates the consent requirement, or was imported. Capture it via
+        <b>Edit details</b> before the next visit.</div>`;
+    }
+    return `<div class="card"><div class="card-head"><h3>Consent</h3>
+        <span class="muted small">Signed by ${UI.esc(p.consent_signed_by || '—')}
+          on ${UI.esc(UI.dateTime(p.consent_signed_at))}</span></div>
+      <div class="card-body"><div class="grid c3">
+        <div><b>Treatment</b><div>${yes(p.consent_treatment)}</div></div>
+        <div><b>Privacy notice</b><div>${yes(p.consent_privacy)}</div></div>
+        <div><b>Contact by message</b><div>${yes(p.consent_contact)}</div></div>
+      </div></div></div>`;
+  }
+
+  /**
+   * "They enquired, and now they have walked in." Same paperwork as a fresh
+   * registration, pre-filled with whatever the enquiry already captured.
+   */
+  function openConvert(p) {
+    UI.modal({
+      title: `Complete registration — ${p.first_name} ${p.last_name || ''}`,
+      size: 'wide',
+      body: `<div class="alert info">
+          This promotes the existing enquiry record (<b>${UI.esc(p.uhid)}</b>) to a registered patient.
+          The UHID, the enquiry history and any appointment already booked all stay attached.
+        </div>
+        <form id="conv-form">${registrationFields(p)}</form>`,
+      footer: `<button class="btn ghost" data-act="__close">Cancel</button>
+               <button class="btn" data-act="save">Register patient</button>`,
+      onMount(modal) { wireCoverFields(modal); },
+      async onAction(act, modal) {
+        if (act !== 'save') return;
+        const form = modal.querySelector('#conv-form');
+        if (!form.reportValidity()) return 'keep';
+        const res = await API.post(`/api/patients/${p.id}/register`, collectRegistration(form));
+        UI.ok(res.message);
+        APP.reload();
+      },
+    });
+  }
+
   function openEdit(p) {
     UI.modal({
       title: 'Edit — ' + p.name,
       size: 'wide',
       body: `<form id="ed-form">
+        <div class="tabs" id="ed-tabs">
+          <button type="button" class="active" data-ed="quick">Quick edit</button>
+          <button type="button" data-ed="full">Full record</button>
+        </div>
+        <div id="ed-quick">
         <div class="grid c3">
           ${UI.field({ name: 'firstName', label: 'First name', value: p.first_name, required: true })}
           ${UI.field({ name: 'lastName', label: 'Last name', value: p.last_name || '' })}
@@ -402,9 +659,52 @@
             ${UI.field({ name: 'pharmacyAddress', label: 'Address', value: p.pharmacy_address || '' })}
           </div>
         </fieldset>
+        </div>
+        <div id="ed-full" hidden>
+          <div class="grid c3">
+            ${UI.field({ name: 'sexAtBirth', label: 'Sex at birth', value: p.sex_at_birth || '',
+              options: [{ value: '', label: '— select —' }, { value: 'male', label: 'Male' },
+                        { value: 'female', label: 'Female' }, { value: 'intersex', label: 'Intersex' }] })}
+            ${UI.field({ name: 'smokingStatus', label: 'Smoking', value: p.smoking_status || '',
+              options: [{ value: '', label: '— not asked —' }, { value: 'never', label: 'Never' },
+                        { value: 'former', label: 'Former' }, { value: 'current', label: 'Current' },
+                        { value: 'unknown', label: 'Unknown' }] })}
+            ${UI.field({ name: 'alcoholUse', label: 'Alcohol', value: p.alcohol_use || '',
+              options: [{ value: '', label: '— not asked —' }, { value: 'never', label: 'Never' },
+                        { value: 'occasional', label: 'Occasional' }, { value: 'regular', label: 'Regular' },
+                        { value: 'former', label: 'Former' }, { value: 'unknown', label: 'Unknown' }] })}
+          </div>
+          ${UI.field({ name: 'currentMedications', label: 'Current medications', type: 'textarea', rows: 2,
+            value: p.current_medications || '' })}
+          ${UI.field({ name: 'immunisations', label: 'Immunisation history', type: 'textarea', rows: 2,
+            value: p.immunisations || '' })}
+          ${UI.field({ name: 'billingAddress', label: 'Billing address', type: 'textarea', rows: 2,
+            value: p.billing_address || '' })}
+          <div class="grid c2">
+            ${UI.field({ name: 'occupation', label: 'Occupation', value: p.occupation || '' })}
+            ${UI.field({ name: 'idNumber', label: 'Photo ID number', value: p.id_number || '' })}
+          </div>
+          <fieldset><legend>Consent</legend>
+            ${p.consent_treatment
+              ? `<div class="muted small mb">Signed by ${UI.esc(p.consent_signed_by || '—')} on
+                   ${UI.esc(UI.dateTime(p.consent_signed_at))}.</div>`
+              : '<div class="alert warn">No treatment consent on file — capture it now.</div>'}
+            ${UI.checkbox({ name: 'consentTreatment', label: 'Consent to treatment', checked: !!p.consent_treatment })}
+            ${UI.checkbox({ name: 'consentPrivacy', label: 'Privacy notice given', checked: !!p.consent_privacy })}
+            ${UI.checkbox({ name: 'consentContact', label: 'Agrees to reminders by message', checked: !!p.consent_contact })}
+            ${UI.field({ name: 'consentSignedBy', label: 'Signed by', value: p.consent_signed_by || '' })}
+          </fieldset>
+        </div>
       </form>`,
       footer: `<button class="btn ghost" data-act="__close">Cancel</button>
                <button class="btn" data-act="save">Save changes</button>`,
+      onMount(modal) {
+        modal.querySelectorAll('#ed-tabs button').forEach((b) => b.addEventListener('click', () => {
+          modal.querySelectorAll('#ed-tabs button').forEach((x) => x.classList.toggle('active', x === b));
+          modal.querySelector('#ed-quick').hidden = b.dataset.ed !== 'quick';
+          modal.querySelector('#ed-full').hidden = b.dataset.ed !== 'full';
+        }));
+      },
       async onAction(act, modal) {
         if (act !== 'save') return;
         await API.patch(`/api/patients/${p.id}`, UI.formValues(modal.querySelector('#ed-form')));

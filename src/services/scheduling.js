@@ -114,7 +114,133 @@ function isSlotFree(doctorId, scheduledAt) {
   return !bookedAt(doctorId, dateStr).has(hhmm);
 }
 
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+
+/**
+ * Read a date the way a patient actually types one into WhatsApp:
+ *   today · tomorrow · 25.05.26 · 25/05/2026 · 25-5-26 · 28th of May ·
+ *   May 28 · 2026-05-28
+ * Two-digit years are this century. A bare day/month that has already gone by
+ * is taken as next year, since nobody books into the past.
+ * Returns 'YYYY-MM-DD', or null when it cannot be read.
+ */
+function parseDate(input) {
+  const text = String(input || '').trim().toLowerCase();
+  if (!text) return null;
+
+  const today = new Date();
+  const atMidnight = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+
+  if (/^(today|now|2day)$/.test(text)) return dateKey(today);
+  if (/^(tomorrow|tmrw|tmr)$/.test(text)) {
+    return dateKey(new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1));
+  }
+  if (/^day after( tomorrow)?$/.test(text)) {
+    return dateKey(new Date(today.getFullYear(), today.getMonth(), today.getDate() + 2));
+  }
+
+  // A weekday name means the next one coming up.
+  const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+  const dayIdx = days.findIndex((d) => text === d || text === d.slice(0, 3));
+  if (dayIdx !== -1) {
+    const ahead = (dayIdx - today.getDay() + 7) % 7 || 7;
+    return dateKey(new Date(today.getFullYear(), today.getMonth(), today.getDate() + ahead));
+  }
+
+  // ISO first, so it is never mistaken for day-first.
+  const iso = text.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
+  if (iso) return build(Number(iso[1]), Number(iso[2]), Number(iso[3]));
+
+  // Day-first numeric, which is how it is written locally.
+  const dmy = text.match(/^(\d{1,2})[-/.](\d{1,2})(?:[-/.](\d{2,4}))?$/);
+  if (dmy) {
+    const day = Number(dmy[1]);
+    const month = Number(dmy[2]);
+    let year = dmy[3] === undefined ? null : Number(dmy[3]);
+    if (year !== null && year < 100) year += 2000;
+    if (year === null) {
+      const guess = build(today.getFullYear(), month, day);
+      if (guess && atMidnight(parseDateKey(guess)) >= atMidnight(today)) return guess;
+      return build(today.getFullYear() + 1, month, day);
+    }
+    return build(year, month, day);
+  }
+
+  // '28th of May', '28 may 2026', 'may 28'
+  const named = text.match(/^(?:(\d{1,2})(?:st|nd|rd|th)?\s*(?:of\s*)?)?([a-z]{3,9})\.?\s*(\d{1,2})?(?:st|nd|rd|th)?,?\s*(\d{2,4})?$/);
+  if (named) {
+    const monthIdx = MONTHS.indexOf(named[2].slice(0, 3));
+    if (monthIdx !== -1) {
+      const day = Number(named[1] || named[3]);
+      if (day >= 1 && day <= 31) {
+        let year = named[4] === undefined ? null : Number(named[4]);
+        if (year !== null && year < 100) year += 2000;
+        if (year === null) {
+          const guess = build(today.getFullYear(), monthIdx + 1, day);
+          if (guess && atMidnight(parseDateKey(guess)) >= atMidnight(today)) return guess;
+          return build(today.getFullYear() + 1, monthIdx + 1, day);
+        }
+        return build(year, monthIdx + 1, day);
+      }
+    }
+  }
+  return null;
+
+  function build(y, m, d) {
+    if (!(m >= 1 && m <= 12) || !(d >= 1 && d <= 31)) return null;
+    const dt = new Date(y, m - 1, d);
+    // Rejects the likes of 31 February, which Date would roll over.
+    if (dt.getMonth() !== m - 1 || dt.getDate() !== d) return null;
+    return dateKey(dt);
+  }
+}
+
+/**
+ * Read a time the way a patient types one: 15:00 · 3:00 · 3pm · 3.30 pm · 1500.
+ * A bare hour of 1–7 is read as afternoon, because the clinic is not open then
+ * in the morning and that is what the patient means.
+ * Returns 'HH:MM', or null.
+ */
+function parseTime(input) {
+  const text = String(input || '').trim().toLowerCase().replace(/\s+/g, '');
+  if (!text) return null;
+
+  const m = text.match(/^(\d{1,2})(?:[:.](\d{2}))?(am|pm|a|p)?$/)
+    || text.match(/^(\d{2})(\d{2})$/);
+  if (!m) return null;
+
+  let hour = Number(m[1]);
+  let minute = Number(m[2] || 0);
+  const meridiem = m[3];
+
+  // '1500' style, where the whole thing is one four-digit block.
+  if (!m[3] && /^\d{4}$/.test(text)) { hour = Number(text.slice(0, 2)); minute = Number(text.slice(2)); }
+
+  if (meridiem) {
+    if (meridiem.startsWith('p') && hour < 12) hour += 12;
+    if (meridiem.startsWith('a') && hour === 12) hour = 0;
+  } else if (hour >= 1 && hour <= 7) {
+    hour += 12;   // '3:00' means the afternoon clinic
+  }
+
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+  return `${pad(hour)}:${pad(minute)}`;
+}
+
+/** The free slot closest to what was asked for, and a few either side. */
+function nearestSlots(doctorId, dateStr, wanted, count = 4) {
+  const slots = availableSlots(doctorId, dateStr);
+  if (!slots.length) return { exact: null, alternatives: [] };
+  if (slots.includes(wanted)) return { exact: wanted, alternatives: [] };
+
+  const toMin = (t) => toMinutes(t);
+  const target = toMin(wanted);
+  const sorted = [...slots].sort((a, b) => Math.abs(toMin(a) - target) - Math.abs(toMin(b) - target));
+  return { exact: null, alternatives: sorted.slice(0, count).sort() };
+}
+
 module.exports = {
   dateKey, parseDateKey, availableSlots, nextAvailableDates, humanDate,
   humanDateTime, to12h, nextToken, isSlotFree, sessionsFor, isOnLeave,
+  parseDate, parseTime, nearestSlots,
 };

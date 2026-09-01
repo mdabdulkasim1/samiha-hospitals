@@ -115,6 +115,16 @@ status: `400` invalid input · `401` not signed in · `403` wrong role · `404` 
 | GET | `/pharmacy/queue` · `/prescriptions/:visitId` | any clinical |
 | POST | `/pharmacy/dispense` | pharmacy |
 | GET | `/pharmacy/sales[/:id]` | any clinical |
+| POST | `/pharmacy/counter-sale` | pharmacy |
+| GET/POST | `/stock/suppliers` · PATCH `/stock/suppliers/:id` | pharmacy (read: counter roles) |
+| GET | `/stock/scan?code=` | counter roles |
+| GET | `/stock/barcodes` | counter roles |
+| POST | `/stock/barcodes/drug/:id` · `/drug/:id/generate` · `/generate-missing` · `/batch/:id` | pharmacy |
+| GET | `/stock/labels/drugs?drugIds=` · `/stock/labels?batchIds=` | counter roles |
+| GET/POST | `/stock/purchases` · GET `/stock/purchases/:id` · POST `/stock/purchases/:id/pay` | pharmacy (read: counter roles) |
+| GET | `/stock/register` · `/stock/register/:drugId/movements` | counter roles |
+| GET/POST | `/stock/takes` · GET `/stock/takes/:id` · `/stock/takes/new/sheet` | pharmacy (read: counter roles) |
+| POST | `/stock/write-off-expired` | pharmacy |
 
 ## Billing
 | Method | Path | Roles |

@@ -7,6 +7,30 @@ const { required, str, int, phone, paging } = require('../lib/validate');
 const { generate } = require('../lib/ids');
 const audit = require('../lib/audit');
 
+/**
+ * Everyone who makes contact becomes a patient record straight away, at the
+ * 'enquiry' stage. If they already exist we link to them rather than creating a
+ * second record, so a returning caller does not fork into two files.
+ */
+function linkOrCreateEnquiryPatient(req, { name, phoneNumber }) {
+  if (!name) return null;
+
+  if (phoneNumber) {
+    const existing = db.prepare(
+      'SELECT * FROM patients WHERE (phone = ? OR whatsapp = ?) AND active = 1 ORDER BY id LIMIT 1'
+    ).get(phoneNumber, phoneNumber);
+    if (existing) return existing;
+  }
+
+  const parts = String(name).trim().split(/\s+/);
+  const info = db.prepare(
+    `INSERT INTO patients (stage, enquiry_at, uhid, first_name, last_name, phone, whatsapp, created_by)
+     VALUES ('enquiry', datetime('now'), ?, ?, ?, ?, ?, ?)`
+  ).run(generate('uhid'), parts[0], parts.slice(1).join(' ') || null,
+        phoneNumber, phoneNumber, req.user ? req.user.id : null);
+  return db.prepare('SELECT * FROM patients WHERE id = ?').get(info.lastInsertRowid);
+}
+
 const router = express.Router();
 const deskRoles = requireRole('reception', 'counselor', 'nurse', 'cashier');
 
@@ -20,7 +44,9 @@ router.get('/', deskRoles, wrap((req, res) => {
   const { limit, offset, page } = paging(req.query, 50);
   const rows = db.prepare(
     `SELECT e.*, d.name AS department_name, u.name AS doctor_name, a.appt_no,
-            p.uhid, s.name AS assigned_to_name
+            p.uhid, p.stage AS patient_stage,
+            (p.first_name || ' ' || COALESCE(p.last_name,'')) AS patient_name,
+            s.name AS assigned_to_name
        FROM enquiries e
        LEFT JOIN departments d ON d.id = e.department_id
        LEFT JOIN users u ON u.id = e.doctor_id
@@ -50,16 +76,27 @@ router.get('/stats', deskRoles, wrap((_req, res) => {
 router.post('/', deskRoles, wrap((req, res) => {
   required(req.body, ['name', 'source']);
   const refNo = generate('enquiry');
+  const phoneNumber = phone(req.body.phone);
+
+  // Link to an existing file, or open an enquiry-stage one.
+  const patient = int(req.body.patientId)
+    ? db.prepare('SELECT * FROM patients WHERE id = ?').get(int(req.body.patientId))
+    : linkOrCreateEnquiryPatient(req, { name: str(req.body.name), phoneNumber });
+
   const info = db.prepare(
     `INSERT INTO enquiries (ref_no, source, name, phone, patient_id, department_id, doctor_id,
                             subject, notes, assigned_to, follow_up_at, created_by)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(refNo, str(req.body.source), str(req.body.name), phone(req.body.phone),
-        int(req.body.patientId) || null, int(req.body.departmentId) || null, int(req.body.doctorId) || null,
+  ).run(refNo, str(req.body.source), str(req.body.name), phoneNumber,
+        patient ? patient.id : null, int(req.body.departmentId) || null, int(req.body.doctorId) || null,
         str(req.body.subject), str(req.body.notes),
         int(req.body.assignedTo) || req.user.id, str(req.body.followUpAt), req.user.id);
-  audit.log(req, 'create', 'enquiry', info.lastInsertRowid, { refNo });
-  res.status(201).json(db.prepare('SELECT * FROM enquiries WHERE id = ?').get(info.lastInsertRowid));
+  audit.log(req, 'create', 'enquiry', info.lastInsertRowid, { refNo, patientId: patient ? patient.id : null });
+  res.status(201).json({
+    ...db.prepare('SELECT * FROM enquiries WHERE id = ?').get(info.lastInsertRowid),
+    patient: patient || null,
+    patientStage: patient ? patient.stage : null,
+  });
 }));
 
 router.patch('/:id', deskRoles, wrap((req, res) => {

@@ -78,6 +78,8 @@ router.post('/simulate', requireAuth, wrap((req, res) => {
   audit.log(req, 'whatsapp_simulate', 'whatsapp', null, { from });
   res.json({
     reply,
+    // null means a person has taken the chat over and the bot stayed quiet.
+    handledByAgent: reply === null,
     session: bot.getSession(from),
     conversation: whatsapp.conversation(from, 60),
   });
@@ -114,6 +116,25 @@ router.post('/conversations/:number/reset', requireAuth, wrap((req, res) => {
   res.json({ ok: true });
 }));
 
+/**
+ * Take a conversation over. The bot stops answering on this number so a person
+ * can reply without the two talking over each other.
+ */
+router.post('/conversations/:number/takeover', requireAuth, wrap((req, res) => {
+  const number = phone(req.params.number);
+  bot.setState(number, 'agent', {});
+  audit.log(req, 'whatsapp_takeover', 'whatsapp', null, { number });
+  res.json({ ok: true, state: 'agent' });
+}));
+
+/** Hand the conversation back to the bot. */
+router.post('/conversations/:number/release', requireAuth, wrap((req, res) => {
+  const number = phone(req.params.number);
+  bot.releaseToBot(number);
+  audit.log(req, 'whatsapp_release', 'whatsapp', null, { number });
+  res.json({ ok: true, state: 'idle' });
+}));
+
 // ------------------------------------------------------------------- outbox
 router.get('/outbox', requireAuth, wrap((req, res) => {
   const status = str(req.query.status);
@@ -134,7 +155,8 @@ router.post('/outbox/:id/retry', requireAuth, wrap(async (req, res) => {
 /** Sessions currently mid-booking — useful when a patient calls in confused. */
 router.get('/sessions', requireAuth, wrap((_req, res) => {
   res.json(db.prepare(
-    `SELECT s.*, (p.first_name || ' ' || COALESCE(p.last_name,'')) AS patient_name, p.uhid
+    `SELECT s.*, (p.first_name || ' ' || COALESCE(p.last_name,'')) AS patient_name, p.uhid,
+            CAST((julianday('now') - julianday(s.last_message_at)) * 1440 AS INTEGER) AS idle_minutes
        FROM whatsapp_sessions s LEFT JOIN patients p ON p.id = s.patient_id
       WHERE s.state != 'idle' ORDER BY s.last_message_at DESC LIMIT 50`
   ).all());

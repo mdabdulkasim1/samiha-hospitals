@@ -49,7 +49,11 @@
         host.innerHTML = UI.table([
           { label: 'Ref', render: (e) => `<code>${UI.esc(e.ref_no)}</code>` },
           { label: 'Source', render: (e) => UI.badge(UI.titleise(e.source), e.source === 'whatsapp' ? 'wa' : 'info') },
-          { label: 'Name', render: (e) => `<b>${UI.esc(e.name)}</b>${e.uhid ? `<div class="muted small">${UI.esc(e.uhid)}</div>` : ''}` },
+          { label: 'Name', render: (e) => `<b>${UI.esc(e.name)}</b>` +
+            (e.uhid ? `<div class="muted small">${UI.esc(e.uhid)}</div>` : '') },
+          { label: 'Patient', render: (e) => e.patient_stage === 'enquiry'
+            ? UI.badge('Enquiry', 'orange')
+            : e.patient_stage === 'registered' ? UI.badge('Registered', 'ok') : '—' },
           { label: 'Phone', render: (e) => UI.esc(e.phone || '—') },
           { label: 'Subject', render: (e) => UI.esc(e.subject || e.notes || '—') },
           { label: 'Status', render: (e) => UI.statusBadge(e.status) },
@@ -92,7 +96,8 @@
         const values = UI.formValues(form);
         if (values.followUpAt) values.followUpAt = values.followUpAt.replace('T', ' ') + ':00';
         const e = await API.post('/api/enquiries', values);
-        UI.ok(`Enquiry ${e.ref_no} logged.`);
+        UI.ok(`Enquiry ${e.ref_no} logged.` + (e.patient
+          ? ` ${e.patientStage === 'enquiry' ? 'Opened' : 'Linked to'} patient file ${e.patient.uhid}.` : ''));
         APP.reload();
       },
     });
@@ -108,6 +113,8 @@
           <dt>Subject</dt><dd>${UI.esc(e.subject || '—')}</dd>
           <dt>Notes</dt><dd>${UI.esc(e.notes || '—')}</dd>
           <dt>Logged</dt><dd>${UI.esc(UI.dateTime(e.created_at))}</dd>
+          ${e.uhid ? `<dt>Patient file</dt><dd>${UI.esc(e.uhid)} ${e.patient_stage === 'enquiry'
+            ? UI.badge('Enquiry', 'orange') : UI.badge('Registered', 'ok')}</dd>` : ''}
           ${e.appt_no ? `<dt>Appointment</dt><dd>${UI.esc(e.appt_no)}</dd>` : ''}
         </dl>
         <form id="enq-update">
@@ -119,11 +126,22 @@
           ${UI.field({ name: 'notes', label: 'Add to notes', type: 'textarea', value: e.notes || '' })}
         </form>`,
       footer: `<button class="btn ghost" data-act="__close">Close</button>
+               ${e.patient_id ? '<button class="btn ghost" data-act="open">Open patient file</button>' : ''}
+               ${e.patient_stage === 'enquiry' && APP.can(['reception'])
+                 ? '<button class="btn" data-act="register">Register patient</button>' : ''}
                ${e.status !== 'converted' ? '<button class="btn teal" data-act="book">Book appointment</button>' : ''}
                <button class="btn" data-act="save">Save</button>`,
       async onAction(act, modal) {
+        if (act === 'open') {
+          UI.closeAllModals();
+          return APP.navigate('patients', { id: e.patient_id });
+        }
+        if (act === 'register') {
+          UI.closeAllModals();
+          return APP.navigate('patients', { id: e.patient_id, register: '1' });
+        }
         if (act === 'book') {
-          UI.closeModal();
+          UI.closeAllModals();
           return APP.navigate('appointments', { enquiryId: e.id, name: e.name, phone: e.phone || '' });
         }
         if (act !== 'save') return;

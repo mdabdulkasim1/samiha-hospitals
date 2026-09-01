@@ -99,6 +99,25 @@ CREATE TABLE IF NOT EXISTS patients (
   emergency_relation  TEXT,
   id_type             TEXT,
   id_number           TEXT,
+  -- Sex recorded at birth is kept alongside gender identity; both matter
+  -- clinically (reference ranges and screening are driven by the former).
+  sex_at_birth        TEXT CHECK (sex_at_birth IN ('male','female','intersex')),
+  -- Where invoices and insurance claims go, when that is not the home address.
+  billing_address     TEXT,
+  -- Social history
+  smoking_status      TEXT CHECK (smoking_status IN ('never','former','current','unknown')),
+  alcohol_use         TEXT CHECK (alcohol_use IN ('never','occasional','regular','former','unknown')),
+  -- Free-text clinical background captured at registration
+  current_medications TEXT,
+  immunisations       TEXT,
+  presenting_complaint TEXT,
+  -- Consent
+  consent_treatment   INTEGER NOT NULL DEFAULT 0,
+  consent_privacy     INTEGER NOT NULL DEFAULT 0,
+  consent_contact     INTEGER NOT NULL DEFAULT 0,
+  consent_signed_at   TEXT,
+  consent_signed_by   TEXT,          -- the patient or the guardian who signed
+  consent_taken_by    INTEGER REFERENCES users(id),
   -- insurance / assistance
   is_uninsured        INTEGER NOT NULL DEFAULT 1,
   insurance_provider  TEXT,
@@ -116,6 +135,11 @@ CREATE TABLE IF NOT EXISTS patients (
   pharmacy_address    TEXT,
   notes               TEXT,
   active              INTEGER NOT NULL DEFAULT 1,
+  -- A person enters as an 'enquiry' the moment they first make contact, and
+  -- becomes 'registered' when they turn up and full demographics are taken.
+  stage               TEXT NOT NULL DEFAULT 'registered'
+                        CHECK (stage IN ('enquiry','registered')),
+  enquiry_at          TEXT,
   registered_at       TEXT NOT NULL DEFAULT (datetime('now')),
   created_by          INTEGER REFERENCES users(id)
 );
@@ -444,6 +468,7 @@ CREATE TABLE IF NOT EXISTS drugs (
   purchase_price REAL NOT NULL DEFAULT 0,
   reorder_level  REAL NOT NULL DEFAULT 10,
   schedule_type  TEXT,          -- H, H1, OTC ...
+  barcode        TEXT,          -- the EAN/UPC printed on the pack
   active         INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS idx_drugs_name ON drugs(name);
@@ -458,6 +483,7 @@ CREATE TABLE IF NOT EXISTS drug_batches (
   mrp            REAL NOT NULL DEFAULT 0,
   purchase_price REAL NOT NULL DEFAULT 0,
   supplier       TEXT,
+  barcode        TEXT,          -- label printed by the clinic for this batch
   received_at    TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE (drug_id, batch_no)
 );
@@ -466,6 +492,17 @@ CREATE INDEX IF NOT EXISTS idx_batches_expiry ON drug_batches(expiry_date);
 CREATE TABLE IF NOT EXISTS pharmacy_sales (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   bill_no      TEXT NOT NULL UNIQUE,
+  -- 'prescription' is dispensed against a clinic visit; 'counter' is a
+  -- walk-in buying over the counter, who need not be our patient at all.
+  sale_type    TEXT NOT NULL DEFAULT 'prescription'
+                 CHECK (sale_type IN ('prescription','counter')),
+  customer_name  TEXT,
+  customer_phone TEXT,
+  -- The outside doctor's prescription, required for Schedule H at the counter.
+  rx_reference   TEXT,
+  paid_amount    REAL NOT NULL DEFAULT 0,
+  payment_mode   TEXT,
+  payment_reference TEXT,
   patient_id   INTEGER REFERENCES patients(id),
   visit_id     INTEGER REFERENCES visits(id),
   admission_id INTEGER REFERENCES admissions(id),
@@ -1008,4 +1045,83 @@ CREATE TABLE IF NOT EXISTS backups (
   error      TEXT,
   created_by INTEGER REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- =============================================================================
+-- Pharmacy stock register: suppliers, goods received, barcodes, stock takes
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS suppliers (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  code         TEXT NOT NULL UNIQUE,
+  name         TEXT NOT NULL,
+  contact_person TEXT,
+  phone        TEXT,
+  email        TEXT,
+  address      TEXT,
+  gstin        TEXT,
+  dl_number    TEXT,            -- drug licence number
+  credit_days  INTEGER NOT NULL DEFAULT 0,
+  notes        TEXT,
+  active       INTEGER NOT NULL DEFAULT 1,
+  created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Goods received note: one supplier invoice of medicines coming in.
+CREATE TABLE IF NOT EXISTS stock_purchases (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  grn_no        TEXT NOT NULL UNIQUE,
+  supplier_id   INTEGER NOT NULL REFERENCES suppliers(id),
+  invoice_no    TEXT,
+  invoice_date  TEXT,
+  received_at   TEXT NOT NULL DEFAULT (datetime('now')),
+  gross         REAL NOT NULL DEFAULT 0,
+  discount      REAL NOT NULL DEFAULT 0,
+  tax           REAL NOT NULL DEFAULT 0,
+  net           REAL NOT NULL DEFAULT 0,
+  paid          REAL NOT NULL DEFAULT 0,
+  due_date      TEXT,
+  status        TEXT NOT NULL DEFAULT 'received'
+                  CHECK (status IN ('received','partially_paid','paid','cancelled')),
+  notes         TEXT,
+  created_by    INTEGER REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_purchases_supplier ON stock_purchases(supplier_id);
+
+CREATE TABLE IF NOT EXISTS stock_purchase_items (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  purchase_id    INTEGER NOT NULL REFERENCES stock_purchases(id) ON DELETE CASCADE,
+  drug_id        INTEGER NOT NULL REFERENCES drugs(id),
+  batch_id       INTEGER REFERENCES drug_batches(id),
+  batch_no       TEXT NOT NULL,
+  expiry_date    TEXT NOT NULL,
+  qty            REAL NOT NULL,
+  free_qty       REAL NOT NULL DEFAULT 0,
+  purchase_price REAL NOT NULL DEFAULT 0,
+  mrp            REAL NOT NULL DEFAULT 0,
+  tax_pct        REAL NOT NULL DEFAULT 0,
+  discount_pct   REAL NOT NULL DEFAULT 0,
+  amount         REAL NOT NULL DEFAULT 0
+);
+
+-- A physical count, and what it reconciled against the book figure.
+CREATE TABLE IF NOT EXISTS stock_takes (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  reference   TEXT NOT NULL UNIQUE,
+  counted_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  notes       TEXT,
+  counted_by  INTEGER REFERENCES users(id),
+  lines       INTEGER NOT NULL DEFAULT 0,
+  variances   INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS stock_take_items (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  take_id      INTEGER NOT NULL REFERENCES stock_takes(id) ON DELETE CASCADE,
+  drug_id      INTEGER NOT NULL REFERENCES drugs(id),
+  batch_id     INTEGER NOT NULL REFERENCES drug_batches(id),
+  book_qty     REAL NOT NULL,
+  counted_qty  REAL NOT NULL,
+  variance     REAL NOT NULL,
+  reason       TEXT
 );

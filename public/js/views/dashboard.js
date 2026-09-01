@@ -16,6 +16,20 @@ APP.register('dashboard', {
 
     el.innerHTML = `
       <div class="grid c4 mb">
+        ${stat('orange', 'Enquiry patients', UI.num(d.patients ? d.patients.enquiry : 0),
+          `${UI.num(d.patients ? d.patients.enquiryToday : 0)} new today · not yet registered`)}
+        ${stat('ok', 'Registered patients', UI.num(d.patients ? d.patients.registered : 0),
+          `${UI.num(d.patients ? d.patients.registeredToday : 0)} registered today`)}
+        ${stat('teal', 'Converted from enquiry', UI.num(d.patients ? d.patients.convertedFromEnquiry : 0),
+          d.patients && d.patients.enquiry + d.patients.convertedFromEnquiry > 0
+            ? `${Math.round((d.patients.convertedFromEnquiry /
+                (d.patients.enquiry + d.patients.convertedFromEnquiry)) * 100)}% of enquiries came in`
+            : 'Enquiries who turned up')}
+        ${stat('crimson', 'Open enquiries', UI.num(d.enquiries.open || 0),
+          `${UI.num(d.enquiries.via_whatsapp || 0)} via WhatsApp today`)}
+      </div>
+
+      <div class="grid c4 mb">
         ${stat('teal', 'OPD visits today', UI.num(d.opd.visits),
           `${UI.num(d.opd.in_progress || 0)} in progress · ${UI.num(d.opd.new_patients || 0)} new`)}
         ${stat('crimson', 'Appointments', UI.num(d.appointments.total),
@@ -44,6 +58,12 @@ APP.register('dashboard', {
                 <span>${UI.esc(trend[0].day)}</span><span>${UI.esc(trend[trend.length - 1].day)}</span>
               </div>
             </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h3>Enquiries waiting to be registered</h3>
+              <a class="btn ghost sm" href="#/patients?stage=enquiry">See all</a></div>
+            <div class="card-body tight" id="enquiry-patients">${UI.loading()}</div>
           </div>
 
           <div class="card">
@@ -97,6 +117,31 @@ APP.register('dashboard', {
     el.querySelectorAll('[data-go]').forEach((b) =>
       b.addEventListener('click', () => APP.navigate(b.dataset.go)));
 
+    // Who enquired but has not been registered yet — the desk's follow-up list.
+    try {
+      const enq = await API.get('/api/patients' + API.qs({ stage: 'enquiry', limit: 8 }));
+      document.getElementById('enquiry-patients').innerHTML = enq.rows.length
+        ? UI.table([
+            { label: 'Name', render: (p) => `<b>${UI.esc(p.first_name)} ${UI.esc(p.last_name || '')}</b>` +
+              `<div class="muted small">${UI.esc(p.uhid)}</div>` },
+            { label: 'Phone', render: (p) => UI.esc(p.phone || '—') },
+            { label: 'Came via', render: (p) => p.enquiry_source
+              ? UI.badge(UI.titleise(p.enquiry_source), p.enquiry_source === 'whatsapp' ? 'wa' : 'info') : '—' },
+            { label: 'Enquired', render: (p) => UI.esc(UI.ago(p.enquiry_at || p.registered_at)) },
+            { label: '', render: (p) => APP.can(['reception'])
+              ? `<button class="btn sm" data-reg="${p.id}">Register</button>` : '' },
+          ], enq.rows)
+        : UI.empty('No enquiries waiting — everyone who asked has been registered.', '✅');
+
+      document.querySelectorAll('[data-reg]').forEach((b) => b.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        APP.navigate('patients', { id: b.dataset.reg, register: '1' });
+      }));
+    } catch (err) {
+      const host = document.getElementById('enquiry-patients');
+      if (host) host.innerHTML = `<div class="alert warn">${UI.esc(err.message)}</div>`;
+    }
+
     // Mini queue, loaded after the shell so the page paints immediately.
     try {
       const board = await API.get('/api/visits/board');
@@ -139,6 +184,9 @@ function attentionList(d) {
   if (d.lab.pending) items.push(['info', `${d.lab.pending} diagnostic order(s) in progress`, 'lab']);
   if (d.pharmacy.lowStockCount) items.push(['danger', `${d.pharmacy.lowStockCount} medicine(s) at or below reorder level`, 'pharmacy']);
   if (d.enquiries.open) items.push(['info', `${d.enquiries.open} open enquiry/enquiries to follow up`, 'enquiries']);
+  if (d.patients && d.patients.enquiry) {
+    items.push(['orange', `${d.patients.enquiry} enquiry patient(s) not yet registered`, 'patients']);
+  }
   if (d.revenue.outstanding > 0) items.push(['warn', `${UI.money(d.revenue.outstanding)} outstanding across unpaid bills`, 'billing']);
   if (d.insurance) {
     const ins = d.insurance;

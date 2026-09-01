@@ -46,6 +46,7 @@
           <div class="wa-msgs" id="wa-msgs">
             ${UI.empty('Pick a conversation, or start a new one below.', '💬')}
           </div>
+          <div id="wa-owner"></div>
           <div class="wa-quick" id="wa-quick"></div>
           <form class="wa-compose" id="wa-form">
             <input type="tel" id="wa-num" placeholder="Patient number, e.g. 919876500001" style="max-width:210px">
@@ -67,6 +68,29 @@
       body.querySelector('#wa-form').requestSubmit();
     }));
 
+    /**
+     * Who is answering this chat. Taking it over silences the bot so the two
+     * do not talk over each other.
+     */
+    const drawOwner = (number, session) => {
+      const host = body.querySelector('#wa-owner');
+      if (!number) return void (host.innerHTML = '');
+      const onAgent = session && session.state === 'agent';
+      host.innerHTML = `<div class="row-between small" style="padding:8px 12px;border-top:1px solid var(--line)">
+        <span>${onAgent
+          ? '🙋 <b>Our team is answering</b> — the bot is quiet on this number.'
+          : '🤖 The bot is answering this chat.'}</span>
+        <button class="btn ghost sm" id="wa-own">${onAgent ? 'Hand back to the bot' : 'Take over'}</button>
+      </div>`;
+      host.querySelector('#wa-own').addEventListener('click', async () => {
+        await API.post(`/api/whatsapp/conversations/${number}/${onAgent ? 'release' : 'takeover'}`, {});
+        UI.ok(onAgent ? 'Handed back to the bot.' : 'You are answering this chat now.');
+        const conv = await API.get(`/api/whatsapp/conversations/${number}`);
+        drawOwner(number, conv.session);
+        loadList(number);
+      });
+    };
+
     const drawThread = (messages) => {
       const host = body.querySelector('#wa-msgs');
       host.innerHTML = messages.length ? messages.map((m) =>
@@ -77,16 +101,25 @@
     };
 
     const loadList = async (active) => {
-      const list = await API.get('/api/whatsapp/conversations');
-      body.querySelector('#wa-list').innerHTML = list.length ? list.map((c) => `
-        <div class="item ${c.wa_number === active ? 'active' : ''}" data-num="${UI.esc(c.wa_number)}">
+      const [list, sessions] = await Promise.all([
+        API.get('/api/whatsapp/conversations'),
+        API.get('/api/whatsapp/sessions').catch(() => []),
+      ]);
+      const stateOf = (num) => (sessions.find((s) => s.wa_number === num) || {}).state;
+      body.querySelector('#wa-list').innerHTML = list.length ? list.map((c) => {
+        const st = stateOf(c.wa_number);
+        return `<div class="item ${c.wa_number === active ? 'active' : ''}" data-num="${UI.esc(c.wa_number)}">
           <b>${UI.esc(c.patient_name || c.wa_number)}</b>
           <span>${UI.esc(c.wa_number)} · ${UI.esc(c.messages)} msg · ${UI.esc(UI.ago(c.last_at))}</span>
-        </div>`).join('') : '<div class="empty small">No conversations yet.</div>';
+          ${st === 'agent' ? '<span>' + UI.badge('With our team', 'orange') + '</span>'
+            : st ? '<span>' + UI.badge(UI.titleise(st), 'teal') + '</span>' : ''}
+        </div>`;
+      }).join('') : '<div class="empty small">No conversations yet.</div>';
       body.querySelectorAll('#wa-list .item').forEach((i) => i.addEventListener('click', async () => {
         numInput.value = i.dataset.num;
         const conv = await API.get(`/api/whatsapp/conversations/${i.dataset.num}`);
         drawThread(conv.messages);
+        drawOwner(i.dataset.num, conv.session);
         loadList(i.dataset.num);
       }));
     };
@@ -99,13 +132,22 @@
       if (!text) return;
       textInput.value = '';
       try {
-        const res = await API.post('/api/whatsapp/simulate', { from, text });
-        drawThread(res.conversation);
+        const conv = await API.get(`/api/whatsapp/conversations/${from}`).catch(() => ({}));
+        if (conv.session && conv.session.state === 'agent') {
+          // A person owns this chat, so type as the clinic rather than the patient.
+          await API.post('/api/whatsapp/send', { to: from, body: text });
+        } else {
+          await API.post('/api/whatsapp/simulate', { from, text });
+        }
+        const fresh = await API.get(`/api/whatsapp/conversations/${from}`);
+        drawThread(fresh.messages);
+        drawOwner(from, fresh.session);
         loadList(from);
         APP.refreshBadges();
       } catch (err) { UI.err(err.message); }
     });
 
+    drawOwner(null);
     await loadList();
   }
 
@@ -120,8 +162,11 @@
     host.innerHTML = UI.table([
       { label: 'Number', render: (s) => `<code>${UI.esc(s.wa_number)}</code>` },
       { label: 'Patient', render: (s) => UI.esc(s.patient_name || 'Not registered') },
-      { label: 'Step', render: (s) => UI.badge(UI.titleise(s.state), 'teal') },
+      { label: 'Step', render: (s) => s.state === 'agent'
+        ? UI.badge('With our team', 'orange') : UI.badge(UI.titleise(s.state), 'teal') },
       { label: 'Last message', render: (s) => UI.esc(UI.ago(s.last_message_at)) },
+      { label: 'Idle', render: (s) => s.idle_minutes > 25
+        ? `<b style="color:var(--danger)">${UI.esc(s.idle_minutes)} min</b>` : `${UI.esc(s.idle_minutes)} min` },
       { label: '', render: (s) => `<button class="btn ghost sm" data-reset="${UI.esc(s.wa_number)}">Reset to menu</button>` },
     ], rows, { emptyText: 'No conversation is mid-booking right now.' });
     host.querySelectorAll('[data-reset]').forEach((b) => b.addEventListener('click', async () => {
@@ -213,7 +258,9 @@ WHATSAPP_VERIFY_TOKEN=samiha-verify-token</pre>
             <p><b>Report status</b> — where their diagnostics have reached.</p>
             <p><b>Refill request</b> — logs an enquiry for the pharmacist.</p>
             <p><b>Clinic timings</b> — OPD, diagnostics and pharmacy hours.</p>
-            <p><b>Talk to the front desk</b> — raises a call-back enquiry.</p>
+            <p><b>Talk to our team</b> — hands the chat to a person; the bot then stays quiet
+               until it is handed back.</p>
+            <p><b>Feedback or complaint</b> — captured as an enquiry, complaints flagged for follow-up.</p>
           </div>
         </div>
       </fieldset>

@@ -7,6 +7,7 @@ const auth = require('./lib/auth');
 const { ApiError } = require('./lib/http');
 const whatsapp = require('./services/whatsapp');
 const backup = require('./services/backup');
+const whatsappBot = require('./services/whatsappBot');
 
 const app = express();
 app.disable('x-powered-by');
@@ -56,6 +57,7 @@ app.use('/api/visits', require('./routes/visits'));
 app.use('/api/financial', require('./routes/financial'));
 app.use('/api/lab', require('./routes/lab'));
 app.use('/api/pharmacy', require('./routes/pharmacy'));
+app.use('/api/stock', require('./routes/stock'));
 app.use('/api/billing', require('./routes/billing'));
 app.use('/api/ipd', require('./routes/ipd'));
 app.use('/api/insurance', require('./routes/insurance'));
@@ -89,6 +91,12 @@ function startBackgroundJobs() {
   setInterval(() => {
     whatsapp.dispatchPending(50).catch((err) => console.error('[outbox]', err.message));
   }, 60_000).unref();
+
+  // Sign off from conversations nobody replied to, rather than leaving them open.
+  setInterval(() => {
+    whatsappBot.closeIdleConversations(config.whatsapp.sessionTtlMinutes)
+      .catch((err) => console.error('[whatsapp] idle close:', err.message));
+  }, 10 * 60_000).unref();
 
   // Expire stale sessions and overdue payment-plan instalments hourly.
   setInterval(() => {

@@ -1,7 +1,7 @@
 'use strict';
 const express = require('express');
 const { db } = require('../db');
-const { wrap, notFound } = require('../lib/http');
+const { wrap, notFound, conflict, badRequest } = require('../lib/http');
 const { requireRole } = require('../lib/auth');
 const { required, str, num, int, bool } = require('../lib/validate');
 const audit = require('../lib/audit');
@@ -49,6 +49,36 @@ router.get('/staff', wrap((req, res) => {
   res.json(rows);
 }));
 
+router.get('/staff/:id', requireRole('admin', 'reception'), wrap((req, res) => {
+  const id = int(req.params.id);
+  const user = db.prepare(
+    `SELECT u.id, u.staff_code, u.name, u.email, u.phone, u.role, u.active, u.department_id,
+            u.last_login_at, u.created_at, d.name AS department_name,
+            dp.qualification, dp.specialization, dp.reg_no, dp.consult_fee, dp.follow_up_fee,
+            dp.slot_minutes, dp.room_no, dp.signature_line
+       FROM users u
+       LEFT JOIN departments d ON d.id = u.department_id
+       LEFT JOIN doctor_profiles dp ON dp.user_id = u.id
+      WHERE u.id = ?`
+  ).get(id);
+  if (!user) throw notFound('Staff member not found');
+
+  if (user.role === 'doctor') {
+    user.sessions = db.prepare(
+      'SELECT * FROM doctor_schedules WHERE doctor_id = ? ORDER BY weekday, start_time'
+    ).all(id);
+    user.leaves = db.prepare(
+      "SELECT * FROM doctor_leaves WHERE doctor_id = ? AND leave_date >= date('now') ORDER BY leave_date"
+    ).all(id);
+    user.stats = db.prepare(
+      `SELECT (SELECT COUNT(*) FROM appointments a WHERE a.doctor_id = ? AND a.status NOT IN ('cancelled','no_show')) AS appointments,
+              (SELECT COUNT(*) FROM visits v WHERE v.doctor_id = ?) AS visits,
+              (SELECT COUNT(*) FROM consultations c WHERE c.doctor_id = ?) AS consultations`
+    ).get(id, id, id);
+  }
+  res.json(user);
+}));
+
 router.post('/staff', adminOnly, wrap((req, res) => {
   required(req.body, ['name', 'role', 'password']);
   const staffCode = str(req.body.staffCode) || generate('staff');
@@ -84,6 +114,8 @@ router.patch('/staff/:id', adminOnly, wrap((req, res) => {
     db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(req.body.password), id);
   }
   if (user.role === 'doctor') {
+    // A profile row may be missing if the account was created as another role.
+    db.prepare('INSERT OR IGNORE INTO doctor_profiles (user_id) VALUES (?)').run(id);
     db.prepare(
       `UPDATE doctor_profiles SET qualification = COALESCE(?, qualification),
               specialization = COALESCE(?, specialization), consult_fee = COALESCE(?, consult_fee),
@@ -110,10 +142,24 @@ router.get('/doctors/:id/schedule', wrap((req, res) => {
 
 router.post('/doctors/:id/schedule', requireRole('admin', 'reception'), wrap((req, res) => {
   required(req.body, ['weekday', 'startTime', 'endTime']);
+  const doctorId = int(req.params.id);
+  const weekday = int(req.body.weekday);
+  const start = str(req.body.startTime);
+  const end = str(req.body.endTime);
+  if (end <= start) throw badRequest('The session must end after it starts.');
+
+  const clash = db.prepare(
+    `SELECT * FROM doctor_schedules
+      WHERE doctor_id = ? AND weekday = ? AND active = 1 AND start_time < ? AND end_time > ?`
+  ).get(doctorId, weekday, end, start);
+  if (clash) {
+    throw conflict(`That overlaps an existing session on the same day (${clash.start_time}–${clash.end_time}).`);
+  }
+
   const info = db.prepare(
     `INSERT INTO doctor_schedules (doctor_id, weekday, start_time, end_time, slot_minutes, max_tokens)
      VALUES (?, ?, ?, ?, ?, ?)`
-  ).run(int(req.params.id), int(req.body.weekday), str(req.body.startTime), str(req.body.endTime),
+  ).run(doctorId, weekday, start, end,
         int(req.body.slotMinutes, 15) || 15, int(req.body.maxTokens, 40) || 40);
   audit.log(req, 'create', 'doctor_schedule', info.lastInsertRowid);
   res.status(201).json({ id: info.lastInsertRowid });
@@ -132,6 +178,13 @@ router.post('/doctors/:id/leave', requireRole('admin', 'reception'), wrap((req, 
 }));
 
 // ---------------------------------------------------------------- catalogue
+router.delete('/doctors/:id/leave/:date', requireRole('admin', 'reception'), wrap((req, res) => {
+  db.prepare('DELETE FROM doctor_leaves WHERE doctor_id = ? AND leave_date = ?')
+    .run(int(req.params.id), str(req.params.date));
+  audit.log(req, 'delete', 'doctor_leave', int(req.params.id), { date: req.params.date });
+  res.json({ ok: true });
+}));
+
 router.get('/services', wrap((_req, res) => {
   res.json(db.prepare('SELECT * FROM services WHERE active = 1 ORDER BY category, name').all());
 }));

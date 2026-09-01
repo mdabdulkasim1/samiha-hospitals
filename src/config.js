@@ -39,9 +39,11 @@ module.exports = {
   clinic: {
     name: env.CLINIC_NAME || 'SAMIHA POLYCLINIC & DIAGNOSTICS',
     address: env.CLINIC_ADDRESS || 'Main Road, Your City',
-    phone: env.CLINIC_PHONE || '+91 00000 00000',
+    phone: env.CLINIC_PHONE || '+91 72007 50420',
     email: env.CLINIC_EMAIL || 'care@samihapolyclinic.com',
     gstin: env.CLINIC_GSTIN || '',
+    // The number patients call or message. Quoted whenever a chat closes.
+    whatsappNumber: env.CLINIC_WHATSAPP_NUMBER || env.CLINIC_PHONE || '+91 72007 50420',
     currency: env.CURRENCY || 'INR',
     currencySymbol: env.CURRENCY_SYMBOL || '₹',
   },

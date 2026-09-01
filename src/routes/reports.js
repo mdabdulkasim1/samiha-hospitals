@@ -73,6 +73,27 @@ router.get('/dashboard', requireAuth, wrap((req, res) => {
            HAVING COALESCE(SUM(CASE WHEN date(b.expiry_date) >= date('now') THEN b.qty_available ELSE 0 END),0) <= d.reorder_level)`
       ).get().c,
     },
+    patients: (() => {
+      const byStage = db.prepare(
+        "SELECT stage, COUNT(*) AS c FROM patients WHERE active = 1 GROUP BY stage"
+      ).all().reduce((a, r) => ({ ...a, [r.stage]: r.c }), {});
+      return {
+        enquiry: byStage.enquiry || 0,
+        registered: byStage.registered || 0,
+        enquiryToday: db.prepare(
+          "SELECT COUNT(*) AS c FROM patients WHERE active = 1 AND stage = 'enquiry' AND date(enquiry_at) = ?"
+        ).get(date).c,
+        registeredToday: db.prepare(
+          "SELECT COUNT(*) AS c FROM patients WHERE active = 1 AND stage = 'registered' AND date(registered_at) = ?"
+        ).get(date).c,
+        // Enquiries that turned into registrations, all time — the conversion rate.
+        convertedFromEnquiry: db.prepare(
+          `SELECT COUNT(DISTINCT p.id) AS c FROM patients p
+             JOIN enquiries e ON e.patient_id = p.id
+            WHERE p.active = 1 AND p.stage = 'registered'`
+        ).get().c,
+      };
+    })(),
     enquiries: db.prepare(
       `SELECT COUNT(*) AS total, SUM(CASE WHEN status = 'new' THEN 1 ELSE 0 END) AS open,
               SUM(CASE WHEN source = 'whatsapp' THEN 1 ELSE 0 END) AS via_whatsapp

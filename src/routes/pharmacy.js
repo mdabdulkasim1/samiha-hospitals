@@ -3,7 +3,7 @@ const express = require('express');
 const { db } = require('../db');
 const { wrap, notFound, badRequest, conflict } = require('../lib/http');
 const { requireRole } = require('../lib/auth');
-const { required, str, int, num, paging } = require('../lib/validate');
+const { required, str, int, num, money, phone, paging } = require('../lib/validate');
 const { generate } = require('../lib/ids');
 const pharmacy = require('../services/pharmacy');
 const billing = require('../services/billing');
@@ -249,13 +249,119 @@ router.post('/dispense', requireRole('pharmacy'), wrap((req, res) => {
   });
 }));
 
+/**
+ * Counter sale — a walk-in buying medicines who is not our patient.
+ *
+ * No visit, no patient record and no clinic invoice: the pharmacy bill stands
+ * on its own and is settled at the counter. Schedule H medicines still need a
+ * prescription reference, because selling them without one is not lawful.
+ */
+router.post('/counter-sale', requireRole('pharmacy'), wrap((req, res) => {
+  required(req.body, ['items']);
+  const items = Array.isArray(req.body.items) ? req.body.items : [];
+  if (!items.length) throw badRequest('Add at least one medicine to the bill.');
+
+  // Schedule H cannot go over the counter on a nod.
+  const scheduled = [];
+  for (const it of items) {
+    const drug = db.prepare('SELECT * FROM drugs WHERE id = ?').get(int(it.drugId));
+    if (!drug) throw notFound(`Medicine #${it.drugId} not found`);
+    if (['H', 'H1', 'X'].includes(String(drug.schedule_type || '').toUpperCase())) scheduled.push(drug.name);
+  }
+  const rxReference = str(req.body.rxReference);
+  if (scheduled.length && !rxReference) {
+    throw conflict(
+      `${scheduled.join(', ')} ${scheduled.length > 1 ? 'are' : 'is'} a prescription-only medicine. ` +
+      'Record the prescribing doctor and prescription date before selling it over the counter.'
+    );
+  }
+
+  const billNo = generate('pharmacyBill');
+  const out = db.transaction(() => {
+    const saleInfo = db.prepare(
+      `INSERT INTO pharmacy_sales (bill_no, sale_type, customer_name, customer_phone, rx_reference, created_by)
+       VALUES (?, 'counter', ?, ?, ?, ?)`
+    ).run(billNo, str(req.body.customerName), phone(req.body.customerPhone), rxReference, req.user.id);
+    const saleId = saleInfo.lastInsertRowid;
+
+    let gross = 0;
+    let tax = 0;
+    for (const it of items) {
+      const drugId = int(it.drugId);
+      const qty = num(it.qty);
+      pharmacy.assertPositive(qty, `Quantity for medicine #${drugId}`);
+      const drug = db.prepare('SELECT * FROM drugs WHERE id = ?').get(drugId);
+
+      for (const pick of pharmacy.allocate(drugId, qty)) {
+        const unitPrice = pick.batch.mrp || drug.mrp;
+        const lineGross = unitPrice * pick.qty;
+        const lineTax = lineGross * ((drug.tax_pct || 0) / 100);
+        gross += lineGross;
+        tax += lineTax;
+
+        db.prepare(
+          `INSERT INTO pharmacy_sale_items (sale_id, drug_id, batch_id, drug_name, batch_no,
+                                            expiry_date, qty, mrp, tax_pct, amount)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).run(saleId, drugId, pick.batch.id, drug.name, pick.batch.batch_no, pick.batch.expiry_date,
+              pick.qty, unitPrice, drug.tax_pct, pharmacy.round2(lineGross + lineTax));
+
+        pharmacy.consume(pick.batch.id, pick.qty);
+        pharmacy.writeLedger({
+          drugId, batchId: pick.batch.id, txnType: 'sale', qtyDelta: -pick.qty,
+          refType: 'counter_sale', refId: saleId, userId: req.user.id,
+          notes: `Counter bill ${billNo}`,
+        });
+      }
+    }
+
+    const discount = money(req.body.discount, 0);
+    const net = pharmacy.round2(gross + tax - discount);
+    const paid = req.body.paidAmount === undefined ? net : money(req.body.paidAmount);
+    if (paid > net + 0.009) throw badRequest('Amount paid is more than the bill total.');
+
+    db.prepare(
+      `UPDATE pharmacy_sales SET gross = ?, discount = ?, tax = ?, net = ?,
+              paid_amount = ?, payment_mode = ?, payment_reference = ?
+        WHERE id = ?`
+    ).run(pharmacy.round2(gross), discount, pharmacy.round2(tax), net,
+          paid, str(req.body.paymentMode, 'cash'), str(req.body.paymentReference), saleId);
+
+    return { saleId, net, paid };
+  })();
+
+  audit.log(req, 'counter_sale', 'pharmacy_sale', out.saleId, { billNo, net: out.net });
+  res.status(201).json({
+    sale: db.prepare('SELECT * FROM pharmacy_sales WHERE id = ?').get(out.saleId),
+    items: db.prepare('SELECT * FROM pharmacy_sale_items WHERE sale_id = ?').all(out.saleId),
+    balance: pharmacy.round2(out.net - out.paid),
+    scheduledMedicines: scheduled,
+  });
+}));
+
 router.get('/sales', rxRoles, wrap((req, res) => {
   const { limit, offset } = paging(req.query, 50);
-  res.json(db.prepare(
-    `SELECT s.*, p.uhid, (p.first_name || ' ' || COALESCE(p.last_name,'')) AS patient_name, u.name AS by_name
+  const type = str(req.query.type);
+  const rows = db.prepare(
+    `SELECT s.*, p.uhid, (p.first_name || ' ' || COALESCE(p.last_name,'')) AS patient_name, u.name AS by_name,
+            (SELECT COUNT(*) FROM pharmacy_sale_items i WHERE i.sale_id = s.id) AS item_count
        FROM pharmacy_sales s LEFT JOIN patients p ON p.id = s.patient_id LEFT JOIN users u ON u.id = s.created_by
+      WHERE (? IS NULL OR s.sale_type = ?)
       ORDER BY s.id DESC LIMIT ? OFFSET ?`
-  ).all(limit, offset));
+  ).all(type, type, limit, offset);
+
+  const today = db.prepare(
+    `SELECT sale_type, COUNT(*) AS bills, COALESCE(SUM(net), 0) AS total
+       FROM pharmacy_sales WHERE date(created_at) = date('now') GROUP BY sale_type`
+  ).all().reduce((a, r) => ({ ...a, [r.sale_type]: { bills: r.bills, total: r.total } }), {});
+
+  res.json({
+    rows,
+    today: {
+      prescription: today.prescription || { bills: 0, total: 0 },
+      counter: today.counter || { bills: 0, total: 0 },
+    },
+  });
 }));
 
 router.get('/sales/:id', rxRoles, wrap((req, res) => {

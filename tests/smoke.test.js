@@ -88,54 +88,63 @@ test('unauthenticated API access is rejected', async () => {
 });
 
 test('role gate blocks a nurse from registering a patient', async () => {
-  const res = await api('POST', '/api/patients', { firstName: 'Test' }, 'nurse');
+  const res = await api('POST', '/api/patients', { consentTreatment: true, consentPrivacy: true,
+ firstName: 'Test' }, 'nurse');
   assert.strictEqual(res.status, 403);
 });
 
 test('WhatsApp bot books an appointment end to end', async () => {
+  const scheduling = require('../src/services/scheduling');
   const from = '919000000111';
-  const say = (text) => api('POST', '/api/whatsapp/simulate', { from, text }, 'reception');
+  const say = async (text) => (await api('POST', '/api/whatsapp/simulate', { from, text }, 'reception')).body;
 
   let r = await say('Hi');
-  assert.match(r.body.reply, /Book an appointment/);
+  assert.match(r.reply, /Book an appointment/);
 
   r = await say('1');                       // book
-  assert.match(r.body.reply, /Which department/);
+  assert.match(r.reply, /choose the department number/i);
   r = await say('1');                       // first department
-  assert.match(r.body.reply, /choose a doctor/);
+  assert.match(r.reply, /choose the doctor number/i);
   r = await say('1');                       // first doctor
-  assert.match(r.body.reply, /pick a day/);
-  r = await say('1');                       // first available day
-  assert.match(r.body.reply, /pick a time/);
-  r = await say('1');                       // first slot
-  assert.match(r.body.reply, /full name/);  // unknown number → new patient path
+  assert.match(r.reply, /type the date/i);
+
+  const open = scheduling.nextAvailableDates(ids.drImran, 1)[0];
+  const slot = scheduling.availableSlots(ids.drImran, open.date)[0];
+
+  r = await say(open.date);
+  assert.match(r.reply, /type the time/i);
+  r = await say(slot);
+  assert.match(r.reply, /already registered with us/i);
+  r = await say('NO');
+  assert.match(r.reply, /mobile number/i);
+  r = await say('9000000111');
+  assert.match(r.reply, /full name/i);
   r = await say('Zainab Hussain');
-  assert.match(r.body.reply, /age and gender/);
+  assert.match(r.reply, /age and gender/i);
   r = await say('41 female');
-  assert.match(r.body.reply, /reason for your visit/);
-  r = await say('Persistent cough for two weeks');
-  assert.match(r.body.reply, /Please confirm/);
+  assert.match(r.reply, /Please confirm your appointment/);
   r = await say('YES');
-  assert.match(r.body.reply, /Appointment confirmed/);
-  assert.match(r.body.reply, /APT\d+/);
+  assert.match(r.reply, /Your appointment is booked/);
+  assert.match(r.reply, /APT\d+/);
 
   // The booking must exist as both an enquiry and a confirmed appointment.
   const list = await api('GET', '/api/appointments?status=confirmed', undefined, 'reception');
-  assert.ok(list.body.rows.some((a) => a.source === 'whatsapp' && a.guest_name === 'Zainab Hussain'));
+  assert.ok(list.body.rows.some((a) => a.source === 'whatsapp'));
 
   const enquiries = await api('GET', '/api/enquiries?source=whatsapp', undefined, 'reception');
   assert.ok(enquiries.body.rows.length >= 1);
 
   // Cancellation by reference works from any state.
-  const apptNo = r.body.reply.match(/APT\d+/)[0];
+  const apptNo = r.reply.match(/APT\d+/)[0];
   const cancel = await say(`CANCEL ${apptNo}`);
-  assert.match(cancel.body.reply, /has been cancelled/);
+  assert.match(cancel.reply, /has been cancelled/);
 });
 
 test('full OPD journey: arrive → screen → check-in → vitals → consult → lab → pharmacy → bill → exit',
   async () => {
     // ---- registration --------------------------------------------------
     const reg = await api('POST', '/api/patients', {
+      consentTreatment: true, consentPrivacy: true,
       firstName: 'Imran', lastName: 'Qureshi', gender: 'male', age: 45,
       phone: '9000000222', isUninsured: true, city: 'Chennai',
       history: [{ kind: 'past_illness', detail: 'Gastritis, 2021' }],

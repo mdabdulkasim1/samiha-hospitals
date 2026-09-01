@@ -67,6 +67,13 @@
       const d = new Date();
       return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     },
+    /** '14:30' → '2:30 PM'. */
+    to12h(hhmm) {
+      const [h, m] = String(hhmm || '').split(':').map(Number);
+      if (Number.isNaN(h)) return String(hhmm || '');
+      const ampm = h >= 12 ? 'PM' : 'AM';
+      return `${h % 12 === 0 ? 12 : h % 12}:${String(m || 0).padStart(2, '0')} ${ampm}`;
+    },
     titleise(s) {
       return String(s || '').replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
     },

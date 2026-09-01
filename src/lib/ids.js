@@ -16,6 +16,13 @@ function nextSeq(name) {
 
 function pad(n, width) { return String(n).padStart(width, '0'); }
 
+/** Standard EAN-13 check digit, so scanners accept our own batch labels. */
+function ean13CheckDigit(twelveDigits) {
+  const digits = String(twelveDigits).split('').map(Number);
+  const sum = digits.reduce((acc, d, i) => acc + d * (i % 2 === 0 ? 1 : 3), 0);
+  return String((10 - (sum % 10)) % 10);
+}
+
 const yy = () => String(new Date().getFullYear()).slice(-2);
 const yymm = () => {
   const d = new Date();
@@ -39,6 +46,19 @@ const generators = {
   staff:       () => `EMP${pad(nextSeq('staff'), 4)}`,
   preauth:     () => `PA${yymm()}${pad(nextSeq(`pa-${yymm()}`), 4)}`,
   claim:       () => `CLM${yymm()}${pad(nextSeq(`clm-${yymm()}`), 5)}`,
+  grn:         () => `GRN${yymm()}${pad(nextSeq(`grn-${yymm()}`), 4)}`,
+  stockTake:   () => `STK${yymm()}${pad(nextSeq(`stk-${yymm()}`), 4)}`,
+  // Labels the pharmacy prints itself: checksummed internal codes in the "2"
+  // range, which manufacturers never use, so ours can never collide with an
+  // EAN-13 printed on a pack. 28… identifies a medicine, 29… a single batch.
+  drugBarcode: () => {
+    const body = `28${pad(nextSeq('drug-barcode'), 10)}`;
+    return body + ean13CheckDigit(body);
+  },
+  batchBarcode: () => {
+    const body = `29${pad(nextSeq('batch-barcode'), 10)}`;
+    return body + ean13CheckDigit(body);
+  },
 };
 
 function generate(kind) {
@@ -47,4 +67,4 @@ function generate(kind) {
   return fn();
 }
 
-module.exports = { generate, nextSeq };
+module.exports = { generate, nextSeq, ean13CheckDigit };

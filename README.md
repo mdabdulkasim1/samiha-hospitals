@@ -147,7 +147,8 @@ documented exception exists. Check-out books the follow-up and issues an exit pa
 | **Enquiries** | Every first contact — walk-in, phone, WhatsApp, web, camp — tracked to conversion or closure. |
 | **Appointments** | Doctor sessions and leave, live slot availability, token numbers, no-show handling. |
 | **Diagnostics** | Order → sample barcode → processing → result entry with automatic abnormal flagging → verification → report released to the patient. |
-| **Pharmacy** | Batch and expiry tracking, first-expiry-first-out allocation, allergy safety check, stock ledger, low-stock and expiry alerts. |
+| **Pharmacy** | Batch and expiry tracking, first-expiry-first-out allocation, allergy safety check, stock ledger, low-stock and expiry alerts, and over-the-counter sales to walk-ins who are not our patients. |
+| **Barcodes & stock register** | A barcode on every medicine and every batch — scanned at the counter, printed from the ERP — plus suppliers, goods-received notes, a reconciling stock register and physical stock takes. See [`docs/PHARMACY-STOCK.md`](docs/PHARMACY-STOCK.md). |
 | **In-patient** | Bed board, admission, transfers, doctor rounds and nursing notes, medication administration record, accrued charges, discharge summary and settlement. |
 | **Billing** | Invoices, receipts, instalment agreements, documented exceptions, assistance cover, day book. |
 | **Insurance & TPA** | Empanelled insurers and TPAs, patient policies with sum-insured, co-pay and room-rent caps, cashless pre-authorisation with queries and enhancements, claims from the bill through to settlement, and receivables ageing. See [`docs/INSURANCE.md`](docs/INSURANCE.md). |

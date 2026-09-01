@@ -28,6 +28,7 @@
       { id: 'whatsapp',    label: 'WhatsApp',         icon: '✆', roles: '*' },
       { id: 'reports',     label: 'Reports',          icon: '◔', roles: '*' },
       { id: 'workflow',    label: 'Workflow Map',     icon: '⇄', roles: '*' },
+      { id: 'staff',       label: 'Staff & Doctors',  icon: '⚕', roles: ['admin'] },
       { id: 'account',     label: 'Account & System', icon: '⚙', roles: '*' },
     ]},
   ];
