@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 660 260" role="img" aria-label="Samiha Healthcare mark">
+  <title>Samiha Healthcare</title>
+  <defs>
+    <clipPath id="heartClip">
+      <path d="M355 200 C300 155 255 120 255 85 C255 55 280 40 305 40 C325 40 345 52 355 68
+               C365 52 385 40 405 40 C430 40 455 55 455 85 C455 120 410 155 355 200 Z"/>
+    </clipPath>
+  </defs>
+
+  <!-- teal medical cross -->
+  <g fill="#176B7C">
+    <rect x="215" y="30"  width="72" height="200" rx="14"/>
+    <rect x="151" y="94"  width="200" height="72" rx="14"/>
+  </g>
+
+  <!-- heart: orange above the trace, crimson below -->
+  <g clip-path="url(#heartClip)">
+    <rect x="250" y="30"  width="215" height="90"  fill="#F47920"/>
+    <rect x="250" y="120" width="215" height="100" fill="#9E1B34"/>
+  </g>
+  <path d="M355 200 C300 155 255 120 255 85 C255 55 280 40 305 40 C325 40 345 52 355 68
+           C365 52 385 40 405 40 C430 40 455 55 455 85 C455 120 410 155 355 200 Z"
+        fill="none" stroke="#ffffff" stroke-width="9"/>
+
+  <!-- ECG trace: white through the heart, crimson outside -->
+  <g fill="none" stroke-width="9" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M262 120 H336 L348 92 L362 150 L374 120 H450" stroke="#ffffff"/>
+    <path d="M455 120 H502 L515 58 L531 178 L544 120 H636" stroke="#9E1B34"/>
+    <path d="M186 120 H250" stroke="#9E1B34"/>
+  </g>
+  <g fill="#9E1B34">
+    <circle cx="118" cy="120" r="5"/>
+    <circle cx="144" cy="120" r="6.5"/>
+    <circle cx="171" cy="120" r="8"/>
+  </g>
+</svg>
