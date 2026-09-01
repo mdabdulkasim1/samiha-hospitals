@@ -12,20 +12,29 @@ const router = express.Router();
 const adminOnly = requireRole('admin');
 
 // ------------------------------------------------------------- departments
-router.get('/departments', wrap((_req, res) => {
-  res.json(db.prepare('SELECT * FROM departments ORDER BY name').all());
+router.get('/departments', wrap((req, res) => {
+  const kind = str(req.query.kind);
+  res.json(db.prepare(
+    `SELECT d.*,
+            (SELECT COUNT(*) FROM users u
+              WHERE u.department_id = d.id AND u.role = 'doctor' AND u.active = 1) AS doctor_count
+       FROM departments d
+      WHERE d.active = 1 AND (? IS NULL OR d.kind = ?)
+      ORDER BY d.sort_order, d.name`
+  ).all(kind, kind));
 }));
 
 router.post('/departments', adminOnly, wrap((req, res) => {
   required(req.body, ['code', 'name']);
-  const info = db.prepare('INSERT INTO departments (code, name) VALUES (?, ?)')
-    .run(str(req.body.code).toUpperCase(), str(req.body.name));
+  const info = db.prepare('INSERT INTO departments (code, name, kind, sort_order) VALUES (?, ?, ?, ?)')
+    .run(str(req.body.code).toUpperCase(), str(req.body.name),
+         str(req.body.kind, 'specialist'), int(req.body.sortOrder, 50));
   audit.log(req, 'create', 'department', info.lastInsertRowid);
   res.status(201).json(db.prepare('SELECT * FROM departments WHERE id = ?').get(info.lastInsertRowid));
 }));
 
 // ------------------------------------------------------------------- staff
-router.get('/staff', requireRole('admin', 'reception'), wrap((req, res) => {
+router.get('/staff', wrap((req, res) => {
   const role = str(req.query.role);
   const rows = db.prepare(
     `SELECT u.id, u.staff_code, u.name, u.email, u.phone, u.role, u.active, u.department_id,

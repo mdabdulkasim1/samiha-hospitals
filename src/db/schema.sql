@@ -35,6 +35,11 @@ CREATE TABLE IF NOT EXISTS departments (
   id      INTEGER PRIMARY KEY AUTOINCREMENT,
   code    TEXT NOT NULL UNIQUE,
   name    TEXT NOT NULL,
+  -- 'specialist' departments take consultations and appear in the booking flow;
+  -- 'diagnostic' departments are service counters (lab, pharmacy, imaging, day care).
+  kind    TEXT NOT NULL DEFAULT 'specialist'
+            CHECK (kind IN ('specialist','diagnostic')),
+  sort_order INTEGER NOT NULL DEFAULT 0,
   active  INTEGER NOT NULL DEFAULT 1
 );
 

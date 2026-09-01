@@ -18,13 +18,34 @@ const upsert = (table, uniqueCol, row) => {
 };
 
 // ------------------------------------------------------------- departments
+// These mirror the clinic's own service board.
 const departments = [
-  ['GEN', 'General Medicine'], ['PED', 'Paediatrics'], ['OBG', 'Obstetrics & Gynaecology'],
-  ['ORT', 'Orthopaedics'], ['DER', 'Dermatology'], ['ENT', 'ENT'], ['DEN', 'Dental'],
-  ['CAR', 'Cardiology'], ['DIA', 'Diagnostics'],
+  // Specialist categories — these take consultations and appear in booking.
+  ['IM',  'Internal Medicine',  'specialist', 1],
+  ['PED', 'Pediatrics',         'specialist', 2],
+  ['GYN', 'Gynecology',         'specialist', 3],
+  ['CAR', 'Cardiology',         'specialist', 4],
+  ['DEN', 'Dentist',            'specialist', 5],
+  ['DER', 'Dermatology',        'specialist', 6],
+  ['ORT', 'Orthopedics',        'specialist', 7],
+  // Diagnostic categories — service counters rather than consulting rooms.
+  ['LAB', 'Diagnostics / Lab',  'diagnostic', 11],
+  ['PHA', 'Pharmacy',           'diagnostic', 12],
+  ['DAY', 'Day Care / Ward',    'diagnostic', 13],
+  ['XRY', 'X-Ray',              'diagnostic', 14],
+  ['USG', 'USG (Ultrasound)',   'diagnostic', 15],
 ];
 const deptId = {};
-for (const [code, name] of departments) deptId[code] = upsert('departments', 'code', { code, name });
+for (const [code, name, kind, sort_order] of departments) {
+  deptId[code] = upsert('departments', 'code', { code, name, kind, sort_order });
+  // Keep an existing row in step with the canonical list.
+  db.prepare('UPDATE departments SET name = ?, kind = ?, sort_order = ?, active = 1 WHERE code = ?')
+    .run(name, kind, sort_order, code);
+}
+// Retire anything left over from an earlier seed.
+db.prepare(
+  `UPDATE departments SET active = 0 WHERE code NOT IN (${departments.map(() => '?').join(',')})`
+).run(...departments.map((d) => d[0]));
 
 // -------------------------------------------------------------------- staff
 const staff = [
@@ -32,29 +53,35 @@ const staff = [
   { staff_code: 'REC01', name: 'Fathima Reception', email: 'reception@samiha.local', role: 'reception' },
   { staff_code: 'CNS01', name: 'Anita Counselor', email: 'counselor@samiha.local', role: 'counselor' },
   { staff_code: 'NUR01', name: 'Sister Mary (M.A.)', email: 'nurse@samiha.local', role: 'nurse' },
-  { staff_code: 'LAB01', name: 'Ravi Lab Technician', email: 'lab@samiha.local', role: 'lab', department_id: deptId.DIA },
-  { staff_code: 'PHR01', name: 'Suresh Pharmacist', email: 'pharmacy@samiha.local', role: 'pharmacy' },
+  { staff_code: 'LAB01', name: 'Ravi Lab Technician', email: 'lab@samiha.local', role: 'lab', department_id: deptId.LAB },
+  { staff_code: 'PHR01', name: 'Suresh Pharmacist', email: 'pharmacy@samiha.local', role: 'pharmacy', department_id: deptId.PHA },
   { staff_code: 'CSH01', name: 'Kavitha Cashier', email: 'cashier@samiha.local', role: 'cashier' },
-  { staff_code: 'WRD01', name: 'Ward Sister Leela', email: 'ward@samiha.local', role: 'ward' },
+  { staff_code: 'WRD01', name: 'Ward Sister Leela', email: 'ward@samiha.local', role: 'ward', department_id: deptId.DAY },
 ];
 for (const s of staff) upsert('users', 'staff_code', { ...s, password_hash: hashPassword('samiha@123') });
 
 const doctors = [
-  { staff_code: 'DOC01', name: 'Dr. Imran Sheikh', email: 'imran@samiha.local', dept: 'GEN',
-    qualification: 'MBBS, MD (General Medicine)', specialization: 'Diabetes & Hypertension',
+  { staff_code: 'DOC01', name: 'Dr. Imran Sheikh', email: 'imran@samiha.local', dept: 'IM',
+    qualification: 'MBBS, MD (General Medicine)', specialization: 'Diabetes, hypertension & thyroid',
     reg_no: 'TN/45231', consult_fee: 500, follow_up_fee: 300, slot_minutes: 15, room_no: 'OPD-1' },
   { staff_code: 'DOC02', name: 'Dr. Sara Ahmed', email: 'sara@samiha.local', dept: 'PED',
-    qualification: 'MBBS, DCH', specialization: 'Neonatal & Child Health',
+    qualification: 'MBBS, DCH', specialization: 'Neonatal & child health',
     reg_no: 'TN/51122', consult_fee: 450, follow_up_fee: 250, slot_minutes: 15, room_no: 'OPD-2' },
-  { staff_code: 'DOC03', name: 'Dr. Nafisa Rahman', email: 'nafisa@samiha.local', dept: 'OBG',
-    qualification: 'MBBS, MS (OBG)', specialization: 'High-risk pregnancy',
+  { staff_code: 'DOC03', name: 'Dr. Nafisa Rahman', email: 'nafisa@samiha.local', dept: 'GYN',
+    qualification: 'MBBS, MS (OBG)', specialization: 'High-risk pregnancy & infertility',
     reg_no: 'TN/48890', consult_fee: 600, follow_up_fee: 350, slot_minutes: 20, room_no: 'OPD-3' },
-  { staff_code: 'DOC04', name: 'Dr. Vikram Rao', email: 'vikram@samiha.local', dept: 'ORT',
-    qualification: 'MBBS, MS (Ortho)', specialization: 'Joint & spine',
-    reg_no: 'TN/52310', consult_fee: 600, follow_up_fee: 350, slot_minutes: 20, room_no: 'OPD-4' },
+  { staff_code: 'DOC06', name: 'Dr. Arif Hussain', email: 'arif@samiha.local', dept: 'CAR',
+    qualification: 'MBBS, MD, DM (Cardiology)', specialization: 'Interventional cardiology & echo',
+    reg_no: 'TN/53412', consult_fee: 800, follow_up_fee: 450, slot_minutes: 20, room_no: 'OPD-6' },
+  { staff_code: 'DOC07', name: 'Dr. Neha Kulkarni', email: 'neha@samiha.local', dept: 'DEN',
+    qualification: 'BDS, MDS', specialization: 'Conservative dentistry & endodontics',
+    reg_no: 'TN/DEN/2201', consult_fee: 400, follow_up_fee: 250, slot_minutes: 30, room_no: 'DENTAL-1' },
   { staff_code: 'DOC05', name: 'Dr. Priya Menon', email: 'priya@samiha.local', dept: 'DER',
     qualification: 'MBBS, MD (Dermatology)', specialization: 'Clinical & cosmetic dermatology',
     reg_no: 'TN/49775', consult_fee: 550, follow_up_fee: 300, slot_minutes: 15, room_no: 'OPD-5' },
+  { staff_code: 'DOC04', name: 'Dr. Vikram Rao', email: 'vikram@samiha.local', dept: 'ORT',
+    qualification: 'MBBS, MS (Ortho)', specialization: 'Joint replacement & spine',
+    reg_no: 'TN/52310', consult_fee: 600, follow_up_fee: 350, slot_minutes: 20, room_no: 'OPD-4' },
 ];
 
 for (const d of doctors) {
@@ -62,6 +89,7 @@ for (const d of doctors) {
     staff_code: d.staff_code, name: d.name, email: d.email, role: 'doctor',
     department_id: deptId[d.dept], password_hash: hashPassword('samiha@123'),
   });
+  db.prepare('UPDATE users SET department_id = ?, name = ? WHERE id = ?').run(deptId[d.dept], d.name, id);
   if (!db.prepare('SELECT 1 FROM doctor_profiles WHERE user_id = ?').get(id)) {
     db.prepare(
       `INSERT INTO doctor_profiles (user_id, qualification, specialization, reg_no, consult_fee,
@@ -154,6 +182,12 @@ const tests = [
   ['XR-KNEE', 'X-Ray Knee AP/Lateral', 'radiology', null, null, null, null, 'Radiologist report', 500, 4],
   ['USG-ABD', 'Ultrasound — Abdomen & Pelvis', 'radiology', null, null, null, null, 'Radiologist report', 1200, 6],
   ['USG-OBS', 'Ultrasound — Obstetric', 'radiology', null, null, null, null, 'Radiologist report', 1400, 6],
+  ['USG-KUB', 'Ultrasound — KUB', 'radiology', null, null, null, null, 'Radiologist report', 1100, 6],
+  ['USG-THY', 'Ultrasound — Thyroid / Neck', 'radiology', null, null, null, null, 'Radiologist report', 1200, 6],
+  ['USG-DOP', 'Doppler — Peripheral vascular', 'radiology', null, null, null, null, 'Radiologist report', 2400, 12],
+  ['XR-SPINE', 'X-Ray Lumbar Spine AP/Lateral', 'radiology', null, null, null, null, 'Radiologist report', 600, 4],
+  ['XR-ABD', 'X-Ray Abdomen erect', 'radiology', null, null, null, null, 'Radiologist report', 450, 4],
+  ['XR-DENT', 'Dental X-Ray (IOPA)', 'radiology', null, null, null, null, 'Dental surgeon report', 250, 1],
   ['ECHO', '2D Echocardiogram', 'cardiology', null, null, null, null, 'Cardiologist report', 2200, 24],
   ['ECG12', 'ECG — 12 lead', 'cardiology', null, null, null, null, 'Cardiologist report', 300, 1],
 ];
@@ -289,7 +323,8 @@ if (db.prepare('SELECT COUNT(*) AS c FROM patients').get().c === 0) {
 }
 
 console.log('Seed complete.');
-console.log('  Departments :', db.prepare('SELECT COUNT(*) AS c FROM departments').get().c);
+console.log('  Departments :', db.prepare("SELECT COUNT(*) AS c FROM departments WHERE active = 1").get().c,
+  '(' + db.prepare("SELECT COUNT(*) AS c FROM departments WHERE active = 1 AND kind = 'specialist'").get().c + ' specialist)');
 console.log('  Staff       :', db.prepare('SELECT COUNT(*) AS c FROM users').get().c);
 console.log('  Lab tests   :', db.prepare('SELECT COUNT(*) AS c FROM lab_tests').get().c);
 console.log('  Drugs       :', db.prepare('SELECT COUNT(*) AS c FROM drugs').get().c);

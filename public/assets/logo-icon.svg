@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="Samiha Healthcare">
+  <title>Samiha Healthcare</title>
+  <defs><clipPath id="ic"><path d="M52 84 C37 69 25 58 25 45 C25 35 32 30 39 30 C45 30 50 33 52 39
+    C54 33 59 30 65 30 C72 30 79 35 79 45 C79 58 67 69 52 84 Z"/></clipPath></defs>
+  <g fill="#176B7C"><rect x="30" y="12" width="23" height="65" rx="6"/><rect x="9" y="33" width="65" height="23" rx="6"/></g>
+  <g clip-path="url(#ic)"><rect x="23" y="26" width="60" height="19" fill="#F47920"/><rect x="23" y="45" width="60" height="42" fill="#9E1B34"/></g>
+  <path d="M52 84 C37 69 25 58 25 45 C25 35 32 30 39 30 C45 30 50 33 52 39
+    C54 33 59 30 65 30 C72 30 79 35 79 45 C79 58 67 69 52 84 Z" fill="none" stroke="#fff" stroke-width="4.5"/>
+  <path d="M26 45 H41 L46 34 L53 59 L58 45 H78" fill="none" stroke="#fff" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

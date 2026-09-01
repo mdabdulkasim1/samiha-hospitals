@@ -89,9 +89,9 @@ function pickIndex(text, length) {
 function departmentsWithDoctors() {
   return db.prepare(
     `SELECT d.* FROM departments d
-      WHERE d.active = 1
+      WHERE d.active = 1 AND d.kind = 'specialist'
         AND EXISTS (SELECT 1 FROM users u WHERE u.department_id = d.id AND u.role = 'doctor' AND u.active = 1)
-      ORDER BY d.name`
+      ORDER BY d.sort_order, d.name`
   ).all();
 }
 
@@ -279,8 +279,9 @@ function humanHandoff(waNumber, patient, text) {
 function clinicInfo() {
   return `${clinicHeader()}\n\n📍 ${config.clinic.address}\n☎️ ${config.clinic.phone}\n✉️ ${config.clinic.email}\n\n` +
     `*OPD timings*\nMon–Sat: 9:00 AM – 1:00 PM and 5:00 PM – 8:00 PM\nSunday: 9:00 AM – 12:00 PM\n\n` +
-    `*Diagnostics*: 7:00 AM – 8:00 PM (fasting samples until 10:00 AM)\n` +
-    `*Pharmacy*: 8:00 AM – 9:00 PM\n*In-patient & emergency*: 24×7\n\nReply *MENU* for options.`;
+    `*Specialities*\nInternal Medicine · Pediatrics · Gynecology · Cardiology · Dentist · Dermatology · Orthopedics\n\n` +
+    `*Diagnostics*: Lab, X-Ray and USG — 7:00 AM – 8:00 PM (fasting samples until 10:00 AM)\n` +
+    `*Pharmacy*: 8:00 AM – 9:00 PM\n*Day care & ward*: 24×7\n\nReply *MENU* for options.`;
 }
 
 // ---------------------------------------------------------------- main router

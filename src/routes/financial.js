@@ -53,6 +53,13 @@ router.post('/screenings', screeningRoles, wrap((req, res) => {
   if (open) throw conflict(`An open screening already exists for this patient (${open.screening_no}).`);
 
   // "Counselor Available?" — if none is free the case waits, exactly as charted.
+  // Link to the patient's open visit so the workflow can advance them once the
+  // screening completes, even when the counselor started it from their own desk.
+  const visitId = int(req.body.visitId) ||
+    (db.prepare(
+      "SELECT id FROM visits WHERE patient_id = ? AND status NOT IN ('checked_out','cancelled') ORDER BY id DESC LIMIT 1"
+    ).get(patientId) || {}).id || null;
+
   const availableCounselor = db.prepare(
     `SELECT u.id, u.name,
             (SELECT COUNT(*) FROM financial_screenings f
@@ -66,15 +73,15 @@ router.post('/screenings', screeningRoles, wrap((req, res) => {
   const info = db.prepare(
     `INSERT INTO financial_screenings (screening_no, patient_id, visit_id, status, counselor_id, uninsured, notes, created_by)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(screeningNo, patientId, int(req.body.visitId) || null,
+  ).run(screeningNo, patientId, visitId,
         free ? 'with_counselor' : 'awaiting_counselor',
         free ? availableCounselor.id : null,
         bool(req.body.uninsured, Boolean(patient.is_uninsured)) ? 1 : 0,
         str(req.body.notes), req.user.id);
 
-  if (req.body.visitId) {
+  if (visitId) {
     db.prepare("INSERT INTO visit_events (visit_id, stage, detail, actor_id) VALUES (?, 'financial_screening_started', ?, ?)")
-      .run(int(req.body.visitId), `Screening ${screeningNo}${free ? ` — counselor ${availableCounselor.name}` : ' — waiting for a counselor'}`, req.user.id);
+      .run(visitId, `Screening ${screeningNo}${free ? ` — counselor ${availableCounselor.name}` : ' — waiting for a counselor'}`, req.user.id);
   }
 
   audit.log(req, 'create', 'financial_screening', info.lastInsertRowid, { screeningNo });

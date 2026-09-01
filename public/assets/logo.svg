@@ -36,9 +36,9 @@
   <text x="380" y="488" text-anchor="middle" fill="#176B7C"
         font-family="Georgia,'Times New Roman',serif" font-size="74" letter-spacing="7">HEALTHCARE</text>
 
-  <g stroke="#9E1B34" stroke-width="3.5" stroke-linecap="round">
-    <path d="M46 540 H168"/><path d="M592 540 H714"/>
+  <g stroke="#9E1B34" stroke-width="3" stroke-linecap="round">
+    <path d="M38 542 H108"/><path d="M652 542 H722"/>
   </g>
   <text x="380" y="551" text-anchor="middle" fill="#9E1B34"
-        font-family="Georgia,'Times New Roman',serif" font-size="31" letter-spacing="3">CARE • COMPASSION • COMMITMENT</text>
+        font-family="Georgia,'Times New Roman',serif" font-size="24" letter-spacing="2.5">CARE • COMPASSION • COMMITMENT</text>
 </svg>
