@@ -207,6 +207,146 @@ router.get('/doctor-productivity', requireRole('admin', 'reception', 'cashier'),
   ).all(from, to, from, to, from, to, from, to));
 }));
 
+/**
+ * Doctor by doctor, month by month: what each consultant brought in and what it
+ * billed. Revenue follows the visit or the admission the invoice was raised
+ * against, which is the only honest way to attribute it — a pharmacy line on an
+ * OPD bill belongs to the doctor whose consultation put it there.
+ *
+ * `billed` is what was invoiced in the month; `collected` is what has actually
+ * been received against those invoices. They differ, and the gap is the point.
+ */
+router.get('/doctor-monthly', requireRole('admin', 'reception', 'cashier'), wrap((req, res) => {
+  const months = Math.min(Math.max(int(req.query.months, 6) || 6, 1), 24);
+  const end = str(req.query.to) || today();
+  const endDate = new Date(`${end}T00:00:00`);
+  const startDate = new Date(endDate.getFullYear(), endDate.getMonth() - (months - 1), 1);
+  const from = str(req.query.from) || startDate.toISOString().slice(0, 10);
+
+  const monthKeys = [];
+  for (let d = new Date(`${from.slice(0, 7)}-01T00:00:00`); d <= endDate; d.setMonth(d.getMonth() + 1)) {
+    monthKeys.push({
+      key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`,
+      label: d.toLocaleString('en-GB', { month: 'short', year: 'numeric' }),
+    });
+  }
+
+  const blank = () => ({
+    appointments: 0, booked: 0, completed: 0, cancelled: 0, no_shows: 0,
+    new_patients: 0, via_whatsapp: 0, visits: 0, consultations: 0,
+    invoices: 0, billed: 0, collected: 0, outstanding: 0,
+  });
+
+  const doctors = db.prepare(
+    `SELECT u.id, u.name, d.name AS department, dp.specialization
+       FROM users u
+       LEFT JOIN departments d ON d.id = u.department_id
+       LEFT JOIN doctor_profiles dp ON dp.user_id = u.id
+      WHERE u.role = 'doctor' ORDER BY u.name`
+  ).all();
+
+  const byId = new Map(doctors.map((d) => [d.id, {
+    ...d,
+    months: Object.fromEntries(monthKeys.map((m) => [m.key, blank()])),
+    total: blank(),
+  }]));
+
+  /** Fold one aggregate row into a doctor's month and running total. */
+  const fold = (doctorId, ym, values) => {
+    const doc = byId.get(doctorId);
+    if (!doc || !doc.months[ym]) return;
+    for (const [k, v] of Object.entries(values)) {
+      doc.months[ym][k] += v || 0;
+      doc.total[k] += v || 0;
+    }
+  };
+
+  for (const r of db.prepare(
+    `SELECT doctor_id, strftime('%Y-%m', scheduled_at) AS ym,
+            COUNT(*) AS appointments,
+            SUM(CASE WHEN status NOT IN ('cancelled','no_show') THEN 1 ELSE 0 END) AS booked,
+            SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed,
+            SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled,
+            SUM(CASE WHEN status = 'no_show' THEN 1 ELSE 0 END) AS no_shows,
+            SUM(CASE WHEN source = 'whatsapp' THEN 1 ELSE 0 END) AS via_whatsapp,
+            SUM(CASE WHEN visit_kind = 'new' AND status NOT IN ('cancelled','no_show')
+                     THEN 1 ELSE 0 END) AS new_patients
+       FROM appointments WHERE date(scheduled_at) BETWEEN ? AND ?
+      GROUP BY doctor_id, ym`
+  ).all(from, end)) {
+    fold(r.doctor_id, r.ym, {
+      appointments: r.appointments, booked: r.booked, completed: r.completed,
+      cancelled: r.cancelled, no_shows: r.no_shows, via_whatsapp: r.via_whatsapp,
+      new_patients: r.new_patients,
+    });
+  }
+
+  for (const r of db.prepare(
+    `SELECT doctor_id, strftime('%Y-%m', arrived_at) AS ym, COUNT(*) AS visits
+       FROM visits WHERE date(arrived_at) BETWEEN ? AND ? GROUP BY doctor_id, ym`
+  ).all(from, end)) fold(r.doctor_id, r.ym, { visits: r.visits });
+
+  for (const r of db.prepare(
+    `SELECT doctor_id, strftime('%Y-%m', created_at) AS ym, COUNT(*) AS consultations
+       FROM consultations WHERE date(created_at) BETWEEN ? AND ? GROUP BY doctor_id, ym`
+  ).all(from, end)) fold(r.doctor_id, r.ym, { consultations: r.consultations });
+
+  for (const r of db.prepare(
+    `SELECT COALESCE(v.doctor_id, adm.doctor_id) AS doctor_id,
+            strftime('%Y-%m', i.created_at) AS ym,
+            COUNT(*) AS invoices,
+            COALESCE(SUM(i.net), 0) AS billed,
+            COALESCE(SUM(i.paid), 0) AS collected,
+            COALESCE(SUM(i.balance), 0) AS outstanding
+       FROM invoices i
+       LEFT JOIN visits v ON v.id = i.visit_id
+       LEFT JOIN admissions adm ON adm.id = i.admission_id
+      WHERE i.status != 'cancelled' AND date(i.created_at) BETWEEN ? AND ?
+        AND COALESCE(v.doctor_id, adm.doctor_id) IS NOT NULL
+      GROUP BY COALESCE(v.doctor_id, adm.doctor_id), ym`
+  ).all(from, end)) {
+    fold(r.doctor_id, r.ym, {
+      invoices: r.invoices, billed: r.billed, collected: r.collected, outstanding: r.outstanding,
+    });
+  }
+
+  const round2 = (n) => Math.round((n || 0) * 100) / 100;
+  const rows = [...byId.values()]
+    .filter((d) => d.total.appointments || d.total.visits || d.total.billed)
+    .map((d) => {
+      for (const m of Object.values(d.months)) {
+        m.billed = round2(m.billed); m.collected = round2(m.collected); m.outstanding = round2(m.outstanding);
+      }
+      d.total.billed = round2(d.total.billed);
+      d.total.collected = round2(d.total.collected);
+      d.total.outstanding = round2(d.total.outstanding);
+      // What an average patient of theirs is worth — the number that makes two
+      // doctors with the same headcount comparable.
+      d.total.perPatient = d.total.booked ? round2(d.total.billed / d.total.booked) : 0;
+      return d;
+    })
+    .sort((a, b) => b.total.billed - a.total.billed || b.total.booked - a.total.booked);
+
+  // Column totals, so the table foots.
+  const byMonth = Object.fromEntries(monthKeys.map((m) => [m.key, blank()]));
+  const overall = blank();
+  for (const d of rows) {
+    for (const m of monthKeys) {
+      for (const [k, v] of Object.entries(d.months[m.key])) byMonth[m.key][k] += v;
+    }
+    for (const [k, v] of Object.entries(d.total)) if (k !== 'perPatient') overall[k] += v;
+  }
+  for (const m of Object.values(byMonth)) {
+    m.billed = round2(m.billed); m.collected = round2(m.collected); m.outstanding = round2(m.outstanding);
+  }
+  overall.billed = round2(overall.billed);
+  overall.collected = round2(overall.collected);
+  overall.outstanding = round2(overall.outstanding);
+  overall.perPatient = overall.booked ? round2(overall.billed / overall.booked) : 0;
+
+  res.json({ from, to: end, months: monthKeys, rows, totals: { byMonth, overall } });
+}));
+
 /** Average minutes spent in each workflow stage — where the queue actually jams. */
 router.get('/turnaround', requireAuth, wrap((req, res) => {
   const from = str(req.query.from) || new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);

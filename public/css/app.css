@@ -551,3 +551,10 @@ svg.barcode { display: block; width: 100%; max-width: 260px; margin: 0 auto; sha
 @media (max-width: 460px) {
   .grid.c3, .grid.c4, .grid.c5 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* A month-across matrix: the first column stays put while the months scroll. */
+table.matrix th.l, table.matrix td:first-child { text-align: left; }
+table.matrix td:first-child { position: sticky; left: 0; background: var(--surface); z-index: 1; }
+table.matrix tbody tr:hover td:first-child { background: var(--bg); }
+table.matrix tr.tfoot td { border-top: 2px solid var(--line); background: var(--bg); }
+table.matrix tr.tfoot td:first-child { background: var(--bg); }

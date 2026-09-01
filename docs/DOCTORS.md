@@ -123,6 +123,29 @@ can, without needing the doctor's own sign-in.
 
 A doctor looking at the dashboard sees their own row marked *you*.
 
+## In Reports
+
+`Reports → Doctor month by month` is the management view: one row per doctor,
+one column per month, over the last 3, 6 or 12 months.
+
+Switch the cell between **patients booked**, **visits attended**, **billed** and
+**collected**. Cells are shaded against the busiest month anyone had, so heavy
+and quiet months stand out without reading every figure. The row total carries
+what is still outstanding, and a **per patient** column makes two doctors with
+the same headcount comparable. The table foots across every doctor, and prints
+as a sheet the administrator can sign and file.
+
+**How revenue is attributed.** An invoice belongs to the visit or admission it
+was raised against, and that record names the doctor. So the pharmacy and
+diagnostics ordered during a consultation count to the doctor whose consultation
+ordered them — not to the pharmacy or the lab. `billed` is what was invoiced in
+the month; `collected` is what has actually come in against those invoices. They
+differ, and the gap between them is the point of showing both.
+
+The report is management information: admin, reception and the cashier can read
+it. A doctor cannot — they see their own day in My Clinic, not the clinic's
+earnings by colleague.
+
 ## Tables
 
 | Table | Holds |

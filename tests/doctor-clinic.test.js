@@ -336,3 +336,88 @@ test('a doctor sets where their alerts go', async () => {
   ).get();
   assert.strictEqual(queued.to_addr, '919840055555', 'the number they chose, not the staff record');
 });
+
+// ------------------------------------------------- doctor month by month
+test('the monthly report counts appointments and bills doctor by doctor', async () => {
+  // A patient of Dr Sheikh's, billed and paid in full.
+  const p1 = (await api('POST', '/api/patients', {
+    firstName: 'Monthly', lastName: 'One', phone: '9845031001', gender: 'male',
+    dateOfBirth: '1985-04-04', consentTreatment: true,
+  })).body;
+  const v1 = (await api('POST', '/api/visits/arrive', {
+    patientId: p1.id, reasonForVisit: 'Review', doctorId: ids.imran,
+  }, 'reception')).body.visit;
+  const i1 = (await api('POST', '/api/billing/invoices', { patientId: p1.id, visitId: v1.id })).body;
+  await api('POST', `/api/billing/invoices/${i1.id}/items`, {
+    description: 'Consultation', unitPrice: 500, refType: 'consultation',
+  });
+  await api('POST', `/api/billing/invoices/${i1.id}/payments`, { amount: 500, mode: 'cash' });
+
+  // A patient of Dr Ahmed's, billed but only part paid.
+  const p2 = (await api('POST', '/api/patients', {
+    firstName: 'Monthly', lastName: 'Two', phone: '9845031002', gender: 'female',
+    dateOfBirth: '2019-06-06', consentTreatment: true,
+  })).body;
+  const v2 = (await api('POST', '/api/visits/arrive', {
+    patientId: p2.id, reasonForVisit: 'Cough', doctorId: ids.sara,
+  }, 'reception')).body.visit;
+  const i2 = (await api('POST', '/api/billing/invoices', { patientId: p2.id, visitId: v2.id })).body;
+  await api('POST', `/api/billing/invoices/${i2.id}/items`, {
+    description: 'Consultation', unitPrice: 450, refType: 'consultation',
+  });
+  await api('POST', `/api/billing/invoices/${i2.id}/items`, {
+    description: 'Nebulisation', unitPrice: 250, refType: 'service',
+  });
+  await api('POST', `/api/billing/invoices/${i2.id}/payments`, { amount: 300, mode: 'upi' });
+
+  const report = (await api('GET', '/api/reports/doctor-monthly?months=3')).body;
+  const thisMonth = report.months.at(-1).key;
+  assert.strictEqual(thisMonth, scheduling.dateKey(new Date()).slice(0, 7));
+
+  const imran = report.rows.find((r) => r.id === ids.imran);
+  assert.strictEqual(imran.months[thisMonth].visits, 1);
+  assert.strictEqual(imran.months[thisMonth].billed, 500);
+  assert.strictEqual(imran.months[thisMonth].collected, 500);
+  assert.strictEqual(imran.months[thisMonth].outstanding, 0);
+  assert.ok(imran.months[thisMonth].booked > 0, 'appointments count in the same row');
+
+  const sara = report.rows.find((r) => r.id === ids.sara);
+  assert.strictEqual(sara.months[thisMonth].billed, 700, 'every line on the bill counts to the doctor');
+  assert.strictEqual(sara.months[thisMonth].collected, 300);
+  assert.strictEqual(sara.months[thisMonth].outstanding, 400, 'the gap between billed and taken is visible');
+
+  // Per-patient value — and no division by zero for a doctor with bills but no
+  // appointments booked in the window.
+  assert.strictEqual(imran.total.perPatient,
+    Math.round((imran.total.billed / imran.total.booked) * 100) / 100);
+  assert.ok(Number.isFinite(sara.total.perPatient));
+  if (!sara.total.booked) assert.strictEqual(sara.total.perPatient, 0);
+  for (let i = 1; i < report.rows.length; i += 1) {
+    assert.ok(report.rows[i - 1].total.billed >= report.rows[i].total.billed);
+  }
+
+  // The columns foot.
+  const summed = report.rows.reduce((a, r) => a + r.months[thisMonth].billed, 0);
+  assert.strictEqual(report.totals.byMonth[thisMonth].billed, Math.round(summed * 100) / 100);
+  assert.strictEqual(report.totals.overall.billed,
+    Math.round(report.rows.reduce((a, r) => a + r.total.billed, 0) * 100) / 100);
+});
+
+test('the monthly window is asked for in months and answered in months', async () => {
+  const three = (await api('GET', '/api/reports/doctor-monthly?months=3')).body;
+  const twelve = (await api('GET', '/api/reports/doctor-monthly?months=12')).body;
+  assert.strictEqual(three.months.length, 3);
+  assert.strictEqual(twelve.months.length, 12);
+  assert.strictEqual(twelve.months.at(-1).key, three.months.at(-1).key, 'both end this month');
+  assert.match(three.months[0].label, /^[A-Z][a-z]+ \d{4}$/);
+
+  // Silly windows are clamped rather than allowed to scan for ever.
+  assert.strictEqual((await api('GET', '/api/reports/doctor-monthly?months=999')).body.months.length, 24);
+  assert.strictEqual((await api('GET', '/api/reports/doctor-monthly?months=0')).body.months.length, 6);
+});
+
+test('the monthly report is management information, not for the front desk', async () => {
+  assert.strictEqual((await api('GET', '/api/reports/doctor-monthly', undefined, 'admin')).status, 200);
+  assert.strictEqual((await api('GET', '/api/reports/doctor-monthly', undefined, 'reception')).status, 200);
+  assert.strictEqual((await api('GET', '/api/reports/doctor-monthly', undefined, 'imran')).status, 403);
+});
