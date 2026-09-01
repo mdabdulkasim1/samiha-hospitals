@@ -1,12 +1,18 @@
 'use strict';
-const { db } = require('../db');
+
+/*
+ * The database is reached lazily. `src/db` calls in here while it is still
+ * setting itself up (to stamp doctor codes on migration), and a top-level
+ * require would hand back a half-built module.
+ */
+const database = () => require('../db').db;
 
 /**
  * Atomic per-name counter. All human-facing document numbers come from here so
  * UHIDs, invoice numbers and IP numbers are gap-free and never collide.
  */
 function nextSeq(name) {
-  const row = db.prepare(
+  const row = database().prepare(
     `INSERT INTO counters (name, value) VALUES (?, 1)
      ON CONFLICT(name) DO UPDATE SET value = value + 1
      RETURNING value`
@@ -28,6 +34,46 @@ const yymm = () => {
   const d = new Date();
   return `${String(d.getFullYear()).slice(-2)}${pad(d.getMonth() + 1, 2)}`;
 };
+
+/**
+ * A doctor's code, e.g. **SPC-MHD-002**:
+ *
+ *   SPC  the clinic — Samiha Polyclinic (CLINIC_CODE)
+ *   MHD  the doctor — a three-letter mnemonic of their name (Mohamed)
+ *   002  the serial number in which they were appointed here
+ *
+ * The mnemonic keeps the first letter, then adds the consonants that have not
+ * been used yet, which is how these abbreviations are written by hand: Mohamed
+ * → M-H-D, Nafisa → N-F-S, Vikram → V-K-R.
+ */
+function nameMnemonic(name, length = 3) {
+  const letters = String(name || '')
+    .replace(/^\s*(dr|doctor|prof|mr|mrs|ms)\.?\s+/i, '')   // the title is not part of the name
+    .toUpperCase()
+    .replace(/[^A-Z]/g, '');
+  if (!letters) return 'XXX';
+
+  const out = [letters[0]];
+  const isVowel = (ch) => 'AEIOU'.includes(ch);
+  // Consonants first, because they are what makes a name recognisable.
+  for (const ch of letters.slice(1)) {
+    if (out.length >= length) break;
+    if (!isVowel(ch) && !out.includes(ch)) out.push(ch);
+  }
+  // Then anything still unused, rather than padding a short name with filler.
+  for (const ch of letters.slice(1)) {
+    if (out.length >= length) break;
+    if (!out.includes(ch)) out.push(ch);
+  }
+  while (out.length < length) out.push('X');
+  return out.join('');
+}
+
+/** The next code for a doctor joining the clinic. */
+function doctorCode(name, clinicCode = 'SPC', serial = null) {
+  const n = serial === null ? nextSeq('doctor-serial') : serial;
+  return `${String(clinicCode).toUpperCase()}-${nameMnemonic(name)}-${pad(n, 3)}`;
+}
 
 const generators = {
   uhid:        () => `SPD${yy()}${pad(nextSeq(`uhid-${yy()}`), 6)}`,
@@ -68,4 +114,4 @@ function generate(kind) {
   return fn();
 }
 
-module.exports = { generate, nextSeq, ean13CheckDigit };
+module.exports = { generate, nextSeq, ean13CheckDigit, doctorCode, nameMnemonic };

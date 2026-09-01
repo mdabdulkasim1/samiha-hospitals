@@ -118,30 +118,106 @@
     });
   }
 
+  /**
+   * The diagnostic report, in the same form as the prescription: the
+   * polyclinic's name and address at the top, the results in the middle, and a
+   * blank box at the bottom for the reporting doctor to stamp and sign by hand.
+   *
+   * No doctor is named on it. The referring doctor appears as their code —
+   * SPC-MHD-002 — which tells the clinic who ordered the test and tells a
+   * patient nothing they could use to reach a doctor directly.
+   */
   async function printReport(order) {
     const o = await API.get(`/api/lab/orders/${order.id}/report`);
-    const html = `<div class="doc">
-      ${UI.docHeader('Diagnostic Report', [
-        `Order: ${o.order_no}`, `Reported: ${UI.dateTime(o.reported_at || o.ordered_at)}`])}
-      <table><tbody>
-        <tr><th>Patient</th><td>${UI.esc(o.first_name)} ${UI.esc(o.last_name || '')}</td>
-            <th>UHID</th><td>${UI.esc(o.uhid)}</td></tr>
-        <tr><th>Age / Sex</th><td>${UI.esc(o.age_years || '—')} / ${UI.esc(o.gender || '—')}</td>
-            <th>Referred by</th><td>${UI.esc(o.doctor_name || '—')}</td></tr>
-      </tbody></table>
-      <table class="mt"><thead><tr><th>Investigation</th><th>Result</th><th>Unit</th><th>Reference range</th><th>Flag</th></tr></thead><tbody>
-        ${o.items.map((i) => `<tr>
-          <td><b>${UI.esc(i.test_name)}</b></td>
-          <td><b>${UI.esc(i.result_value || '—')}</b></td>
-          <td>${UI.esc(i.unit || '')}</td>
-          <td>${UI.esc(i.ref_range || '')}</td>
-          <td>${i.abnormal_flag && i.abnormal_flag !== 'normal' ? UI.esc(i.abnormal_flag.toUpperCase()) : ''}</td>
-        </tr>`).join('')}
-      </tbody></table>
-      <div class="sign"><div>Lab technician</div><div>Verified by<br>Consultant pathologist</div></div>
-      <div class="foot-note">Results relate only to the sample received. Please correlate clinically.
-        Report generated electronically.</div>
-    </div>`;
-    UI.print(html, 'Report ' + o.order_no);
+    const c = APP.clinic || {};
+    const age = o.age_years ? `${o.age_years} yrs` : '—';
+    const abnormal = o.items.filter((i) => i.abnormal_flag && i.abnormal_flag !== 'normal');
+
+    UI.print(`
+      <style>
+        @page { size: A5 portrait; margin: 9mm; }
+        .lr { width: 128mm; margin: 0 auto; font-family: Georgia, "Times New Roman", serif;
+              color: #16232B; font-size: 11px; }
+        .lr-head { text-align: center; border-bottom: 2px solid #9E1B34; padding-bottom: 6px; }
+        .lr-head .clinic { font-size: 17px; font-weight: 700; letter-spacing: .5px; color: #9E1B34; }
+        .lr-head .tag { font-size: 8px; letter-spacing: 1.4px; text-transform: uppercase; color: #176B7C; margin-top: 2px; }
+        .lr-head .addr { font-size: 9.5px; color: #43555F; margin-top: 3px; }
+        .lr-title { margin-top: 6px; font-size: 11px; font-weight: 700; letter-spacing: 2.4px;
+                    text-transform: uppercase; color: #176B7C; }
+        .lr-patient { display: flex; flex-wrap: wrap; gap: 3px 16px; padding: 8px 0;
+          border-bottom: 1px dashed #B9C6CC; font-size: 10.5px; }
+        table.lr-res { width: 100%; border-collapse: collapse; font-size: 10.5px; margin-top: 8px; }
+        table.lr-res th { text-align: left; font-size: 8.5px; letter-spacing: .06em; text-transform: uppercase;
+          color: #74858E; border-bottom: 1px solid #16232B; padding: 0 4px 3px; font-weight: 600; }
+        table.lr-res td { padding: 5px 4px; border-bottom: 1px dotted #DFE6EA; vertical-align: top; }
+        table.lr-res .test { font-weight: 700; }
+        table.lr-res .val { font-weight: 700; text-align: right; white-space: nowrap; }
+        table.lr-res .flag { text-align: right; font-weight: 700; font-size: 9.5px; white-space: nowrap; }
+        table.lr-res .high { color: #B03A2E; }
+        table.lr-res .low  { color: #B26A00; }
+        .lr-note { font-size: 10px; margin-top: 8px; }
+        .lr-note .k { color: #74858E; font-size: 8.5px; text-transform: uppercase; letter-spacing: .06em; }
+        .lr-sign { margin-top: 16px; display: flex; justify-content: flex-end; }
+        .lr-stamp { text-align: center; width: 58mm; }
+        .lr-stamp-box { height: 22mm; border: 1px dashed #B9C6CC; border-radius: 3px; }
+        .lr-stamp-label { margin-top: 3px; font-size: 8.5px; color: #74858E;
+          letter-spacing: .06em; text-transform: uppercase; }
+        .lr-foot { margin-top: 12px; border-top: 1px solid #DFE6EA; padding-top: 5px;
+          font-size: 8.5px; color: #74858E; text-align: center; }
+        @media screen { body { background: #eef1f3; padding: 14px 0; }
+          .lr { background: #fff; padding: 9mm; box-shadow: 0 2px 14px rgba(0,0,0,.15); } }
+      </style>
+      <div class="lr">
+        <div class="lr-head">
+          <div class="clinic">${UI.esc(c.name || 'SAMIHA POLYCLINIC & DIAGNOSTICS')}</div>
+          <div class="tag">Care • Compassion • Commitment</div>
+          <div class="addr">${UI.esc(c.address || '')}${c.phone ? ' · ' + UI.esc(c.phone) : ''}</div>
+          <div class="lr-title">Diagnostic Report</div>
+        </div>
+
+        <div class="lr-patient">
+          <span><b>${UI.esc(o.first_name)} ${UI.esc(o.last_name || '')}</b></span>
+          <span>${UI.esc(age)} · ${UI.esc(UI.titleise(o.gender || '—'))}</span>
+          <span>UHID ${UI.esc(o.uhid)}</span>
+          <span>${UI.esc(UI.dateTime(o.reported_at || o.ordered_at))}</span>
+          <span>${UI.esc(o.order_no)}${o.doctor_code ? ' · Ref ' + UI.esc(o.doctor_code) : ''}</span>
+        </div>
+
+        <table class="lr-res">
+          <thead><tr><th>Investigation</th><th style="text-align:right">Result</th>
+            <th>Unit</th><th>Reference range</th><th style="text-align:right">Flag</th></tr></thead>
+          <tbody>${o.items.map((i) => {
+            const flag = String(i.abnormal_flag || '').toLowerCase();
+            const cls = flag === 'high' || flag === 'critical' ? 'high' : (flag === 'low' ? 'low' : '');
+            return `<tr>
+              <td class="test">${UI.esc(i.test_name)}</td>
+              <td class="val ${cls}">${UI.esc(i.result_value || '—')}</td>
+              <td>${UI.esc(i.unit || '')}</td>
+              <td>${UI.esc(i.ref_range || '')}</td>
+              <td class="flag ${cls}">${flag && flag !== 'normal' ? UI.esc(flag.toUpperCase()) : ''}</td>
+            </tr>`;
+          }).join('')}</tbody>
+        </table>
+
+        ${abnormal.length ? `<div class="lr-note">
+          <span class="k">Outside the reference range</span><br>
+          ${abnormal.map((i) => UI.esc(`${i.test_name} — ${i.result_value} ${i.unit || ''}`.trim())).join('; ')}
+        </div>` : ''}
+        ${o.clinical_notes ? `<div class="lr-note">
+          <span class="k">Notes</span><br>${UI.esc(o.clinical_notes)}</div>` : ''}
+
+        <div class="lr-sign">
+          <div class="lr-stamp">
+            <div class="lr-stamp-box"></div>
+            <div class="lr-stamp-label">Doctor's stamp &amp; signature</div>
+          </div>
+        </div>
+
+        <div class="lr-foot">
+          Results relate only to the sample received. Please correlate clinically.
+        </div>
+      </div>`, `Report ${o.order_no}`);
   }
+  // Exposed so the browser checks can print a report without hunting for a button.
+  window.__printReport = printReport;
 })();

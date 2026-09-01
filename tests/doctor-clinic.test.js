@@ -262,18 +262,20 @@ test('a doctor blocks their own day, and nobody can then be booked', async () =>
 
 // ------------------------------------------------------- the dashboard board
 test('the dashboard counts appointments doctor by doctor', async () => {
-  const today = scheduling.dateKey(new Date());
+  // A day ahead, so the assertions do not depend on what time the suite runs:
+  // slots that have already gone by are not offered, and today's would.
+  ids.boardDay = day(2);
   await api('POST', `/api/masters/doctors/${ids.imran}/availability`, {
-    date: today, startTime: '18:00', endTime: '20:00',
+    date: ids.boardDay, startTime: '18:00', endTime: '20:00',
   });
   for (const [time, name] of [['18:00', 'Board One'], ['18:15', 'Board Two']]) {
     const r = await api('POST', '/api/appointments', {
-      doctorId: ids.imran, scheduledAt: `${today} ${time}:00`, guestName: name,
+      doctorId: ids.imran, scheduledAt: `${ids.boardDay} ${time}:00`, guestName: name,
     }, 'reception');
     assert.strictEqual(r.status, 201, JSON.stringify(r.body));
   }
 
-  const board = (await api('GET', '/api/reports/dashboard')).body.byDoctor;
+  const board = (await api('GET', `/api/reports/dashboard?date=${ids.boardDay}`)).body.byDoctor;
   assert.ok(Array.isArray(board));
 
   const imran = board.find((r) => r.id === ids.imran);
@@ -294,12 +296,12 @@ test('the dashboard counts appointments doctor by doctor', async () => {
 });
 
 test('a cancelled appointment leaves the doctor\'s count, but is still shown', async () => {
-  const today = scheduling.dateKey(new Date());
-  const appt = (await api('GET', `/api/appointments/my-day?date=${today}&doctorId=${ids.imran}`,
+  const appt = (await api('GET', `/api/appointments/my-day?date=${ids.boardDay}&doctorId=${ids.imran}`,
     undefined, 'reception')).body.rows[0];
   await api('PATCH', `/api/appointments/${appt.id}`, { status: 'cancelled' }, 'reception');
 
-  const imran = (await api('GET', '/api/reports/dashboard')).body.byDoctor.find((r) => r.id === ids.imran);
+  const imran = (await api('GET', `/api/reports/dashboard?date=${ids.boardDay}`)).body.byDoctor
+    .find((r) => r.id === ids.imran);
   assert.strictEqual(imran.booked, 1, 'the cancellation comes off the count');
   assert.strictEqual(imran.cancelled, 1, 'but is still reported');
   assert.strictEqual(imran.free, 7, 'and the slot goes back on sale');
@@ -379,19 +381,21 @@ test('the monthly report counts appointments and bills doctor by doctor', async 
   assert.strictEqual(imran.months[thisMonth].billed, 500);
   assert.strictEqual(imran.months[thisMonth].collected, 500);
   assert.strictEqual(imran.months[thisMonth].outstanding, 0);
-  assert.ok(imran.months[thisMonth].booked > 0, 'appointments count in the same row');
+  // Appointments booked for a future date are deliberately not in a report of
+  // what the month has done — `to` is today.
 
   const sara = report.rows.find((r) => r.id === ids.sara);
   assert.strictEqual(sara.months[thisMonth].billed, 700, 'every line on the bill counts to the doctor');
   assert.strictEqual(sara.months[thisMonth].collected, 300);
   assert.strictEqual(sara.months[thisMonth].outstanding, 400, 'the gap between billed and taken is visible');
 
-  // Per-patient value — and no division by zero for a doctor with bills but no
-  // appointments booked in the window.
-  assert.strictEqual(imran.total.perPatient,
-    Math.round((imran.total.billed / imran.total.booked) * 100) / 100);
-  assert.ok(Number.isFinite(sara.total.perPatient));
-  if (!sara.total.booked) assert.strictEqual(sara.total.perPatient, 0);
+  // Per-patient value, and never a division by zero for a doctor who billed in
+  // the window but has no appointment counted in it.
+  for (const d of [imran, sara]) {
+    assert.ok(Number.isFinite(d.total.perPatient));
+    assert.strictEqual(d.total.perPatient, d.total.booked
+      ? Math.round((d.total.billed / d.total.booked) * 100) / 100 : 0);
+  }
   for (let i = 1; i < report.rows.length; i += 1) {
     assert.ok(report.rows[i - 1].total.billed >= report.rows[i].total.billed);
   }

@@ -224,9 +224,18 @@ router.post('/orders/:id/cancel', requireRole('lab', 'doctor'), wrap((req, res) 
 /** Printable report payload. */
 router.get('/orders/:id/report', viewRoles, wrap((req, res) => {
   const id = int(req.params.id);
+  /*
+   * A report leaves the building, so the referring doctor appears on it as
+   * their code and nothing else. `doctor_name` is kept for the screens inside
+   * the ERP; the printed sheet uses only `doctor_code`.
+   */
   const order = db.prepare(
-    `SELECT o.*, p.uhid, p.first_name, p.last_name, p.age_years, p.gender, u.name AS doctor_name
-       FROM lab_orders o JOIN patients p ON p.id = o.patient_id LEFT JOIN users u ON u.id = o.doctor_id
+    `SELECT o.*, p.uhid, p.first_name, p.last_name, p.age_years, p.gender, p.phone,
+            u.name AS doctor_name, dp.doctor_code
+       FROM lab_orders o
+       JOIN patients p ON p.id = o.patient_id
+       LEFT JOIN users u ON u.id = o.doctor_id
+       LEFT JOIN doctor_profiles dp ON dp.user_id = o.doctor_id
       WHERE o.id = ?`
   ).get(id);
   if (!order) throw notFound('Order not found');

@@ -362,6 +362,10 @@ console.log('Seed complete.');
 console.log('  Departments :', db.prepare("SELECT COUNT(*) AS c FROM departments WHERE active = 1").get().c,
   '(' + db.prepare("SELECT COUNT(*) AS c FROM departments WHERE active = 1 AND kind = 'specialist'").get().c + ' specialist)');
 console.log('  Staff       :', db.prepare('SELECT COUNT(*) AS c FROM users').get().c);
+// Doctors are created above, after the migration has already run, so their
+// codes are issued here — every doctor must have one before anything prints.
+require('./index').backfillDoctorCodes();
+
 console.log('  Lab tests   :', db.prepare('SELECT COUNT(*) AS c FROM lab_tests').get().c);
 console.log('  Drugs       :', db.prepare('SELECT COUNT(*) AS c FROM drugs').get().c);
 console.log('  Beds        :', db.prepare('SELECT COUNT(*) AS c FROM beds').get().c);

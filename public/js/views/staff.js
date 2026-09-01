@@ -68,6 +68,8 @@
           host.innerHTML = UI.table([
             { label: 'Doctor', render: (d) => `<b>${UI.esc(d.name)}</b>` +
               `<div class="muted small">${UI.esc(d.qualification || '')}</div>` },
+            { label: 'Code', render: (d) => d.doctor_code
+              ? `<code>${UI.esc(d.doctor_code)}</code>` : '<span class="muted">—</span>' },
             { label: 'Department', render: (d) => UI.esc(d.department_name || '—') },
             { label: 'Speciality', render: (d) => UI.esc(d.specialization || '—') },
             { label: 'Room', render: (d) => UI.esc(d.room_no || '—') },
@@ -161,6 +163,11 @@
               value: existing ? existing.specialization || '' : '', placeholder: 'Diabetes & thyroid' })}
             ${UI.field({ name: 'regNo', label: 'Medical council reg. no.',
               value: existing ? existing.reg_no || '' : '' })}
+            ${UI.field({ name: 'doctorCode', label: 'Doctor code',
+              value: existing ? existing.doctor_code || '' : '',
+              placeholder: 'SPC-MHD-002',
+              hint: 'Clinic · name · joining number. Blank generates one. Printed on every '
+                + 'prescription and report, so change it only before the first is issued.' })}
           </div>
           <div class="grid c4">
             ${UI.field({ name: 'consultFee', label: 'New consultation fee', type: 'number', step: '0.01',
@@ -390,6 +397,9 @@
             <div class="card-body"><dl class="kv">
               <dt>Name</dt><dd>${UI.esc(u.name)}</dd>
               <dt>Staff code</dt><dd><code>${UI.esc(u.staff_code)}</code></dd>
+              ${isDoctor ? `<dt>Doctor code</dt><dd><code>${UI.esc(u.doctor_code || '—')}</code>
+                <div class="muted small">The only thing that identifies this doctor on a printed
+                  prescription or report. Patients cannot read a name from it.</div></dd>` : ''}
               <dt>Role</dt><dd>${UI.badge(UI.titleise(u.role), 'teal')}</dd>
               <dt>Department</dt><dd>${UI.esc(u.department_name || '—')}</dd>
               <dt>Email</dt><dd>${UI.esc(u.email || '—')}</dd>

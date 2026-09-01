@@ -28,7 +28,7 @@ const PER_DAY = { OD: 1, BD: 2, TDS: 3, QID: 4, HS: 1, SOS: 1, STAT: 1, QID6H: 4
 
 function sheetOr404(id) {
   const sheet = db.prepare(
-    `SELECT s.*, u.name AS doctor_name, u.staff_code,
+    `SELECT s.*, u.name AS doctor_name, u.staff_code, dp.doctor_code,
             dp.qualification, dp.specialization, dp.reg_no, dp.room_no, dp.signature_line,
             dep.name AS department_name,
             p.uhid, p.first_name, p.last_name, p.age_years, p.gender, p.phone,

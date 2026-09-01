@@ -12,6 +12,47 @@ db.pragma('foreign_keys = ON');
 db.pragma('busy_timeout = 5000');
 
 /** Add a column to an existing table if it is not there yet. */
+/**
+ * Give every doctor without one a code, in the order they joined, so the serial
+ * numbers read as an appointment register. Runs once — a code, once issued, is
+ * left alone for ever.
+ */
+function backfillDoctorCodes() {
+  const config = require('../config');
+  // Only the pure helper, because this runs while the database module is still
+  // being set up and the id generators reach back into it.
+  const { nameMnemonic } = require('../lib/ids');
+
+  const pending = db.prepare(
+    `SELECT u.id, u.name FROM users u
+       LEFT JOIN doctor_profiles dp ON dp.user_id = u.id
+      WHERE u.role = 'doctor' AND (dp.doctor_code IS NULL OR dp.doctor_code = '')
+      ORDER BY u.id`
+  ).all();
+  if (!pending.length) return;
+
+  // Continue the serial from whatever has already been issued, so re-running
+  // never reuses a number that is out on a printed sheet.
+  const highest = db.prepare(
+    "SELECT doctor_code FROM doctor_profiles WHERE doctor_code IS NOT NULL ORDER BY doctor_code DESC"
+  ).all().map((r) => Number(String(r.doctor_code).split('-').pop())).filter((n) => !Number.isNaN(n));
+  let serial = highest.length ? Math.max(...highest) : 0;
+
+  for (const d of pending) {
+    serial += 1;
+    const code = `${config.clinic.code}-${nameMnemonic(d.name)}-${String(serial).padStart(3, '0')}`;
+    db.prepare('INSERT OR IGNORE INTO doctor_profiles (user_id) VALUES (?)').run(d.id);
+    db.prepare('UPDATE doctor_profiles SET doctor_code = ? WHERE user_id = ?').run(code, d.id);
+  }
+
+  // Leave the shared counter past what has been issued, so the next doctor to
+  // join never lands on a serial already printed on somebody's prescription.
+  db.prepare(
+    `INSERT INTO counters (name, value) VALUES ('doctor-serial', ?)
+     ON CONFLICT(name) DO UPDATE SET value = MAX(value, excluded.value)`
+  ).run(serial);
+}
+
 function ensureColumn(table, column, definition) {
   const exists = db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
   if (!exists) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
@@ -79,6 +120,16 @@ function migrate() {
   // relate to the person the number belongs to.
   ensureColumn('patients', 'relationship_to_primary', 'TEXT');
 
+  /*
+   * The code a doctor is known by on paper — SPC-MHD-002. It is the only thing
+   * about a doctor that appears on a prescription or a report, so every doctor
+   * needs one, and it must never change once it has been printed.
+   */
+  ensureColumn('doctor_profiles', 'doctor_code', 'TEXT');
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_doctor_code ON doctor_profiles(doctor_code) '
+    + 'WHERE doctor_code IS NOT NULL');
+  backfillDoctorCodes();
+
   // Medicaments sit under HSN 3004 unless the formulary says otherwise; a GST
   // invoice must show a code, so nothing is left without one.
   db.exec("UPDATE drugs SET hsn = '3004' WHERE hsn IS NULL OR hsn = ''");
@@ -96,4 +147,4 @@ function tx(fn) {
 // idempotent and removes any module-ordering hazard around prepared statements.
 migrate();
 
-module.exports = { db, migrate, tx, ensureColumn };
+module.exports = { db, migrate, tx, ensureColumn, backfillDoctorCodes };

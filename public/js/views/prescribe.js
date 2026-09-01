@@ -279,7 +279,7 @@
           <span>${UI.esc(age)} · ${UI.esc(UI.titleise(sheet.gender || '—'))}</span>
           ${sheet.uhid ? `<span>UHID ${UI.esc(sheet.uhid)}</span>` : ''}
           <span>${UI.esc(UI.date(sheet.created_at))}</span>
-          <span>${UI.esc(sheet.rx_no)}${sheet.staff_code ? ' / ' + UI.esc(sheet.staff_code) : ''}</span>
+          <span>${UI.esc(sheet.rx_no)}${sheet.doctor_code ? ' · ' + UI.esc(sheet.doctor_code) : ''}</span>
         </div>
 
         ${sheet.allergies ? `<div class="rx-allergy">Allergic to: ${UI.esc(sheet.allergies)}</div>` : ''}

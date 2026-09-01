@@ -5,9 +5,10 @@ const { wrap, notFound, conflict, badRequest } = require('../lib/http');
 const { requireRole } = require('../lib/auth');
 const { required, str, num, int, bool } = require('../lib/validate');
 const audit = require('../lib/audit');
-const { generate } = require('../lib/ids');
+const { generate, doctorCode } = require('../lib/ids');
 const { hashPassword } = require('../lib/auth');
 const scheduling = require('../services/scheduling');
+const config = require('../config');
 
 const router = express.Router();
 const adminOnly = requireRole('admin');
@@ -39,8 +40,8 @@ router.get('/staff', wrap((req, res) => {
   const role = str(req.query.role);
   const rows = db.prepare(
     `SELECT u.id, u.staff_code, u.name, u.email, u.phone, u.role, u.active, u.department_id,
-            d.name AS department_name, dp.qualification, dp.specialization, dp.consult_fee,
-            dp.follow_up_fee, dp.slot_minutes, dp.room_no
+            d.name AS department_name, dp.doctor_code, dp.qualification, dp.specialization,
+            dp.consult_fee, dp.follow_up_fee, dp.slot_minutes, dp.room_no
        FROM users u
        LEFT JOIN departments d ON d.id = u.department_id
        LEFT JOIN doctor_profiles dp ON dp.user_id = u.id
@@ -55,8 +56,8 @@ router.get('/staff/:id', requireRole('admin', 'reception'), wrap((req, res) => {
   const user = db.prepare(
     `SELECT u.id, u.staff_code, u.name, u.email, u.phone, u.role, u.active, u.department_id,
             u.last_login_at, u.created_at, d.name AS department_name,
-            dp.qualification, dp.specialization, dp.reg_no, dp.consult_fee, dp.follow_up_fee,
-            dp.slot_minutes, dp.room_no, dp.signature_line
+            dp.doctor_code, dp.qualification, dp.specialization, dp.reg_no, dp.consult_fee,
+            dp.follow_up_fee, dp.slot_minutes, dp.room_no, dp.signature_line
        FROM users u
        LEFT JOIN departments d ON d.id = u.department_id
        LEFT JOIN doctor_profiles dp ON dp.user_id = u.id
@@ -94,15 +95,25 @@ router.post('/staff', adminOnly, wrap((req, res) => {
   ).run(staffCode, str(req.body.name), str(req.body.email) ? str(req.body.email).toLowerCase() : null,
         str(req.body.phone), hashPassword(req.body.password), str(req.body.role), int(req.body.departmentId) || null);
 
+  let doctorCodeIssued = null;
   if (req.body.role === 'doctor') {
+    // The code they will be known by on every prescription and report. It is
+    // issued once, on joining, and never changes — printed sheets outlive edits.
+    doctorCodeIssued = str(req.body.doctorCode)
+      || doctorCode(str(req.body.name), config.clinic.code);
+    const clash = db.prepare('SELECT user_id FROM doctor_profiles WHERE doctor_code = ?').get(doctorCodeIssued);
+    if (clash) throw conflict(`Doctor code ${doctorCodeIssued} is already in use.`);
+
     db.prepare(
-      `INSERT INTO doctor_profiles (user_id, qualification, specialization, reg_no, consult_fee, follow_up_fee, slot_minutes, room_no)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(info.lastInsertRowid, str(req.body.qualification), str(req.body.specialization), str(req.body.regNo),
-          num(req.body.consultFee, 0), num(req.body.followUpFee, 0), int(req.body.slotMinutes, 15) || 15, str(req.body.roomNo));
+      `INSERT INTO doctor_profiles (user_id, doctor_code, qualification, specialization, reg_no,
+                                    consult_fee, follow_up_fee, slot_minutes, room_no)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(info.lastInsertRowid, doctorCodeIssued, str(req.body.qualification), str(req.body.specialization),
+          str(req.body.regNo), num(req.body.consultFee, 0), num(req.body.followUpFee, 0),
+          int(req.body.slotMinutes, 15) || 15, str(req.body.roomNo));
   }
-  audit.log(req, 'create', 'user', info.lastInsertRowid, { role: req.body.role });
-  res.status(201).json({ id: info.lastInsertRowid, staffCode });
+  audit.log(req, 'create', 'user', info.lastInsertRowid, { role: req.body.role, doctorCode: doctorCodeIssued });
+  res.status(201).json({ id: info.lastInsertRowid, staffCode, doctorCode: doctorCodeIssued });
 }));
 
 router.patch('/staff/:id', adminOnly, wrap((req, res) => {
@@ -122,6 +133,14 @@ router.patch('/staff/:id', adminOnly, wrap((req, res) => {
   if (user.role === 'doctor') {
     // A profile row may be missing if the account was created as another role.
     db.prepare('INSERT OR IGNORE INTO doctor_profiles (user_id) VALUES (?)').run(id);
+    if (req.body.doctorCode !== undefined && str(req.body.doctorCode)) {
+      const wanted = str(req.body.doctorCode).toUpperCase();
+      const clash = db.prepare(
+        'SELECT user_id FROM doctor_profiles WHERE doctor_code = ? AND user_id <> ?'
+      ).get(wanted, id);
+      if (clash) throw conflict(`Doctor code ${wanted} belongs to somebody else.`);
+      db.prepare('UPDATE doctor_profiles SET doctor_code = ? WHERE user_id = ?').run(wanted, id);
+    }
     db.prepare(
       `UPDATE doctor_profiles SET qualification = COALESCE(?, qualification),
               specialization = COALESCE(?, specialization), consult_fee = COALESCE(?, consult_fee),

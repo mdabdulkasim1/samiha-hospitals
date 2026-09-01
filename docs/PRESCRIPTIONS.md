@@ -45,9 +45,10 @@ saw beyond what they already know.
 blank box is left for exactly that. That signature is what makes the sheet
 theirs, not anything the ERP prints.
 
-**The doctor code** (`DOC01`, the staff code) is printed beside the prescription
-number. It means nothing to a patient and everything to the clinic: management
-and the doctor can trace any sheet back to who wrote it, from the paper alone.
+**The doctor code** is printed beside the prescription number. It means nothing
+to a patient and everything to the clinic: management and the doctor can trace
+any sheet back to who wrote it, from the paper alone. See
+[the doctor code](#the-doctor-code) below.
 
 Anything already signed reprints unchanged from **My Clinic → My prescriptions**.
 
@@ -78,3 +79,56 @@ systolic pressure.
 - Values are read against ordinary adult ranges as they are typed, so an
   out-of-range blood pressure is noticed at the desk rather than a week later.
   These are a prompt to look, never a diagnosis.
+
+
+# The doctor code
+
+Every doctor is issued one code, and it is the **only** thing that identifies
+them on anything the patient takes home — a prescription or a diagnostic report.
+
+```
+SPC - MHD - 002
+ |     |     |
+ |     |     the serial number in which they were appointed here
+ |     a three-letter mnemonic of their name (Mohamed)
+ the clinic — Samiha Polyclinic (CLINIC_CODE)
+```
+
+**The mnemonic** keeps the first letter, then adds the consonants not yet used —
+which is how these abbreviations get written by hand:
+
+| Name | Code |
+|---|---|
+| Mohamed | `MHD` |
+| Nafisa Rahman | `NFS` |
+| Vikram Rao | `VKR` |
+| Imran Sheikh | `IMR` |
+| Arif Hussain | `ARF` |
+
+A short name is filled out from its own remaining letters rather than padded
+(Neha → `NHE`).
+
+**The serial** is the order the doctor joined, taken once on appointment and
+never reused — a doctor who leaves does not free their number, because their
+code is already on printed sheets in patients' homes.
+
+## Issuing and changing it
+
+A code is generated when the doctor is created, and shown on the doctors list
+and on their record under **Staff & Doctors**. Admin may set or correct it in
+the doctor's form; a code already belonging to somebody else is refused, and the
+database will not hold two the same.
+
+Change it only **before the first sheet is printed**. After that, the code out
+in the world no longer matches the file.
+
+## Why the code and not the name
+
+A prescription and a lab report leave the building. Neither carries a doctor's
+name, qualification, registration number, room or contact detail — nothing on
+the page should let a patient reach a doctor directly, or identify who they saw
+beyond what they already know.
+
+The doctor stamps and signs the printed sheet by hand. That signature is what
+makes it theirs; the code is how the clinic knows, from the paper alone, whose
+it was.

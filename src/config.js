@@ -46,6 +46,8 @@ module.exports = {
     whatsappNumber: env.CLINIC_WHATSAPP_NUMBER || env.CLINIC_PHONE || '+91 72007 50420',
     currency: env.CURRENCY || 'INR',
     currencySymbol: env.CURRENCY_SYMBOL || '₹',
+    // The prefix on a doctor's code — SPC for Samiha Polyclinic.
+    code: (env.CLINIC_CODE || 'SPC').toUpperCase(),
     state: env.CLINIC_STATE || 'Tamil Nadu',
     stateCode: env.CLINIC_STATE_CODE || '33',
   },

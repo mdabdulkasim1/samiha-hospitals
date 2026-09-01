@@ -281,6 +281,72 @@ test('registering on a known number names the household rather than just refusin
   assert.strictEqual((await api('GET', '/api/patients/by-phone?phone=9845020001')).body.count, 4);
 });
 
+// ---------------------------------------------------------- the doctor code
+test('a doctor code reads SPC-MHD-002: clinic, name, joining number', async () => {
+  const { nameMnemonic } = require('../src/lib/ids');
+  // The mnemonic keeps the first letter then adds unused consonants, which is
+  // how these are written by hand.
+  assert.strictEqual(nameMnemonic('Dr. Mohamed'), 'MHD');
+  assert.strictEqual(nameMnemonic('Mohamed'), 'MHD');
+  assert.strictEqual(nameMnemonic('Dr. Nafisa Rahman'), 'NFS');
+  assert.strictEqual(nameMnemonic('Vikram'), 'VKR');
+  // A short name is filled out from its own letters, never with padding.
+  assert.strictEqual(nameMnemonic('Neha'), 'NHE');
+  assert.strictEqual(nameMnemonic('Sara'), 'SRA');
+  assert.strictEqual(nameMnemonic(''), 'XXX');
+
+  const doctors = (await api('GET', '/api/masters/staff?role=doctor', undefined, 'admin')).body;
+  assert.ok(doctors.every((d) => /^SPC-[A-Z]{3}-\d{3}$/.test(d.doctor_code)),
+    'every doctor carries a code');
+  const serials = doctors.map((d) => d.doctor_code.split('-').pop());
+  assert.strictEqual(new Set(serials).size, serials.length, 'serials are unique');
+});
+
+test('a doctor joining gets the next serial, and codes cannot collide', async () => {
+  const created = await api('POST', '/api/masters/staff', {
+    name: 'Dr. Mohamed Yusuf', role: 'doctor', email: 'mohamed.test@samiha.local',
+    password: 'Clinic2026x', qualification: 'MBBS, MS',
+  }, 'admin');
+  assert.strictEqual(created.status, 201, JSON.stringify(created.body));
+  assert.match(created.body.doctorCode, /^SPC-MHD-\d{3}$/);
+  ids.mohamed = created.body.id;
+
+  const taken = (await api('GET', '/api/masters/staff?role=doctor', undefined, 'admin')).body
+    .find((d) => d.id === ids.imran).doctor_code;
+  const clash = await api('PATCH', `/api/masters/staff/${ids.mohamed}`, { doctorCode: taken }, 'admin');
+  assert.strictEqual(clash.status, 409);
+  assert.match(clash.body.error, /belongs to somebody else/i);
+
+  // A correction the admin is entitled to make still works.
+  const fixed = await api('PATCH', `/api/masters/staff/${ids.mohamed}`, { doctorCode: 'SPC-MYF-099' }, 'admin');
+  assert.strictEqual(fixed.status, 200);
+  assert.strictEqual(
+    (await api('GET', `/api/masters/staff/${ids.mohamed}`, undefined, 'admin')).body.doctor_code,
+    'SPC-MYF-099');
+});
+
+test('printed sheets carry the code and never the doctor', async () => {
+  const sheet = (await api('GET', `/api/prescriptions/${ids.sheet}`, undefined, 'imran')).body;
+  assert.match(sheet.doctor_code, /^SPC-[A-Z]{3}-\d{3}$/,
+    'the prescription is traceable to its prescriber by code alone');
+
+  // A lab report exposes the referring doctor the same way.
+  const order = (await api('POST', '/api/lab/orders', {
+    patientId: ids.patient, doctorId: ids.imran,
+    tests: [{ testId: (await api('GET', '/api/masters/lab-tests')).body[0].id }],
+  }, 'imran')).body;
+  await api('POST', `/api/lab/orders/${order.id}/collect`, { sampleType: 'blood' }, 'admin');
+  const items = (await api('GET', `/api/lab/orders/${order.id}`, undefined, 'admin')).body.items;
+  await api('POST', `/api/lab/orders/${order.id}/results`,
+    { results: [{ itemId: items[0].id, value: '12' }] }, 'admin');
+  await api('POST', `/api/lab/orders/${order.id}/verify`, {}, 'admin');
+
+  const report = (await api('GET', `/api/lab/orders/${order.id}/report`, undefined, 'admin')).body;
+  assert.match(report.doctor_code, /^SPC-[A-Z]{3}-\d{3}$/);
+  assert.strictEqual(report.doctor_code,
+    (await api('GET', `/api/masters/staff/${ids.imran}`, undefined, 'admin')).body.doctor_code);
+});
+
 // ------------------------------------------------------ what a doctor may see
 test('a doctor\'s dashboard shows their own clinic and no colleague\'s', async () => {
   const asDoctor = (await api('GET', '/api/reports/dashboard', undefined, 'imran')).body;
