@@ -109,6 +109,20 @@ WhatsApp and email copies on or off. Nobody sets this for them.
 Alerts are per staff member and private: the id of somebody else's alert simply
 does not exist for you, so marking it read does nothing.
 
+## On the dashboard
+
+`Dashboard → Appointments by doctor today` answers the question the front desk
+asks all morning — *how many has Dr Sheikh got?* — without opening the diary.
+
+One row per doctor who is either sitting today or has somebody booked, busiest
+first: their visiting hours, patients booked (and how many are new), how many
+have arrived, how many have been seen, how many slots are still free, and what
+was cancelled or did not turn up. A doctor on leave says so and shows nothing
+free. **List** opens that doctor's patients for the day in place — any desk role
+can, without needing the doctor's own sign-in.
+
+A doctor looking at the dashboard sees their own row marked *you*.
+
 ## Tables
 
 | Table | Holds |

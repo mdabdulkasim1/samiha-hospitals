@@ -61,6 +61,13 @@ APP.register('dashboard', {
           </div>
 
           <div class="card">
+            <div class="card-head"><h3>Appointments by doctor today</h3>
+              <span class="muted small">Who is sitting, and how full they are</span>
+              <a class="btn ghost sm" href="#/appointments">Open the diary</a></div>
+            <div class="card-body tight" id="doctor-board">${doctorBoard(d.byDoctor || [])}</div>
+          </div>
+
+          <div class="card">
             <div class="card-head"><h3>Enquiries waiting to be registered</h3>
               <a class="btn ghost sm" href="#/patients?stage=enquiry">See all</a></div>
             <div class="card-body tight" id="enquiry-patients">${UI.loading()}</div>
@@ -117,6 +124,11 @@ APP.register('dashboard', {
     el.querySelectorAll('[data-go]').forEach((b) =>
       b.addEventListener('click', () => APP.navigate(b.dataset.go)));
 
+    // "How many has Dr Sheikh got, and who?" — one click, without leaving the
+    // dashboard or needing a doctor's own sign-in.
+    el.querySelectorAll('[data-doc-day]').forEach((b) =>
+      b.addEventListener('click', () => openDoctorDay(Number(b.dataset.docDay), d.date)));
+
     // Who enquired but has not been registered yet — the desk's follow-up list.
     try {
       const enq = await API.get('/api/patients' + API.qs({ stage: 'enquiry', limit: 8 }));
@@ -165,6 +177,93 @@ APP.register('dashboard', {
     }
   },
 });
+
+/**
+ * Doctor by doctor for the day: booked, seen, and how much of the clinic is
+ * still open. This is the question the front desk asks all morning — "how many
+ * has Dr Sheikh got?" — so it belongs on the first screen rather than three
+ * clicks into the diary.
+ */
+function doctorBoard(rows) {
+  if (!rows.length) {
+    return UI.empty('No doctor is sitting today, and nothing is booked. ' +
+      'Fix visiting hours under Staff & Doctors.', '🗓');
+  }
+
+  const total = rows.reduce((a, r) => a + r.booked, 0);
+  const seen = rows.reduce((a, r) => a + r.completed, 0);
+
+  const table = UI.table([
+    { label: 'Doctor', render: (r) => `<b>${UI.esc(r.name)}</b>` +
+      (APP.user && APP.user.id === r.id ? ' ' + UI.badge('you', 'teal') : '') +
+      `<div class="muted small">${UI.esc(r.specialization || r.department_name || '')}` +
+      `${r.room_no ? ' · ' + UI.esc(r.room_no) : ''}</div>` },
+    { label: 'Hours', render: (r) => r.on_leave
+      ? UI.badge('On leave', 'danger')
+      : (r.hours ? `<span class="small">${UI.esc(r.hours)}</span>`
+                 : '<span class="muted small">no hours fixed</span>') },
+    { label: 'Booked', num: true, render: (r) => r.booked
+      ? `<b style="font-size:15px">${UI.num(r.booked)}</b>` +
+        (r.new_patients ? `<div class="muted small">${UI.num(r.new_patients)} new</div>` : '')
+      : '<span class="muted">—</span>' },
+    { label: 'Waiting', num: true, render: (r) => r.arrived ? UI.num(r.arrived) : '—' },
+    { label: 'Seen', num: true, render: (r) => r.completed
+      ? `<span style="color:var(--ok);font-weight:600">${UI.num(r.completed)}</span>` : '—' },
+    { label: 'Free slots', num: true, render: (r) => {
+      if (r.on_leave) return '—';
+      if (!r.hours) return '<span class="muted">—</span>';
+      return r.free ? UI.num(r.free) : UI.badge('Full', 'warn');
+    } },
+    { label: 'Missed', num: true, render: (r) => (r.cancelled + r.no_shows)
+      ? `<span class="muted small">${UI.num(r.cancelled)} canc · ${UI.num(r.no_shows)} n/s</span>` : '' },
+    { label: '', render: (r) => r.booked
+      ? `<button class="btn ghost sm" data-doc-day="${r.id}">List</button>` : '' },
+  ], rows, { emptyText: 'Nothing booked with anybody today.' });
+
+  return table + `<div class="row-between small muted" style="padding:8px 14px 2px;border-top:1px solid var(--line)">
+    <span><b>${UI.num(total)}</b> patient(s) booked across ${UI.num(rows.length)} doctor(s)</span>
+    <span>${UI.num(seen)} seen so far</span>
+  </div>`;
+}
+
+/** One doctor's list for the day, opened from the board. */
+async function openDoctorDay(doctorId, date) {
+  const day = await API.get('/api/appointments/my-day' + API.qs({ doctorId, date }));
+  UI.modal({
+    title: `${day.doctor.name} — ${day.label}`,
+    size: 'wide',
+    body: `
+      <div class="row-between mb">
+        <div class="muted small">${UI.esc(day.doctor.specialization || day.doctor.department_name || '')}
+          ${day.doctor.room_no ? ' · Room ' + UI.esc(day.doctor.room_no) : ''}</div>
+        <div class="muted small">${day.onLeave
+          ? '<b style="color:var(--danger)">On leave</b>'
+          : (day.hours ? 'Visiting hours ' + UI.esc(day.hours) : 'No hours fixed')}</div>
+      </div>
+      <div class="grid c4 mb">
+        <div class="stat crimson"><div class="label">Booked</div><div class="value">${UI.num(day.summary.booked)}</div></div>
+        <div class="stat teal"><div class="label">Arrived</div><div class="value">${UI.num(day.summary.arrived)}</div></div>
+        <div class="stat ok"><div class="label">Seen</div><div class="value">${UI.num(day.summary.completed)}</div></div>
+        <div class="stat orange"><div class="label">Cancelled / no-show</div>
+          <div class="value">${UI.num(day.summary.cancelled + day.summary.noShow)}</div></div>
+      </div>
+      ${UI.table([
+        { label: 'Token', render: (r) => `<span class="badge crimson">#${UI.esc(r.token_no || '—')}</span>` },
+        { label: 'Time', render: (r) => `<b>${UI.esc(r.time)}</b>` },
+        { label: 'Patient', render: (r) => `<b>${UI.esc(r.display_name)}</b>` +
+          `<div class="muted small">${UI.esc(r.uhid || 'not registered yet')}</div>` },
+        { label: 'Contact', render: (r) => UI.esc(r.patient_phone || r.guest_phone || '—') },
+        { label: 'Reason', render: (r) => UI.esc(r.reason || '—') },
+        { label: 'Flags', render: (r) => r.allergies ? UI.badge('⚠ Allergy', 'danger') : '' },
+        { label: 'Status', render: (r) => UI.statusBadge(r.visit_status || r.status) },
+      ], day.rows, { emptyText: 'Nobody is booked with this doctor today.' })}`,
+    footer: `<button class="btn ghost" data-act="diary">Open the diary</button>
+             <button class="btn" data-act="__close">Close</button>`,
+    onAction(act) {
+      if (act === 'diary') APP.navigate('appointments', { date });
+    },
+  });
+}
 
 /** The clinic's own service board — specialist consulting and diagnostic counters. */
 function serviceBoard(departments) {

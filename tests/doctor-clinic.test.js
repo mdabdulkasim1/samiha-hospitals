@@ -260,6 +260,64 @@ test('a doctor blocks their own day, and nobody can then be booked', async () =>
   assert.match(refused.body.error, /on leave|already booked/i);
 });
 
+// ------------------------------------------------------- the dashboard board
+test('the dashboard counts appointments doctor by doctor', async () => {
+  const today = scheduling.dateKey(new Date());
+  await api('POST', `/api/masters/doctors/${ids.imran}/availability`, {
+    date: today, startTime: '18:00', endTime: '20:00',
+  });
+  for (const [time, name] of [['18:00', 'Board One'], ['18:15', 'Board Two']]) {
+    const r = await api('POST', '/api/appointments', {
+      doctorId: ids.imran, scheduledAt: `${today} ${time}:00`, guestName: name,
+    }, 'reception');
+    assert.strictEqual(r.status, 201, JSON.stringify(r.body));
+  }
+
+  const board = (await api('GET', '/api/reports/dashboard')).body.byDoctor;
+  assert.ok(Array.isArray(board));
+
+  const imran = board.find((r) => r.id === ids.imran);
+  assert.strictEqual(imran.booked, 2);
+  assert.strictEqual(imran.new_patients, 2);
+  assert.strictEqual(imran.completed, 0);
+  assert.strictEqual(imran.hours, '6:00 PM – 8:00 PM');
+  assert.strictEqual(imran.free, 6, 'eight slots in the window, two taken');
+  assert.strictEqual(imran.on_leave, 0);
+  assert.ok(imran.specialization, 'the board says what each doctor does');
+
+  // Busiest first, so the desk reads the top of the list.
+  assert.strictEqual(board[0].id, ids.imran);
+  for (let i = 1; i < board.length; i += 1) assert.ok(board[i - 1].booked >= board[i].booked);
+
+  // A doctor with neither hours nor a booking is not at the clinic today.
+  assert.ok(board.every((r) => r.total > 0 || r.hours));
+});
+
+test('a cancelled appointment leaves the doctor\'s count, but is still shown', async () => {
+  const today = scheduling.dateKey(new Date());
+  const appt = (await api('GET', `/api/appointments/my-day?date=${today}&doctorId=${ids.imran}`,
+    undefined, 'reception')).body.rows[0];
+  await api('PATCH', `/api/appointments/${appt.id}`, { status: 'cancelled' }, 'reception');
+
+  const imran = (await api('GET', '/api/reports/dashboard')).body.byDoctor.find((r) => r.id === ids.imran);
+  assert.strictEqual(imran.booked, 1, 'the cancellation comes off the count');
+  assert.strictEqual(imran.cancelled, 1, 'but is still reported');
+  assert.strictEqual(imran.free, 7, 'and the slot goes back on sale');
+});
+
+test('a doctor on leave shows as such, with nothing free', async () => {
+  const soon = day(9);
+  await api('POST', `/api/masters/doctors/${ids.sara}/availability`, {
+    date: soon, startTime: '18:00', endTime: '20:00',
+  });
+  await api('POST', '/api/me/leave', { date: soon, reason: 'Conference' }, 'sara');
+
+  const board = (await api('GET', `/api/reports/dashboard?date=${soon}`)).body.byDoctor;
+  const sara = board.find((r) => r.id === ids.sara);
+  assert.strictEqual(sara.on_leave, 1);
+  assert.strictEqual(sara.free, 0);
+});
+
 test('a doctor sets where their alerts go', async () => {
   const saved = await api('PATCH', '/api/me/alert-settings', {
     whatsapp: '9840055555', notifyWhatsapp: true, notifyEmail: true,

@@ -3,6 +3,7 @@ const express = require('express');
 const { db } = require('../db');
 const { wrap } = require('../lib/http');
 const { requireAuth, requireRole } = require('../lib/auth');
+const scheduling = require('../services/scheduling');
 const { str, int } = require('../lib/validate');
 
 const router = express.Router();
@@ -44,10 +45,45 @@ router.get('/dashboard', requireAuth, wrap((req, res) => {
        FROM beds WHERE active = 1`
   ).get();
 
+  /**
+   * Doctor by doctor, for the day the dashboard is showing: who is booked with
+   * whom, how far through their list they are, and how much of their clinic is
+   * still open. Doctors with nothing booked and no hours fixed are left out —
+   * they are not at the clinic that day and would only be noise.
+   */
+  const byDoctor = db.prepare(
+    `SELECT u.id, u.name, dep.name AS department_name, dp.specialization, dp.room_no,
+            COUNT(a.id) AS total,
+            SUM(CASE WHEN a.status NOT IN ('cancelled','no_show') THEN 1 ELSE 0 END) AS booked,
+            SUM(CASE WHEN a.status = 'checked_in' THEN 1 ELSE 0 END) AS arrived,
+            SUM(CASE WHEN a.status = 'completed' THEN 1 ELSE 0 END) AS completed,
+            SUM(CASE WHEN a.status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled,
+            SUM(CASE WHEN a.status = 'no_show' THEN 1 ELSE 0 END) AS no_shows,
+            SUM(CASE WHEN a.source = 'whatsapp' THEN 1 ELSE 0 END) AS via_whatsapp,
+            SUM(CASE WHEN a.visit_kind = 'new' AND a.status NOT IN ('cancelled','no_show')
+                     THEN 1 ELSE 0 END) AS new_patients
+       FROM users u
+       LEFT JOIN departments dep ON dep.id = u.department_id
+       LEFT JOIN doctor_profiles dp ON dp.user_id = u.id
+       LEFT JOIN appointments a ON a.doctor_id = u.id AND date(a.scheduled_at) = ?
+      WHERE u.role = 'doctor' AND u.active = 1
+      GROUP BY u.id
+      ORDER BY booked DESC, u.name`
+  ).all(date);
+
+  for (const d of byDoctor) {
+    d.hours = scheduling.windowLabel(d.id, date);
+    d.on_leave = scheduling.isOnLeave(d.id, date) ? 1 : 0;
+    // Only meaningful for today and later; a past date has no "free" slots.
+    d.free = date >= today() ? scheduling.availableSlots(d.id, date).length : 0;
+    d.seeing = d.booked - d.completed;
+  }
+
   res.json({
     date,
     opd,
     appointments,
+    byDoctor: byDoctor.filter((d) => d.total > 0 || d.hours),
     revenue: {
       collected: revenue.collected, receipts: revenue.receipts,
       billed: billed.billed, slidingDiscount: billed.sliding, assistanceCovered: billed.assistance,
