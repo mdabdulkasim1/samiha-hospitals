@@ -46,6 +46,28 @@ function migrate() {
   // for a specific batch.
   ensureColumn('drugs', 'barcode', 'TEXT');
   ensureColumn('drug_batches', 'barcode', 'TEXT');
+
+  // Doctors get their own sign-in and their own alerts, so the profile carries
+  // how each one wants to hear about a booking.
+  ensureColumn('doctor_profiles', 'notify_whatsapp', 'INTEGER NOT NULL DEFAULT 1');
+  ensureColumn('doctor_profiles', 'notify_email', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn('users', 'whatsapp', 'TEXT');
+
+  // A tax invoice must be reproducible exactly as it was issued, so the GST
+  // split is stored on the line rather than recomputed from today's rates.
+  for (const [col, def] of [
+    ['hsn', 'TEXT'],
+    ['taxable', 'REAL NOT NULL DEFAULT 0'],
+    ['cgst', 'REAL NOT NULL DEFAULT 0'],
+    ['sgst', 'REAL NOT NULL DEFAULT 0'],
+  ]) ensureColumn('pharmacy_sale_items', col, def);
+  ensureColumn('pharmacy_sales', 'round_off', 'REAL NOT NULL DEFAULT 0');
+  ensureColumn('pharmacy_sales', 'customer_gstin', 'TEXT');
+  ensureColumn('pharmacy_sales', 'customer_address', 'TEXT');
+
+  // Medicaments sit under HSN 3004 unless the formulary says otherwise; a GST
+  // invoice must show a code, so nothing is left without one.
+  db.exec("UPDATE drugs SET hsn = '3004' WHERE hsn IS NULL OR hsn = ''");
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_drugs_barcode ON drugs(barcode) WHERE barcode IS NOT NULL');
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_batches_barcode ON drug_batches(barcode) WHERE barcode IS NOT NULL');
   return db;

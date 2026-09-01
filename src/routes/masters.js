@@ -7,6 +7,7 @@ const { required, str, num, int, bool } = require('../lib/validate');
 const audit = require('../lib/audit');
 const { generate } = require('../lib/ids');
 const { hashPassword } = require('../lib/auth');
+const scheduling = require('../services/scheduling');
 
 const router = express.Router();
 const adminOnly = requireRole('admin');
@@ -66,6 +67,11 @@ router.get('/staff/:id', requireRole('admin', 'reception'), wrap((req, res) => {
   if (user.role === 'doctor') {
     user.sessions = db.prepare(
       'SELECT * FROM doctor_schedules WHERE doctor_id = ? ORDER BY weekday, start_time'
+    ).all(id);
+    user.availability = db.prepare(
+      `SELECT * FROM doctor_availability
+        WHERE doctor_id = ? AND avail_date >= date('now')
+        ORDER BY avail_date, start_time LIMIT 120`
     ).all(id);
     user.leaves = db.prepare(
       "SELECT * FROM doctor_leaves WHERE doctor_id = ? AND leave_date >= date('now') ORDER BY leave_date"
@@ -167,6 +173,133 @@ router.post('/doctors/:id/schedule', requireRole('admin', 'reception'), wrap((re
 
 router.delete('/schedule/:scheduleId', requireRole('admin', 'reception'), wrap((req, res) => {
   db.prepare('DELETE FROM doctor_schedules WHERE id = ?').run(int(req.params.scheduleId));
+  res.json({ ok: true });
+}));
+
+// ------------------------------------------------- fixed visiting hours
+/**
+ * Our consultants sit for two or three hours on days that are agreed, so admin
+ * fixes the exact date and window. Anything set here replaces the weekly rota
+ * for that date, and is what the appointment screen and the WhatsApp bot offer.
+ */
+router.get('/doctors/:id/availability', wrap((req, res) => {
+  const doctorId = int(req.params.id);
+  const from = str(req.query.from) || scheduling.dateKey(new Date());
+  const to = str(req.query.to) || scheduling.dateKey(new Date(Date.now() + 60 * 86400000));
+  const rows = db.prepare(
+    `SELECT a.*, u.name AS set_by FROM doctor_availability a
+       LEFT JOIN users u ON u.id = a.created_by
+      WHERE a.doctor_id = ? AND a.avail_date BETWEEN ? AND ?
+      ORDER BY a.avail_date, a.start_time`
+  ).all(doctorId, from, to);
+
+  // Say plainly how many patients each window actually holds, and how many of
+  // those are already taken — that is the number the desk needs.
+  for (const r of rows) {
+    const total = slotsInWindow(r);
+    const booked = db.prepare(
+      `SELECT COUNT(*) AS c FROM appointments
+        WHERE doctor_id = ? AND date(scheduled_at) = ?
+          AND time(scheduled_at) >= ? AND time(scheduled_at) < ?
+          AND status NOT IN ('cancelled','no_show')`
+    ).get(doctorId, r.avail_date, `${r.start_time}:00`, `${r.end_time}:00`).c;
+    r.capacity = total;
+    r.booked = booked;
+    r.free = Math.max(total - booked, 0);
+    r.on_leave = scheduling.isOnLeave(doctorId, r.avail_date) ? 1 : 0;
+  }
+  res.json({ from, to, rows });
+}));
+
+/** How many patients a window holds, honouring the doctor's own cap. */
+function slotsInWindow(row) {
+  const mins = (t) => { const [h, m] = String(t).split(':').map(Number); return h * 60 + m; };
+  const step = row.slot_minutes || 15;
+  const fits = Math.max(Math.floor((mins(row.end_time) - mins(row.start_time)) / step), 0);
+  return row.max_tokens > 0 ? Math.min(fits, row.max_tokens) : fits;
+}
+
+/**
+ * Add one window, or repeat it across a date range. `dates` takes an explicit
+ * list; `from`/`to` with optional `weekdays` fills a range — which is how a
+ * "Tuesdays and Fridays, 6 to 8, for the next month" rota gets entered once.
+ */
+router.post('/doctors/:id/availability', requireRole('admin', 'reception'), wrap((req, res) => {
+  required(req.body, ['startTime', 'endTime']);
+  const doctorId = int(req.params.id);
+  const doctor = db.prepare("SELECT * FROM users WHERE id = ? AND role = 'doctor'").get(doctorId);
+  if (!doctor) throw notFound('Doctor not found');
+
+  const start = str(req.body.startTime);
+  const end = str(req.body.endTime);
+  if (!/^\d{2}:\d{2}$/.test(start) || !/^\d{2}:\d{2}$/.test(end)) {
+    throw badRequest('Give the start and end as HH:MM, e.g. 18:00 and 20:00.');
+  }
+  if (end <= start) throw badRequest('The visiting window must end after it starts.');
+
+  const slotMinutes = int(req.body.slotMinutes, 15) || 15;
+  const maxTokens = int(req.body.maxTokens, 0);
+  const note = str(req.body.note);
+
+  // Work out which dates this applies to.
+  let dates = [];
+  if (Array.isArray(req.body.dates) && req.body.dates.length) {
+    dates = req.body.dates.map((d) => str(d)).filter(Boolean);
+  } else if (req.body.date) {
+    dates = [str(req.body.date)];
+  } else if (req.body.from && req.body.to) {
+    const weekdays = Array.isArray(req.body.weekdays) ? req.body.weekdays.map(Number) : null;
+    const first = scheduling.parseDateKey(str(req.body.from));
+    const last = scheduling.parseDateKey(str(req.body.to));
+    if (last < first) throw badRequest('The last date is before the first.');
+    if ((last - first) / 86400000 > 366) throw badRequest('Set a range of a year or less.');
+    for (let d = new Date(first); d <= last; d.setDate(d.getDate() + 1)) {
+      if (weekdays && weekdays.length && !weekdays.includes(d.getDay())) continue;
+      dates.push(scheduling.dateKey(d));
+    }
+  }
+  if (!dates.length) throw badRequest('Give a date, a list of dates, or a from/to range.');
+  for (const d of dates) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) throw badRequest(`"${d}" is not a date (YYYY-MM-DD).`);
+  }
+
+  const added = [];
+  const skipped = [];
+  db.transaction(() => {
+    for (const date of dates) {
+      const clash = db.prepare(
+        `SELECT start_time, end_time FROM doctor_availability
+          WHERE doctor_id = ? AND avail_date = ? AND start_time < ? AND end_time > ?`
+      ).get(doctorId, date, end, start);
+      if (clash) { skipped.push({ date, reason: `overlaps ${clash.start_time}–${clash.end_time}` }); continue; }
+
+      const info = db.prepare(
+        `INSERT INTO doctor_availability
+           (doctor_id, avail_date, start_time, end_time, slot_minutes, max_tokens, note, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(doctorId, date, start, end, slotMinutes, maxTokens, note, req.user.id);
+      added.push({ id: info.lastInsertRowid, date });
+    }
+  })();
+
+  audit.log(req, 'set_availability', 'doctor', doctorId, { added: added.length, start, end });
+  res.status(201).json({ added: added.length, skipped, dates: added });
+}));
+
+router.delete('/availability/:availId', requireRole('admin', 'reception'), wrap((req, res) => {
+  const row = db.prepare('SELECT * FROM doctor_availability WHERE id = ?').get(int(req.params.availId));
+  if (!row) throw notFound('Visiting window not found');
+  const booked = db.prepare(
+    `SELECT COUNT(*) AS c FROM appointments
+      WHERE doctor_id = ? AND date(scheduled_at) = ?
+        AND time(scheduled_at) >= ? AND time(scheduled_at) < ?
+        AND status NOT IN ('cancelled','no_show')`
+  ).get(row.doctor_id, row.avail_date, `${row.start_time}:00`, `${row.end_time}:00`).c;
+  if (booked && !req.query.force) {
+    throw conflict(`${booked} patient(s) are already booked in that window. Move or cancel them first.`);
+  }
+  db.prepare('DELETE FROM doctor_availability WHERE id = ?').run(row.id);
+  audit.log(req, 'delete', 'doctor_availability', row.id, { date: row.avail_date });
   res.json({ ok: true });
 }));
 

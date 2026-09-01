@@ -150,7 +150,7 @@ code, .mono { font-family: var(--mono); font-size: .92em; }
 .grid.c4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .grid.c5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 .grid.sidebar-right { grid-template-columns: minmax(0, 1fr) 340px; align-items: start; }
-@media (max-width: 1200px) { .grid.c4, .grid.c5 { grid-template-columns: repeat(2, minmax(0,1fr)); } .grid.sidebar-right { grid-template-columns: 1fr; } }
+@media (max-width: 1200px) { .grid.c4, .grid.c5 { grid-template-columns: repeat(2, minmax(0,1fr)); } .grid.sidebar-right { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 860px)  { .grid.c2, .grid.c3, .grid.c4, .grid.c5 { grid-template-columns: 1fr; } }
 
 .stat { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; box-shadow: var(--shadow); }
@@ -449,3 +449,105 @@ svg.barcode { display: block; width: 100%; max-width: 260px; margin: 0 auto; sha
 .picker-item .picker-text { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; }
 .picker-item .picker-text b { font-size: 13.5px; }
 .picker-item:last-child { border-bottom: 0; }
+
+/* The alert bell in the top bar — a doctor's first sight of a new booking. */
+.bell {
+  position: relative; flex: 0 0 auto; width: 38px; height: 38px; margin-left: 10px;
+  display: grid; place-items: center; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--surface); cursor: pointer; font-size: 16px; line-height: 1;
+}
+.bell:hover { border-color: var(--teal); }
+.bell.has-unread { border-color: var(--crimson); }
+.bell .dot {
+  position: absolute; top: -6px; right: -6px; min-width: 18px; height: 18px; padding: 0 5px;
+  display: grid; place-items: center; border-radius: 9px; background: var(--crimson);
+  color: #fff; font-size: 10.5px; font-weight: 700; font-family: var(--font);
+}
+.alert-list { max-height: 60vh; overflow-y: auto; margin: -4px -4px 0; }
+.alert-row {
+  display: flex; align-items: flex-start; gap: 10px; width: 100%; padding: 10px 12px;
+  border: 0; border-bottom: 1px solid var(--line); background: transparent;
+  text-align: left; cursor: pointer; font: inherit; color: inherit;
+}
+.alert-row:hover { background: var(--bg); }
+.alert-row.unread { background: rgba(158, 27, 52, .05); }
+.alert-row:last-child { border-bottom: 0; }
+.alert-text { display: flex; flex-direction: column; gap: 2px; flex: 1 1 auto; min-width: 0; }
+.alert-row .unread-dot {
+  flex: 0 0 8px; width: 8px; height: 8px; margin-top: 6px; border-radius: 50%; background: var(--crimson);
+}
+
+/* Signing in on a phone: the marketing half steps aside for the form, which is
+   the only thing a doctor opening the ERP on their mobile actually needs. */
+@media (max-width: 860px) {
+  .login-shell { grid-template-columns: 1fr; min-height: 100dvh; }
+  .login-hero { padding: 28px 22px 4px; text-align: center; align-items: center; }
+  .login-hero .logo-full { width: min(240px, 62%); padding: 14px; }
+  .login-hero h1 { font-size: 22px; margin: 18px 0 8px; }
+  .login-hero p { font-size: 14px; }
+  .login-hero ul { display: none; }          /* the feature list is desktop-only */
+  .login-panel { padding: 22px 18px 40px; border-radius: 18px 18px 0 0; }
+}
+
+/* The menu button that opens the nav on a phone. Hidden on a real screen,
+   where the sidebar is always there. */
+.nav-toggle {
+  display: none; flex: 0 0 auto; width: 38px; height: 38px; margin-right: 10px;
+  place-items: center; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--surface); cursor: pointer; font-size: 17px; line-height: 1; color: var(--ink);
+}
+.nav-backdrop { display: none; }
+
+/*
+ * The clinic on a phone.
+ *
+ * A doctor opens this between patients, one-handed, to answer one question:
+ * who is booked. So the navigation slides away behind a button, the topbar
+ * stays put at the top of the screen, and the numbers sit two across rather
+ * than as a column of giant cards you have to scroll past.
+ */
+@media (max-width: 860px) {
+  .app { grid-template-columns: 1fr; }
+
+  .nav-toggle { display: grid; }
+  .sidebar {
+    position: fixed; top: 0; left: 0; bottom: 0; width: min(280px, 84vw); z-index: 60;
+    height: 100dvh; transform: translateX(-100%); transition: transform .22s ease;
+    box-shadow: 4px 0 24px rgba(0,0,0,.28);
+  }
+  body.nav-open .sidebar { transform: none; }
+  body.nav-open .nav-backdrop {
+    display: block; position: fixed; inset: 0; z-index: 59; background: rgba(12,32,38,.5);
+  }
+  body.nav-open { overflow: hidden; }
+
+  .topbar {
+    position: sticky; top: 0; z-index: 20; padding: 10px 12px;
+    gap: 8px; flex-wrap: wrap;
+  }
+  .topbar .titles h1 { font-size: 18px; }
+  .topbar .titles .sub { font-size: 11.5px; }
+  .topbar .spacer { display: none; }
+  #page-actions { order: 3; width: 100%; }
+  #page-actions button { flex: 1 1 auto; }
+  .bell { margin-left: auto; }
+
+  /* Nothing may push the page sideways — a wide table scrolls inside its own
+     box instead. */
+  .main { min-width: 0; overflow-x: hidden; }
+  .content { padding: 12px; min-width: 0; }
+  .card, .grid > * { min-width: 0; }
+  .grid.c2, .grid.c3, .grid.c4, .grid.c5 { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .stat { padding: 10px 12px; }
+  .stat .value { font-size: 22px; }
+  .stat .label { font-size: 10px; }
+  .stat .foot { font-size: 10.5px; }
+  .card-head { flex-wrap: wrap; gap: 8px; }
+  .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .table-wrap table { min-width: 560px; }
+  .doc { padding: 12px; }
+}
+
+@media (max-width: 460px) {
+  .grid.c3, .grid.c4, .grid.c5 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

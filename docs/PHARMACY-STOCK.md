@@ -142,3 +142,65 @@ doctor, nurse and cashier — because a doctor asking "do we have this in stock"
 should not need the stock keeper. Reception is deliberately not on that list: the
 front desk does not work the pharmacy counter. The administrator, as everywhere
 in the ERP, passes every check.
+
+
+# The pharmacy bill
+
+The counter prints on an **80 mm thermal roll** (72 mm of it is printable), and
+the bill it prints is a **GST tax invoice** — it has to satisfy two rulebooks at
+once, and it carries what both ask for.
+
+| Required by | On the bill |
+|---|---|
+| CGST Rules, r. 46 | "TAX INVOICE" heading; supplier name, address and **GSTIN**; a consecutive serial number and its date; the recipient; **HSN** per line; taxable value; the rate-wise **CGST/SGST** split; the total **in words**; **place of supply**; whether **reverse charge** applies; the supplier's signature block |
+| Drugs & Cosmetics Rules | **Batch number** and **expiry** on every line; the **drug licence numbers**; the **registered pharmacist** who handed it over; the Schedule H notice when one is on the bill |
+
+## MRP already contains the GST
+
+This is the part worth reading twice. The MRP printed on a pack is the most a
+patient may legally be charged, and it is **inclusive of GST**. So the tax is
+extracted out of it:
+
+```
+taxable = MRP × qty × 100 / (100 + rate)
+tax     = MRP × qty − taxable
+```
+
+₹2.20 × 10 strips at 12% is ₹22.00 to the patient: ₹19.64 taxable and ₹2.36 tax
+— never ₹24.64. Adding GST on top of MRP would sell above MRP, which is an
+offence, so the ERP does not do it. Intra-state, the tax splits into CGST and
+SGST at half the rate each; the clinic's own state is the place of supply for
+anyone who walks up to the counter.
+
+Set `MRP_INCLUDES_GST=false` only if your prices are genuinely quoted before tax.
+
+Counter bills round to the rupee (cash has no paisa) and **declare the round-off
+on the invoice**. Dispensed prescriptions do not round: they go onto the visit
+bill, which the cashier settles to the paisa.
+
+## Printing
+
+`Pharmacy → Bills → Print` on any bill, or straight after a counter sale or a
+dispense. The browser's own print dialog is where the thermal printer is
+selected, so any printer the computer can see works — no driver, no plug-in.
+
+A bill **reprints exactly as it was issued**: the GST split is stored on each
+line rather than recomputed, so changing a price today does not alter yesterday's
+invoice.
+
+## Before you issue real bills
+
+These must be set, or the bill is not a valid tax invoice — the ERP prints it
+but warns you every time:
+
+```
+PHARMACY_GSTIN=...
+PHARMACY_DL_NUMBERS=...       # retail and wholesale drug licences
+PHARMACIST_NAME=...
+PHARMACIST_REG_NO=...
+CLINIC_STATE / CLINIC_STATE_CODE
+```
+
+The pharmacy bills in its own name (`PHARMACY_NAME`, default *SAMIHA
+PHARMACEUTICALS*) under its own logo, because a retail chemist is a separate GST
+registration from the clinic.

@@ -74,6 +74,15 @@ const templates = {
     (d.programs ? `Programs you may qualify for: ${d.programs}\n` : '') +
     `\nOur counselor will walk you through the options at the desk.`,
 
+  // The doctor's own copy — short enough to read on a phone lock screen.
+  doctor_new_appointment: (d) =>
+    `👨‍⚕️ *New appointment* — ${config.clinic.name}\n\n` +
+    `Patient: ${d.patientName}\n` +
+    (d.phone ? `Mobile: ${d.phone}\n` : '') +
+    `When: ${d.when}\nToken: ${d.token || '—'}\nRef: ${d.apptNo}\n` +
+    (d.reason ? `Reason: ${d.reason}\n` : '') +
+    `\nYou have *${d.total}* patient(s) booked that day. Open the ERP to see the full list.`,
+
   generic: (d) => d.body,
 };
 

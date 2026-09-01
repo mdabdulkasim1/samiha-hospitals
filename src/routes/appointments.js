@@ -1,12 +1,13 @@
 'use strict';
 const express = require('express');
 const { db } = require('../db');
-const { wrap, notFound, conflict } = require('../lib/http');
+const { wrap, notFound, conflict, forbidden } = require('../lib/http');
 const { requireRole } = require('../lib/auth');
 const { required, str, int, paging, phone } = require('../lib/validate');
 const { generate } = require('../lib/ids');
 const scheduling = require('../services/scheduling');
 const whatsapp = require('../services/whatsapp');
+const staffAlerts = require('../services/staffAlerts');
 const audit = require('../lib/audit');
 
 const router = express.Router();
@@ -48,6 +49,85 @@ router.get('/', deskRoles, wrap((req, res) => {
   ).all(date, date, status, status, doctorId, doctorId, limit, offset);
 
   res.json({ rows: rows.map((r) => ({ ...r, display_name: patientLabel(r), when: scheduling.humanDateTime(r.scheduled_at) })), page, limit });
+}));
+
+// ------------------------------------------------------------------ my day
+/**
+ * A doctor's own clinic for a day — the screen they open on their phone to see
+ * how many patients are booked and who they are. Doctors see themselves; admin
+ * and the front desk can look at any doctor by passing `doctorId`.
+ */
+router.get('/my-day', deskRoles, wrap((req, res) => {
+  const asked = req.query.doctorId ? int(req.query.doctorId) : null;
+  const doctorId = (req.user.role === 'doctor' && !asked) ? req.user.id : (asked || req.user.id);
+  if (req.user.role === 'doctor' && doctorId !== req.user.id) {
+    throw forbidden('You can only open your own clinic list.');
+  }
+  const doctor = db.prepare(
+    `SELECT u.id, u.name, u.phone, u.email, d.name AS department_name,
+            dp.specialization, dp.room_no, dp.slot_minutes
+       FROM users u LEFT JOIN departments d ON d.id = u.department_id
+       LEFT JOIN doctor_profiles dp ON dp.user_id = u.id
+      WHERE u.id = ? AND u.role = 'doctor'`
+  ).get(doctorId);
+  if (!doctor) throw notFound('Doctor not found');
+
+  const date = str(req.query.date) || scheduling.dateKey(new Date());
+
+  const rows = db.prepare(
+    `SELECT a.*, p.uhid, p.phone AS patient_phone, p.age_years, p.gender, p.allergies,
+            (p.first_name || ' ' || COALESCE(p.last_name, '')) AS patient_name,
+            (SELECT v.id FROM visits v WHERE v.appointment_id = a.id) AS visit_id,
+            (SELECT v.status FROM visits v WHERE v.appointment_id = a.id) AS visit_status
+       FROM appointments a LEFT JOIN patients p ON p.id = a.patient_id
+      WHERE a.doctor_id = ? AND date(a.scheduled_at) = ?
+      ORDER BY a.scheduled_at`
+  ).all(doctorId, date);
+
+  const counted = rows.filter((r) => !['cancelled', 'no_show'].includes(r.status));
+  const summary = {
+    booked: counted.length,
+    arrived: rows.filter((r) => r.status === 'checked_in' || r.visit_id).length,
+    completed: rows.filter((r) => r.status === 'completed').length,
+    cancelled: rows.filter((r) => r.status === 'cancelled').length,
+    noShow: rows.filter((r) => r.status === 'no_show').length,
+    newPatients: counted.filter((r) => r.visit_kind === 'new').length,
+  };
+
+  // The next few days they are sitting, so they can see the week at a glance.
+  const upcoming = [];
+  for (let i = 0; i < 21 && upcoming.length < 7; i += 1) {
+    const d = new Date();
+    d.setDate(d.getDate() + i);
+    const key = scheduling.dateKey(d);
+    const hours = scheduling.windowLabel(doctorId, key);
+    if (!hours || scheduling.isOnLeave(doctorId, key)) continue;
+    upcoming.push({
+      date: key,
+      label: scheduling.humanDate(key),
+      hours,
+      booked: db.prepare(
+        `SELECT COUNT(*) AS c FROM appointments WHERE doctor_id = ? AND date(scheduled_at) = ?
+           AND status NOT IN ('cancelled','no_show')`
+      ).get(doctorId, key).c,
+      free: scheduling.availableSlots(doctorId, key).length,
+    });
+  }
+
+  res.json({
+    doctor,
+    date,
+    label: scheduling.humanDate(date),
+    hours: scheduling.windowLabel(doctorId, date),
+    onLeave: scheduling.isOnLeave(doctorId, date),
+    summary,
+    upcoming,
+    rows: rows.map((r) => ({
+      ...r,
+      display_name: patientLabel(r),
+      time: scheduling.to12h(r.scheduled_at.slice(11, 16)),
+    })),
+  });
 }));
 
 // ------------------------------------------------------------------- create
@@ -96,8 +176,15 @@ router.post('/', deskRoles, wrap((req, res) => {
     });
   }
 
+  // The doctor hears about it on their own phone, not only on the desk screen.
+  const created = db.prepare('SELECT * FROM appointments WHERE id = ?').get(info.lastInsertRowid);
+  staffAlerts.appointmentBooked(created, {
+    patientName: patient ? `${patient.first_name} ${patient.last_name || ''}`.trim() : str(req.body.guestName),
+    bookedBy: req.user.name,
+  });
+
   audit.log(req, 'create', 'appointment', info.lastInsertRowid, { apptNo, doctorId, scheduledAt });
-  res.status(201).json(db.prepare('SELECT * FROM appointments WHERE id = ?').get(info.lastInsertRowid));
+  res.status(201).json(created);
 }));
 
 // ----------------------------------------------------------- reschedule etc.
@@ -132,6 +219,20 @@ router.patch('/:id', deskRoles, wrap((req, res) => {
     const dest = typeof to === 'string' ? to : (to && (to.whatsapp || to.phone));
     if (dest) whatsapp.notify({ to: dest, template: 'appointment_cancelled', data: { apptNo: updated.appt_no }, refType: 'appointment', refId: id });
   }
+  if (req.body.status === 'cancelled' || (req.body.scheduledAt && updated.scheduled_at !== appt.scheduled_at)) {
+    const named = updated.patient_id
+      ? db.prepare("SELECT (first_name || ' ' || COALESCE(last_name,'')) AS n FROM patients WHERE id = ?")
+          .get(updated.patient_id)
+      : null;
+    staffAlerts.appointmentChanged(updated, {
+      patientName: named ? named.n.trim() : updated.guest_name,
+      kind: req.body.status === 'cancelled' ? 'appointment_cancelled' : 'appointment_moved',
+      headline: req.body.status === 'cancelled'
+        ? `Appointment cancelled — ${named ? named.n.trim() : (updated.guest_name || 'a patient')}`
+        : `Appointment moved — ${named ? named.n.trim() : (updated.guest_name || 'a patient')}`,
+    });
+  }
+
   audit.log(req, 'update', 'appointment', id, { status: req.body.status });
   res.json(updated);
 }));

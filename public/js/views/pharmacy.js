@@ -120,7 +120,9 @@
             host.querySelectorAll('[data-qty]').forEach((inp) => inp.addEventListener('change', () => {
               const i = Number(inp.dataset.qty);
               cart[i].qty = Math.max(1, Math.min(Number(inp.value) || 1, cart[i].on_hand));
-              drawCart();
+              // Redraw after the blur that delivered this event has finished,
+              // or the browser is asked to remove the node it is blurring.
+              setTimeout(drawCart, 0);
             }));
             host.querySelectorAll('[data-rm]').forEach((b) => b.addEventListener('click', () => {
               cart.splice(Number(b.dataset.rm), 1); drawCart();
@@ -223,7 +225,7 @@
                 ${res.balance > 0 ? `· <b style="color:var(--danger)">${UI.money(res.balance)} still due</b>` : '· paid in full'}
                 <div class="mt"><button class="btn sm" id="cs-print">Print the bill</button></div></div>`;
               UI.ok('Sale completed.');
-              body.querySelector('#cs-print').addEventListener('click', () => printCounterBill(res));
+              body.querySelector('#cs-print').addEventListener('click', () => printGstBill(res.sale.id));
               cart.length = 0;
               drawCart();
               body.querySelector('#cs-form').reset();
@@ -264,7 +266,13 @@
                   ? UI.money(r.paid_amount) : UI.badge('On the visit bill', 'teal') },
                 { label: 'By', render: (r) => UI.esc(r.by_name || '') },
                 { label: 'When', render: (r) => UI.esc(UI.dateTime(r.created_at)) },
+                { label: '', render: (r) => `<button class="btn ghost sm" data-bill="${r.id}">Print</button>` },
               ], data.rows, { emptyText: 'No pharmacy bills yet.' })}</div></div>`;
+
+          // A tax invoice has to be reproducible on demand, so any bill reprints
+          // exactly as it was issued.
+          body.querySelectorAll('[data-bill]').forEach((b) =>
+            b.addEventListener('click', () => printGstBill(Number(b.dataset.bill))));
         },
 
         queue() {
@@ -429,9 +437,12 @@
         }
         el.querySelector('#disp-out').innerHTML = `<div class="alert ok mt">
           <b>Dispensed.</b> Bill ${UI.esc(res.sale.bill_no)} for ${UI.money(res.sale.net)} added to invoice
-          ${UI.esc(res.invoice.invoice_no)} (balance ${UI.money(res.invoice.balance)}).</div>`;
+          ${UI.esc(res.invoice.invoice_no)} (balance ${UI.money(res.invoice.balance)}).
+          <div class="mt"><button class="btn sm" id="disp-print">Print the tax invoice</button>
+            <button class="btn ghost sm" id="disp-back">Back to the queue</button></div></div>`;
         UI.ok('Medicines dispensed and added to the bill.');
-        setTimeout(() => APP.navigate('pharmacy'), 1600);
+        el.querySelector('#disp-print').addEventListener('click', () => printGstBill(res.sale.id));
+        el.querySelector('#disp-back').addEventListener('click', () => APP.navigate('pharmacy'));
       } catch (err) {
         UI.err(err.message);
         e.target.disabled = false;
@@ -439,37 +450,196 @@
     });
   }
 
-  /** A counter bill for a walk-in, printable on the spot. */
-  function printCounterBill(res) {
-    const s = res.sale;
-    const html = `<div class="doc">
-      ${UI.docHeader('Pharmacy Bill', [`Bill: ${s.bill_no}`, `Date: ${UI.dateTime(s.created_at)}`,
-        'Counter sale'])}
-      <table><tbody>
-        <tr><th>Customer</th><td>${UI.esc(s.customer_name || 'Walk-in')}</td>
-            <th>Mobile</th><td>${UI.esc(s.customer_phone || '—')}</td></tr>
-        ${s.rx_reference ? `<tr><th>Prescription</th><td colspan="3">${UI.esc(s.rx_reference)}</td></tr>` : ''}
-      </tbody></table>
-      <table class="mt"><thead><tr><th>#</th><th>Medicine</th><th>Batch</th><th>Expiry</th>
-        <th class="num">Qty</th><th class="num">MRP</th><th class="num">Amount</th></tr></thead><tbody>
-        ${res.items.map((i, n) => `<tr><td>${n + 1}</td><td>${UI.esc(i.drug_name)}</td>
-          <td>${UI.esc(i.batch_no || '')}</td><td>${i.expiry_date ? UI.esc(UI.date(i.expiry_date)) : ''}</td>
-          <td class="num">${UI.esc(i.qty)}</td><td class="num">${UI.money(i.mrp)}</td>
-          <td class="num">${UI.money(i.amount)}</td></tr>`).join('')}
-      </tbody></table>
-      <div class="totals">
-        <div class="line"><span>Gross</span><span>${UI.money(s.gross)}</span></div>
-        ${s.discount ? `<div class="line"><span>Discount</span><span>− ${UI.money(s.discount)}</span></div>` : ''}
-        <div class="line"><span>Tax</span><span>${UI.money(s.tax)}</span></div>
-        <div class="line grand"><span>Total</span><span>${UI.money(s.net)}</span></div>
-        <div class="line"><span>Paid (${UI.esc(UI.titleise(s.payment_mode || 'cash'))})</span><span>${UI.money(s.paid_amount)}</span></div>
-        ${res.balance > 0 ? `<div class="line"><span>Balance</span><span>${UI.money(res.balance)}</span></div>` : ''}
-      </div>
-      <div class="sign"><div>Customer</div><div>For ${UI.esc(APP.clinic.name)}<br>Pharmacist</div></div>
-      <div class="foot-note">Medicines once sold are not taken back. Please check the expiry date before use.
-        Keep out of reach of children.</div>
-    </div>`;
-    UI.print(html, 'Pharmacy bill ' + s.bill_no);
+  /**
+   * The pharmacy's GST tax invoice, laid out for an 80 mm thermal roll.
+   *
+   * A retail chemist's bill has to satisfy two rulebooks at once: Rule 46 of the
+   * CGST Rules (supplier GSTIN, serial number, HSN, taxable value, rate-wise
+   * CGST/SGST, total in words, place of supply, reverse-charge status) and the
+   * Drugs & Cosmetics Rules (batch, expiry, drug licence numbers, and the
+   * pharmacist who handed it over). Both are printed here.
+   *
+   * MRP already includes GST, so the tax is shown extracted from it — the
+   * patient pays the printed MRP and not a paisa more.
+   */
+  async function printGstBill(saleId) {
+    const inv = await API.get(`/api/pharmacy/sales/${saleId}/invoice`);
+    const { supplier: sup, sale, items, summary, hsnSummary } = inv;
+    const rs = (n) => `${inv.currencySymbol}${Number(n || 0).toFixed(2)}`;
+    const isCounter = sale.sale_type === 'counter';
+
+    const missing = [];
+    if (!sup.gstin) missing.push('GSTIN');
+    if (!sup.dlNumbers) missing.push('drug licence numbers');
+    if (!sup.pharmacistName) missing.push('pharmacist name');
+
+    const html = `
+      <div class="receipt">
+        <div class="r-head">
+          <img class="r-logo" src="/assets/logo-pharmacy.svg" alt="">
+          <div class="r-name">${UI.esc(sup.name)}</div>
+          <div class="r-tag">${UI.esc(sup.tagline)}</div>
+          <div class="r-line">${UI.esc(sup.address)}</div>
+          <div class="r-line">Ph: ${UI.esc(sup.phone)}</div>
+          ${sup.gstin ? `<div class="r-line">GSTIN: <b>${UI.esc(sup.gstin)}</b></div>` : ''}
+          ${sup.dlNumbers ? `<div class="r-line">D.L. No: ${UI.esc(sup.dlNumbers)}</div>` : ''}
+          ${sup.fssai ? `<div class="r-line">FSSAI: ${UI.esc(sup.fssai)}</div>` : ''}
+          <div class="r-title">TAX INVOICE</div>
+        </div>
+
+        <div class="r-rule"></div>
+        <table class="r-meta">
+          <tr><td>Invoice</td><td class="r-r"><b>${UI.esc(sale.bill_no)}</b></td></tr>
+          <tr><td>Date</td><td class="r-r">${UI.esc(UI.dateTime(sale.created_at))}</td></tr>
+          <tr><td>${isCounter ? 'Customer' : 'Patient'}</td>
+              <td class="r-r">${UI.esc(sale.patient_name || sale.customer_name || 'Cash / Walk-in')}</td></tr>
+          ${sale.uhid ? `<tr><td>UHID</td><td class="r-r">${UI.esc(sale.uhid)}</td></tr>` : ''}
+          ${(sale.customer_phone || sale.patient_phone)
+            ? `<tr><td>Mobile</td><td class="r-r">${UI.esc(sale.customer_phone || sale.patient_phone)}</td></tr>` : ''}
+          ${sale.customer_gstin ? `<tr><td>Cust. GSTIN</td><td class="r-r">${UI.esc(sale.customer_gstin)}</td></tr>` : ''}
+          ${sale.doctor_name ? `<tr><td>Prescriber</td><td class="r-r">${UI.esc(sale.doctor_name)}</td></tr>` : ''}
+          ${sale.rx_reference ? `<tr><td>Rx</td><td class="r-r">${UI.esc(sale.rx_reference)}</td></tr>` : ''}
+          <tr><td>Place of supply</td><td class="r-r">${UI.esc(inv.placeOfSupply)}</td></tr>
+          <tr><td>Reverse charge</td><td class="r-r">${UI.esc(inv.reverseCharge)}</td></tr>
+        </table>
+
+        <div class="r-rule"></div>
+        <table class="r-items">
+          <thead>
+            <tr><th class="r-l">Item</th><th class="r-r">Qty</th><th class="r-r">MRP</th><th class="r-r">Amount</th></tr>
+          </thead>
+          <tbody>
+            ${items.map((i, n) => `
+              <tr class="r-item">
+                <td colspan="4" class="r-l"><b>${n + 1}. ${UI.esc(i.drug_name)}</b>
+                  ${i.strength ? ' ' + UI.esc(i.strength) : ''}</td>
+              </tr>
+              <tr class="r-sub">
+                <td colspan="4" class="r-l">B: ${UI.esc(i.batch_no || '—')} ·
+                  Exp: ${i.expiry_date ? UI.esc(monthYear(i.expiry_date)) : '—'} ·
+                  HSN: ${UI.esc(i.hsn_code || '3004')} · GST ${UI.esc(i.tax_pct)}%</td>
+              </tr>
+              <tr>
+                <td class="r-l">&nbsp;</td>
+                <td class="r-r">${UI.esc(i.qty)}</td>
+                <td class="r-r">${Number(i.mrp).toFixed(2)}</td>
+                <td class="r-r"><b>${Number(i.mrp * i.qty).toFixed(2)}</b></td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+
+        <div class="r-rule"></div>
+        <table class="r-tot">
+          <tr><td>Taxable value</td><td class="r-r">${rs(summary.taxable)}</td></tr>
+          <tr><td>CGST</td><td class="r-r">${rs(summary.cgst)}</td></tr>
+          <tr><td>SGST</td><td class="r-r">${rs(summary.sgst)}</td></tr>
+          ${sale.discount ? `<tr><td>Discount</td><td class="r-r">− ${rs(sale.discount)}</td></tr>` : ''}
+          ${sale.round_off ? `<tr><td>Round off</td><td class="r-r">${sale.round_off > 0 ? '+ ' : '− '}${rs(Math.abs(sale.round_off))}</td></tr>` : ''}
+          <tr class="r-grand"><td>TOTAL</td><td class="r-r">${rs(sale.net)}</td></tr>
+          ${isCounter ? `
+            <tr><td>Paid (${UI.esc(UI.titleise(sale.payment_mode || 'cash'))})</td>
+                <td class="r-r">${rs(sale.paid_amount)}</td></tr>
+            ${sale.net - sale.paid_amount > 0.009
+              ? `<tr><td><b>Balance due</b></td><td class="r-r"><b>${rs(sale.net - sale.paid_amount)}</b></td></tr>` : ''}
+          ` : `<tr><td colspan="2" class="r-note">Charged to visit bill${sale.visit_no ? ' ' + UI.esc(sale.visit_no) : ''} — settle at the cash counter.</td></tr>`}
+        </table>
+
+        <div class="r-words">${UI.esc(inv.amountInWords)}</div>
+
+        <div class="r-rule"></div>
+        <div class="r-sub2">GST summary</div>
+        <table class="r-hsn">
+          <thead><tr><th class="r-l">HSN</th><th class="r-r">Rate</th><th class="r-r">Taxable</th>
+            <th class="r-r">CGST</th><th class="r-r">SGST</th></tr></thead>
+          <tbody>${hsnSummary.map((h) => `<tr>
+            <td class="r-l">${UI.esc(h.hsn)}</td>
+            <td class="r-r">${UI.esc(h.rate)}%</td>
+            <td class="r-r">${Number(h.taxable).toFixed(2)}</td>
+            <td class="r-r">${Number(h.cgst).toFixed(2)}</td>
+            <td class="r-r">${Number(h.sgst).toFixed(2)}</td></tr>`).join('')}</tbody>
+        </table>
+
+        <div class="r-rule"></div>
+        <div class="r-foot">
+          <div>Prices are MRP inclusive of GST.</div>
+          <div>Medicines once sold are not taken back. Check the expiry before use.
+            Store as directed and keep out of reach of children.</div>
+          ${items.some((i) => ['H', 'H1', 'X'].includes(String(i.schedule_type || '').toUpperCase()))
+            ? '<div><b>Schedule H / H1 drug — sold on the prescription of a registered medical practitioner.</b></div>' : ''}
+          <div class="r-sign">
+            <div>${UI.esc(sup.pharmacistName || 'Pharmacist')}${sup.pharmacistRegNo ? ' · Reg. ' + UI.esc(sup.pharmacistRegNo) : ''}</div>
+            <div class="r-line">Billed by ${UI.esc(sale.billed_by || '')}</div>
+            <div class="r-line">for ${UI.esc(sup.name)}</div>
+          </div>
+          <div class="r-thanks">Thank you — get well soon.</div>
+        </div>
+      </div>`;
+
+    if (missing.length) {
+      UI.warn(`Bill printed, but ${missing.join(', ')} ${missing.length > 1 ? 'are' : 'is'} not configured — ` +
+        'set them in the environment before issuing real tax invoices.');
+    }
+    UI.print(receiptStyles() + html, `Tax invoice ${sale.bill_no}`);
+  }
+
+  /** Expiry on a medicine label is month and year, never a day. */
+  function monthYear(dateStr) {
+    const d = new Date(dateStr + 'T00:00:00');
+    if (Number.isNaN(d.getTime())) return dateStr;
+    const m = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return `${m[d.getMonth()]} ${String(d.getFullYear()).slice(-2)}`;
+  }
+
+  /**
+   * 80 mm roll styling. Thermal heads print 72 mm of the 80 mm paper, have no
+   * colour and no greyscale worth the name, so everything is pure black on
+   * white with a monospace body — which also keeps the money columns aligned.
+   */
+  function receiptStyles() {
+    return `<style>
+      @page { size: 80mm auto; margin: 0; }
+      body { margin: 0; background: #fff; }
+      .receipt {
+        width: 72mm; margin: 0 auto; padding: 3mm 2mm 6mm;
+        font-family: "DejaVu Sans Mono", "Courier New", monospace;
+        font-size: 10px; line-height: 1.35; color: #000; -webkit-print-color-adjust: exact;
+      }
+      .receipt table { width: 100%; border-collapse: collapse; }
+      .receipt td, .receipt th { padding: 0; vertical-align: top; font-weight: normal; }
+      .r-l { text-align: left; }
+      .r-r { text-align: right; white-space: nowrap; }
+      .r-head { text-align: center; }
+      .r-logo { display: block; width: 22mm; height: auto; margin: 0 auto 1mm; }
+      .r-name { font-size: 13px; font-weight: 700; letter-spacing: .5px; }
+      .r-tag { font-size: 8.5px; letter-spacing: .8px; text-transform: uppercase; margin-bottom: 1mm; }
+      .r-line { font-size: 9px; }
+      .r-title {
+        margin: 1.5mm 0 0; padding: 0.7mm 0; font-size: 11px; font-weight: 700; letter-spacing: 2px;
+        border-top: 1px solid #000; border-bottom: 1px solid #000;
+      }
+      .r-rule { border-top: 1px dashed #000; margin: 1.5mm 0; }
+      .r-meta td { font-size: 9px; }
+      .r-items thead th { font-size: 9px; border-bottom: 1px solid #000; padding-bottom: .5mm; }
+      .r-items .r-item td { padding-top: 1mm; }
+      .r-items .r-sub td { font-size: 8.5px; }
+      .r-tot td { font-size: 10px; padding: .2mm 0; }
+      .r-grand td { font-size: 12px; font-weight: 700; border-top: 1px solid #000;
+        border-bottom: 1px solid #000; padding: .8mm 0; }
+      .r-note { font-size: 8.5px; padding-top: 1mm; }
+      .r-words { margin-top: 1mm; font-size: 9px; font-style: italic; }
+      .r-sub2 { font-size: 9px; font-weight: 700; margin-bottom: .5mm; }
+      .r-hsn th, .r-hsn td { font-size: 8.5px; }
+      .r-hsn thead th { border-bottom: 1px solid #000; }
+      .r-foot { font-size: 8.5px; text-align: center; }
+      .r-foot > div { margin-top: 1mm; }
+      .r-sign { margin-top: 4mm; text-align: right; }
+      .r-sign > div:first-child { border-top: 1px solid #000; display: inline-block; padding-top: .5mm; }
+      .r-thanks { margin-top: 2mm; font-size: 9.5px; font-weight: 700; }
+      @media screen {
+        body { background: #eef1f3; padding: 12px 0; }
+        .receipt { background: #fff; box-shadow: 0 2px 12px rgba(0,0,0,.18); }
+      }
+    </style>`;
   }
 
   function openReceive() {

@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" role="img" aria-label="Samiha Pharmaceuticals">
+  <title>Samiha Pharmaceuticals — Caring Beyond Medicine</title>
+
+  <!-- Open arcs, teal above and crimson below, as on the printed mark -->
+  <path d="M19.2 70.6 A86 86 0 0 1 180.8 70.6" fill="none" stroke="#176B7C"
+        stroke-width="9" stroke-linecap="round"/>
+  <path d="M180.8 129.4 A86 86 0 0 1 19.2 129.4" fill="none" stroke="#9E1B34"
+        stroke-width="9" stroke-linecap="round"/>
+
+  <!-- Medical cross -->
+  <g fill="#176B7C">
+    <rect x="70" y="26" width="44" height="124" rx="11"/>
+    <rect x="40" y="62" width="104" height="44" rx="11"/>
+  </g>
+
+  <!-- Capsule laid diagonally across the cross: teal half, crimson half -->
+  <g transform="translate(52.8 107) rotate(-40)">
+    <path d="M24 0 H52 V48 H24 A24 24 0 0 1 24 0 Z" fill="#176B7C"/>
+    <path d="M52 0 H80 A24 24 0 0 1 80 48 H52 Z" fill="#9E1B34"/>
+    <rect x="0" y="0" width="104" height="48" rx="24" fill="none" stroke="#fff" stroke-width="6"/>
+    <line x1="52" y1="0" x2="52" y2="48" stroke="#fff" stroke-width="6"/>
+  </g>
+
+  <!-- Leaves: caring, beyond the medicine -->
+  <g>
+    <path d="M40 156 C40 130 64 120 88 124 C86 150 64 162 40 156 Z" fill="#5BA829"/>
+    <path d="M74 162 C74 143 92 134 110 138 C108 157 92 166 74 162 Z" fill="#7CC142"/>
+    <path d="M44 154 C60 146 76 138 86 126" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"/>
+  </g>
+
+  <!-- ECG trace running out to the right -->
+  <path d="M146 92 H160 L167 70 L176 116 L184 92 H193"
+        fill="none" stroke="#9E1B34" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="193" cy="92" r="6.5" fill="#9E1B34"/>
+</svg>

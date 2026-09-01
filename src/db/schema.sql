@@ -1125,3 +1125,41 @@ CREATE TABLE IF NOT EXISTS stock_take_items (
   variance     REAL NOT NULL,
   reason       TEXT
 );
+
+-- ------------------------------------------------- doctor visiting hours
+-- Our consultants sit for two or three hours, on days the admin fixes rather
+-- than a standing weekly rota. A row here is one visiting window on one date,
+-- and any window on a date REPLACES the weekly `doctor_schedules` pattern for
+-- that date — so the appointment screen offers exactly what admin entered.
+CREATE TABLE IF NOT EXISTS doctor_availability (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  doctor_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  avail_date   TEXT NOT NULL,               -- 'YYYY-MM-DD'
+  start_time   TEXT NOT NULL,               -- 'HH:MM'
+  end_time     TEXT NOT NULL,
+  slot_minutes INTEGER NOT NULL DEFAULT 15,
+  max_tokens   INTEGER NOT NULL DEFAULT 0,  -- 0 = as many as the window holds
+  note         TEXT,
+  created_by   INTEGER REFERENCES users(id),
+  created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (doctor_id, avail_date, start_time)
+);
+CREATE INDEX IF NOT EXISTS idx_avail_doctor_date ON doctor_availability(doctor_id, avail_date);
+
+-- --------------------------------------------------- staff (in-app) alerts
+-- What the doctor sees on their phone the moment the front desk books someone
+-- into their clinic. The WhatsApp copy goes out through `notifications`; this
+-- table is the bell inside the ERP, and it is per staff member, not per patient.
+CREATE TABLE IF NOT EXISTS staff_notifications (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind       TEXT NOT NULL,                 -- appointment_booked, appointment_cancelled ...
+  title      TEXT NOT NULL,
+  body       TEXT,
+  route      TEXT,                          -- where the bell should take them
+  ref_type   TEXT,
+  ref_id     INTEGER,
+  read_at    TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_staff_notif ON staff_notifications(user_id, read_at, id);

@@ -2,7 +2,88 @@
 const { db } = require('../db');
 const { conflict, badRequest } = require('../lib/http');
 
+const config = require('../config');
+
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+/**
+ * GST on a medicine line.
+ *
+ * The MRP printed on a pack is the most a patient may legally be charged and
+ * it already contains the tax, so GST is *extracted* out of it rather than
+ * added on top:
+ *
+ *     taxable = MRP × qty × 100 / (100 + rate)
+ *     tax     = MRP × qty − taxable
+ *
+ * A sale inside the state carries CGST and SGST at half the rate each; the
+ * clinic's own state is the place of supply for anyone walking up to the
+ * counter. Set MRP_INCLUDES_GST=false only if a supplier's prices are quoted
+ * before tax.
+ */
+function gstOnLine({ mrp, qty, taxPct }) {
+  const rate = Number(taxPct) || 0;
+  const lineTotal = round2((Number(mrp) || 0) * (Number(qty) || 0));
+  const taxable = config.pharmacy.mrpIncludesGst
+    ? round2((lineTotal * 100) / (100 + rate))
+    : lineTotal;
+  const tax = round2((config.pharmacy.mrpIncludesGst ? lineTotal : lineTotal * (1 + rate / 100)) - taxable);
+  return {
+    rate,
+    lineTotal: round2(taxable + tax),
+    taxable,
+    tax,
+    cgst: round2(tax / 2),
+    sgst: round2(tax - round2(tax / 2)),   // the odd paisa stays with SGST
+  };
+}
+
+/** Rate-wise HSN summary — the table a GST invoice has to carry. */
+function gstSummary(items) {
+  const byRate = new Map();
+  for (const it of items) {
+    const rate = Number(it.tax_pct) || 0;
+    const line = gstOnLine({ mrp: it.mrp, qty: it.qty, taxPct: rate });
+    const key = `${rate}|${it.hsn || ''}`;
+    const row = byRate.get(key) || { rate, hsn: it.hsn || '', taxable: 0, cgst: 0, sgst: 0, tax: 0 };
+    row.taxable = round2(row.taxable + line.taxable);
+    row.cgst = round2(row.cgst + line.cgst);
+    row.sgst = round2(row.sgst + line.sgst);
+    row.tax = round2(row.tax + line.tax);
+    byRate.set(key, row);
+  }
+  return [...byRate.values()].sort((a, b) => a.rate - b.rate);
+}
+
+/** ₹ in words, as a tax invoice must state the total. */
+function amountInWords(amount) {
+  const ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten',
+    'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
+  const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+
+  const twoDigit = (n) => n < 20 ? ones[n] : `${tens[Math.floor(n / 10)]}${n % 10 ? ' ' + ones[n % 10] : ''}`;
+  const threeDigit = (n) => (n >= 100 ? `${ones[Math.floor(n / 100)]} Hundred${n % 100 ? ' ' : ''}` : '') +
+    (n % 100 ? twoDigit(n % 100) : '');
+
+  const whole = Math.floor(Math.abs(round2(amount)));
+  const paise = Math.round((Math.abs(round2(amount)) - whole) * 100);
+  if (whole === 0 && paise === 0) return 'Zero Rupees Only';
+
+  // Indian grouping: crore, lakh, thousand, hundred.
+  const parts = [];
+  const units = [[10000000, 'Crore'], [100000, 'Lakh'], [1000, 'Thousand']];
+  let left = whole;
+  for (const [value, label] of units) {
+    if (left >= value) {
+      parts.push(`${threeDigit(Math.floor(left / value))} ${label}`);
+      left %= value;
+    }
+  }
+  if (left) parts.push(threeDigit(left));
+
+  const rupees = parts.join(' ').replace(/\s+/g, ' ').trim();
+  return `${rupees ? rupees + ' Rupees' : ''}${paise ? `${rupees ? ' and ' : ''}${twoDigit(paise)} Paise` : ''} Only`.trim();
+}
 
 /** Batches with stock, oldest expiry first (FEFO — first expiry, first out). */
 function availableBatches(drugId) {
@@ -141,4 +222,5 @@ function assertPositive(qty, label) {
 module.exports = {
   round2, availableBatches, stockOnHand, writeLedger, receiveStock,
   allocate, consume, lowStock, expiringSoon, safetyCheck, assertPositive,
+  gstOnLine, gstSummary, amountInWords,
 };

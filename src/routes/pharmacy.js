@@ -9,6 +9,7 @@ const pharmacy = require('../services/pharmacy');
 const billing = require('../services/billing');
 const whatsapp = require('../services/whatsapp');
 const audit = require('../lib/audit');
+const config = require('../config');
 
 const router = express.Router();
 const rxRoles = requireRole('pharmacy', 'doctor', 'nurse', 'reception', 'cashier');
@@ -171,18 +172,18 @@ router.post('/dispense', requireRole('pharmacy'), wrap((req, res) => {
 
       for (const pick of pharmacy.allocate(drugId, qty)) {
         const unitPrice = pick.batch.mrp || drug.mrp;
-        const lineGross = unitPrice * pick.qty;
-        const lineTax = lineGross * ((drug.tax_pct || 0) / 100);
-        gross += lineGross;
-        tax += lineTax;
+        const g = pharmacy.gstOnLine({ mrp: unitPrice, qty: pick.qty, taxPct: drug.tax_pct });
+        gross += g.taxable;
+        tax += g.tax;
 
         db.prepare(
           `INSERT INTO pharmacy_sale_items (sale_id, prescription_id, drug_id, batch_id, drug_name,
-                                            batch_no, expiry_date, qty, mrp, tax_pct, amount)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                                            batch_no, expiry_date, qty, mrp, tax_pct, amount,
+                                            hsn, taxable, cgst, sgst)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         ).run(saleId, int(it.prescriptionId) || null, drugId, pick.batch.id, drug.name,
               pick.batch.batch_no, pick.batch.expiry_date, pick.qty, unitPrice, drug.tax_pct,
-              pharmacy.round2(lineGross + lineTax));
+              g.lineTotal, drug.hsn, g.taxable, g.cgst, g.sgst);
 
         pharmacy.consume(pick.batch.id, pick.qty);
         pharmacy.writeLedger({
@@ -203,6 +204,8 @@ router.post('/dispense', requireRole('pharmacy'), wrap((req, res) => {
     }
 
     const discount = num(req.body.discount, 0);
+    // Dispensed medicines go onto the visit invoice, which is settled to the
+    // paisa at the cashier — so no rupee rounding here.
     const net = pharmacy.round2(gross + tax - discount);
     db.prepare('UPDATE pharmacy_sales SET gross = ?, discount = ?, tax = ?, net = ? WHERE id = ?')
       .run(pharmacy.round2(gross), discount, pharmacy.round2(tax), net, saleId);
@@ -294,17 +297,17 @@ router.post('/counter-sale', requireRole('pharmacy'), wrap((req, res) => {
 
       for (const pick of pharmacy.allocate(drugId, qty)) {
         const unitPrice = pick.batch.mrp || drug.mrp;
-        const lineGross = unitPrice * pick.qty;
-        const lineTax = lineGross * ((drug.tax_pct || 0) / 100);
-        gross += lineGross;
-        tax += lineTax;
+        // MRP already contains the GST, so it is extracted, never added on top.
+        const g = pharmacy.gstOnLine({ mrp: unitPrice, qty: pick.qty, taxPct: drug.tax_pct });
+        gross += g.taxable;
+        tax += g.tax;
 
         db.prepare(
           `INSERT INTO pharmacy_sale_items (sale_id, drug_id, batch_id, drug_name, batch_no,
-                                            expiry_date, qty, mrp, tax_pct, amount)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                                            expiry_date, qty, mrp, tax_pct, amount, hsn, taxable, cgst, sgst)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         ).run(saleId, drugId, pick.batch.id, drug.name, pick.batch.batch_no, pick.batch.expiry_date,
-              pick.qty, unitPrice, drug.tax_pct, pharmacy.round2(lineGross + lineTax));
+              pick.qty, unitPrice, drug.tax_pct, g.lineTotal, drug.hsn, g.taxable, g.cgst, g.sgst);
 
         pharmacy.consume(pick.batch.id, pick.qty);
         pharmacy.writeLedger({
@@ -316,16 +319,22 @@ router.post('/counter-sale', requireRole('pharmacy'), wrap((req, res) => {
     }
 
     const discount = money(req.body.discount, 0);
-    const net = pharmacy.round2(gross + tax - discount);
+    const payable = pharmacy.round2(gross + tax - discount);
+    // Thermal bills are settled in cash, so the total is rounded to the rupee
+    // and the adjustment is declared on the invoice rather than hidden.
+    const net = Math.round(payable);
+    const roundOff = pharmacy.round2(net - payable);
     const paid = req.body.paidAmount === undefined ? net : money(req.body.paidAmount);
     if (paid > net + 0.009) throw badRequest('Amount paid is more than the bill total.');
 
     db.prepare(
-      `UPDATE pharmacy_sales SET gross = ?, discount = ?, tax = ?, net = ?,
-              paid_amount = ?, payment_mode = ?, payment_reference = ?
+      `UPDATE pharmacy_sales SET gross = ?, discount = ?, tax = ?, net = ?, round_off = ?,
+              paid_amount = ?, payment_mode = ?, payment_reference = ?,
+              customer_gstin = ?, customer_address = ?
         WHERE id = ?`
-    ).run(pharmacy.round2(gross), discount, pharmacy.round2(tax), net,
-          paid, str(req.body.paymentMode, 'cash'), str(req.body.paymentReference), saleId);
+    ).run(pharmacy.round2(gross), discount, pharmacy.round2(tax), net, roundOff,
+          paid, str(req.body.paymentMode, 'cash'), str(req.body.paymentReference),
+          str(req.body.customerGstin), str(req.body.customerAddress), saleId);
 
     return { saleId, net, paid };
   })();
@@ -373,6 +382,83 @@ router.get('/sales/:id', rxRoles, wrap((req, res) => {
   if (!sale) throw notFound('Pharmacy bill not found');
   sale.items = db.prepare('SELECT * FROM pharmacy_sale_items WHERE sale_id = ? ORDER BY id').all(id);
   res.json(sale);
+}));
+
+/**
+ * Everything a GST tax invoice must carry, assembled server-side so the printed
+ * bill and the books can never drift apart. Rule 46 of the CGST Rules wants the
+ * supplier's name/address/GSTIN, a consecutive serial number and date, the
+ * recipient's details, HSN, taxable value, the rate-wise tax split, the total
+ * in words, the place of supply and whether reverse charge applies. A chemist
+ * additionally shows batch, expiry and the drug licence numbers.
+ */
+router.get('/sales/:id/invoice', rxRoles, wrap((req, res) => {
+  const id = int(req.params.id);
+  const sale = db.prepare(
+    `SELECT s.*, u.name AS billed_by,
+            p.uhid, p.address AS patient_address,
+            (p.first_name || ' ' || COALESCE(p.last_name,'')) AS patient_name,
+            p.phone AS patient_phone, v.visit_no, d.name AS doctor_name
+       FROM pharmacy_sales s
+       LEFT JOIN users u ON u.id = s.created_by
+       LEFT JOIN patients p ON p.id = s.patient_id
+       LEFT JOIN visits v ON v.id = s.visit_id
+       LEFT JOIN users d ON d.id = v.doctor_id
+      WHERE s.id = ?`
+  ).get(id);
+  if (!sale) throw notFound('Pharmacy bill not found');
+
+  const items = db.prepare(
+    `SELECT i.*, dr.generic_name, dr.form, dr.strength, dr.manufacturer, dr.schedule_type,
+            COALESCE(i.hsn, dr.hsn, '3004') AS hsn_code   -- medicaments, if none is set
+       FROM pharmacy_sale_items i LEFT JOIN drugs dr ON dr.id = i.drug_id
+      WHERE i.sale_id = ? ORDER BY i.id`
+  ).all(id);
+
+  // Older bills predate the stored split; derive it so they still print.
+  for (const it of items) {
+    if (!it.taxable) {
+      const g = pharmacy.gstOnLine({ mrp: it.mrp, qty: it.qty, taxPct: it.tax_pct });
+      Object.assign(it, { taxable: g.taxable, cgst: g.cgst, sgst: g.sgst });
+    }
+    it.tax = pharmacy.round2(it.cgst + it.sgst);
+  }
+
+  const summary = items.reduce((a, i) => ({
+    taxable: pharmacy.round2(a.taxable + i.taxable),
+    cgst: pharmacy.round2(a.cgst + i.cgst),
+    sgst: pharmacy.round2(a.sgst + i.sgst),
+    mrpTotal: pharmacy.round2(a.mrpTotal + i.mrp * i.qty),
+    qty: pharmacy.round2(a.qty + i.qty),
+  }), { taxable: 0, cgst: 0, sgst: 0, mrpTotal: 0, qty: 0 });
+
+  // Rate-wise HSN table, from what was actually charged.
+  const byRate = new Map();
+  for (const i of items) {
+    const key = `${i.tax_pct}|${i.hsn_code || ''}`;
+    const row = byRate.get(key) || { rate: i.tax_pct, hsn: i.hsn_code || '3004', taxable: 0, cgst: 0, sgst: 0 };
+    row.taxable = pharmacy.round2(row.taxable + i.taxable);
+    row.cgst = pharmacy.round2(row.cgst + i.cgst);
+    row.sgst = pharmacy.round2(row.sgst + i.sgst);
+    byRate.set(key, row);
+  }
+
+  res.json({
+    supplier: {
+      ...config.pharmacy,
+      state: config.clinic.state,
+      stateCode: config.clinic.stateCode,
+      clinicName: config.clinic.name,
+    },
+    sale,
+    items,
+    summary,
+    hsnSummary: [...byRate.values()].sort((a, b) => a.rate - b.rate),
+    amountInWords: pharmacy.amountInWords(sale.net),
+    placeOfSupply: `${config.clinic.state} (${config.clinic.stateCode})`,
+    reverseCharge: 'No',
+    currencySymbol: config.clinic.currencySymbol,
+  });
 }));
 
 module.exports = router;

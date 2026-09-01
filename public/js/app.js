@@ -12,6 +12,7 @@
     ]},
     { group: 'Clinical', items: [
       { id: 'vitals',      label: 'Vitals Station',   icon: '♥', roles: ['admin','nurse','doctor'] },
+      { id: 'myclinic',    label: 'My Clinic',        icon: '⌚', roles: ['admin','doctor'] },
       { id: 'consult',     label: 'Consultation',     icon: '✚', roles: ['admin','doctor'] },
       { id: 'financial',   label: 'Financial Screening', icon: '⚖', roles: ['admin','counselor','reception','cashier'] },
       { id: 'lab',         label: 'Diagnostics',      icon: '⚗', roles: ['admin','lab','doctor','nurse','reception','cashier'] },
@@ -301,20 +302,111 @@
         </aside>
         <div class="main">
           <header class="topbar">
+            <button class="nav-toggle" id="nav-toggle" aria-label="Menu" aria-expanded="false">☰</button>
             <div class="titles">
               <h1 id="page-title">Dashboard</h1>
               <div class="sub" id="page-sub"></div>
             </div>
             <div class="spacer"></div>
             <div id="page-actions" class="btn-row"></div>
+            <button class="bell" id="bell" title="Alerts" aria-label="Alerts">
+              <span class="ico">🔔</span><span class="dot" id="bell-count" hidden></span>
+            </button>
           </header>
           <div class="content" id="view"><div class="loading"><span class="spinner"></span></div></div>
         </div>
-      </div>`;
+      </div>
+      <div class="nav-backdrop" id="nav-backdrop"></div>`;
 
     renderNav();
     document.getElementById('logout').addEventListener('click', APP.logout);
     document.getElementById('my-account').addEventListener('click', () => APP.navigate('account'));
+    document.getElementById('bell').addEventListener('click', openAlerts);
+    startAlertPolling();
+
+    // On a phone the navigation is a drawer; on a desktop the button is hidden
+    // and this never fires.
+    const toggle = document.getElementById('nav-toggle');
+    const setDrawer = (open) => {
+      document.body.classList.toggle('nav-open', open);
+      toggle.setAttribute('aria-expanded', String(open));
+    };
+    toggle.addEventListener('click', () => setDrawer(!document.body.classList.contains('nav-open')));
+    document.getElementById('nav-backdrop').addEventListener('click', () => setDrawer(false));
+    // Choosing a destination is the end of navigating, so the drawer closes.
+    document.getElementById('nav').addEventListener('click', (e) => {
+      if (e.target.closest('a')) setDrawer(false);
+    });
+    window.addEventListener('hashchange', () => setDrawer(false));
+  }
+
+  // ----------------------------------------------------------------- alerts
+  /**
+   * The bell. A doctor who is not at the clinic still needs to know that the
+   * front desk has just booked someone into their list, so the badge polls
+   * quietly and the panel is one tap from anywhere in the ERP.
+   */
+  let alertTimer = null;
+
+  function startAlertPolling() {
+    clearInterval(alertTimer);
+    refreshAlertCount();
+    alertTimer = setInterval(refreshAlertCount, 60000);
+    // Coming back to the tab is the moment people look, so refresh then too.
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) refreshAlertCount();
+    });
+  }
+
+  async function refreshAlertCount() {
+    if (!APP.user) return;
+    try {
+      const { unread } = await API.get('/api/me/notifications/count');
+      const dot = document.getElementById('bell-count');
+      if (!dot) return;
+      dot.textContent = unread > 99 ? '99+' : String(unread);
+      dot.hidden = !unread;
+      document.getElementById('bell').classList.toggle('has-unread', !!unread);
+    } catch { /* a failed poll is not worth a toast */ }
+  }
+  APP.refreshAlerts = refreshAlertCount;
+
+  async function openAlerts() {
+    const data = await API.get('/api/me/notifications?limit=30');
+    const body = data.rows.length ? data.rows.map((n) => `
+      <button type="button" class="alert-row${n.read_at ? '' : ' unread'}" data-alert="${n.id}"
+              data-route="${UI.esc(n.route || '')}">
+        <span class="alert-text">
+          <b>${UI.esc(n.title)}</b>
+          <span class="muted small">${UI.esc(n.body || '')}</span>
+          <span class="muted small">${UI.esc(UI.dateTime(n.created_at))}</span>
+        </span>
+        ${n.read_at ? '' : '<span class="unread-dot" aria-label="unread"></span>'}
+      </button>`).join('')
+      : UI.empty('Nothing has come in yet. Bookings made for you will appear here.', '🔔');
+
+    UI.modal({
+      title: 'Alerts',
+      size: 'narrow',
+      body: `<div class="alert-list">${body}</div>`,
+      footer: `${data.unread ? '<button class="btn ghost" data-act="all">Mark all read</button>' : ''}
+               <button class="btn" data-act="__close">Close</button>`,
+      onMount(modal) {
+        modal.querySelectorAll('[data-alert]').forEach((b) => b.addEventListener('click', async () => {
+          await API.post(`/api/me/notifications/${b.dataset.alert}/read`, {});
+          refreshAlertCount();
+          const route = b.dataset.route;
+          UI.closeAllModals();
+          if (route) window.location.hash = route.replace(/^#/, '#');
+        }));
+      },
+      async onAction(act) {
+        if (act !== 'all') return;
+        await API.post('/api/me/notifications/read-all', {});
+        refreshAlertCount();
+        UI.ok('All alerts marked read.');
+      },
+    });
   }
 
   function renderNav() {

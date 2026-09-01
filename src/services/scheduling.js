@@ -22,11 +22,33 @@ function isOnLeave(doctorId, dateStr) {
   return !!db.prepare('SELECT 1 FROM doctor_leaves WHERE doctor_id = ? AND leave_date = ?').get(doctorId, dateStr);
 }
 
+/**
+ * The visiting windows a doctor actually sits for on a date.
+ *
+ * Admin fixing hours for a specific date is the stronger statement — our
+ * consultants come in for two or three hours on days that are agreed, not on a
+ * standing rota — so any `doctor_availability` row for the date REPLACES the
+ * weekly pattern. With none, the weekly `doctor_schedules` rota applies.
+ */
 function sessionsFor(doctorId, dateStr) {
+  const fixed = db.prepare(
+    `SELECT id, start_time, end_time, slot_minutes, max_tokens, note, 'fixed' AS origin
+       FROM doctor_availability WHERE doctor_id = ? AND avail_date = ? ORDER BY start_time`
+  ).all(doctorId, dateStr);
+  if (fixed.length) return fixed;
+
   const weekday = parseDateKey(dateStr).getDay();
   return db.prepare(
-    'SELECT * FROM doctor_schedules WHERE doctor_id = ? AND weekday = ? AND active = 1 ORDER BY start_time'
+    `SELECT id, start_time, end_time, slot_minutes, max_tokens, NULL AS note, 'weekly' AS origin
+       FROM doctor_schedules WHERE doctor_id = ? AND weekday = ? AND active = 1 ORDER BY start_time`
   ).all(doctorId, weekday);
+}
+
+/** The visiting hours to show a patient, e.g. "6:00 PM – 8:00 PM". */
+function windowLabel(doctorId, dateStr) {
+  const sessions = sessionsFor(doctorId, dateStr);
+  if (!sessions.length) return null;
+  return sessions.map((s) => `${to12h(s.start_time)} – ${to12h(s.end_time)}`).join(', ');
 }
 
 function bookedAt(doctorId, dateStr) {
@@ -52,12 +74,17 @@ function availableSlots(doctorId, dateStr) {
   const slots = [];
   for (const s of sessionsFor(doctorId, dateStr)) {
     const step = s.slot_minutes || 15;
+    // `max_tokens` caps how many patients the doctor will see in this window,
+    // counting the ones already booked — 0 means "as many as the window holds".
+    const cap = s.max_tokens > 0 ? s.max_tokens : Infinity;
+    let placed = 0;
     for (let t = toMinutes(s.start_time); t + step <= toMinutes(s.end_time); t += step) {
+      if (placed >= cap) break;
       const hhmm = toHHMM(t);
+      placed += 1;                       // the slot exists whether or not it is free
       if (taken.has(hhmm)) continue;
       if (isToday && t <= nowMins + 5) continue;
       slots.push(hhmm);
-      if (slots.length >= s.max_tokens * 4) break;
     }
   }
   return slots;
@@ -71,7 +98,9 @@ function nextAvailableDates(doctorId, count = 5, horizonDays = 30) {
     const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i);
     const key = dateKey(d);
     const slots = availableSlots(doctorId, key);
-    if (slots.length) out.push({ date: key, label: humanDate(key), slots: slots.length });
+    if (slots.length) {
+      out.push({ date: key, label: humanDate(key), slots: slots.length, hours: windowLabel(doctorId, key) });
+    }
   }
   return out;
 }
@@ -242,5 +271,5 @@ function nearestSlots(doctorId, dateStr, wanted, count = 4) {
 module.exports = {
   dateKey, parseDateKey, availableSlots, nextAvailableDates, humanDate,
   humanDateTime, to12h, nextToken, isSlotFree, sessionsFor, isOnLeave,
-  parseDate, parseTime, nearestSlots,
+  parseDate, parseTime, nearestSlots, windowLabel,
 };

@@ -46,6 +46,32 @@ module.exports = {
     whatsappNumber: env.CLINIC_WHATSAPP_NUMBER || env.CLINIC_PHONE || '+91 72007 50420',
     currency: env.CURRENCY || 'INR',
     currencySymbol: env.CURRENCY_SYMBOL || '₹',
+    state: env.CLINIC_STATE || 'Tamil Nadu',
+    stateCode: env.CLINIC_STATE_CODE || '33',
+  },
+
+  /**
+   * The pharmacy bills in its own name, under its own GSTIN and drug licences,
+   * because a retail chemist is a separate registration from the clinic.
+   *
+   * `mrpIncludesGst` is true because in India the MRP printed on a pack is the
+   * maximum a patient may be charged, GST included. Tax is therefore extracted
+   * out of the MRP, never added on top — adding it would sell above MRP, which
+   * is an offence under the Legal Metrology rules.
+   */
+  pharmacy: {
+    name: env.PHARMACY_NAME || 'SAMIHA PHARMACEUTICALS',
+    tagline: env.PHARMACY_TAGLINE || 'Caring Beyond Medicine',
+    address: env.PHARMACY_ADDRESS || env.CLINIC_ADDRESS || 'Main Road, Your City',
+    phone: env.PHARMACY_PHONE || env.CLINIC_PHONE || '+91 72007 50420',
+    gstin: env.PHARMACY_GSTIN || env.CLINIC_GSTIN || '',
+    dlNumbers: env.PHARMACY_DL_NUMBERS || '',      // e.g. "TN/CHN/20B/1234, TN/CHN/21B/1234"
+    fssai: env.PHARMACY_FSSAI || '',
+    pharmacistName: env.PHARMACIST_NAME || '',
+    pharmacistRegNo: env.PHARMACIST_REG_NO || '',
+    mrpIncludesGst: String(env.MRP_INCLUDES_GST || 'true').toLowerCase() !== 'false',
+    // 80 mm roll: 72 mm of it is printable on most thermal heads.
+    receiptWidthMm: Number(env.RECEIPT_WIDTH_MM || 72),
   },
   appUrl: (env.APP_URL || `http://localhost:${Number(env.PORT || 3000)}`).replace(/\/$/, ''),
   autoSeed: String(env.AUTO_SEED || 'true').toLowerCase() !== 'false',

@@ -61,35 +61,37 @@ const staff = [
 for (const s of staff) upsert('users', 'staff_code', { ...s, password_hash: hashPassword('samiha@123') });
 
 const doctors = [
-  { staff_code: 'DOC01', name: 'Dr. Imran Sheikh', email: 'imran@samiha.local', dept: 'IM',
+  { staff_code: 'DOC01', phone: '919840110001', name: 'Dr. Imran Sheikh', email: 'imran@samiha.local', dept: 'IM',
     qualification: 'MBBS, MD (General Medicine)', specialization: 'Diabetes, hypertension & thyroid',
     reg_no: 'TN/45231', consult_fee: 500, follow_up_fee: 300, slot_minutes: 15, room_no: 'OPD-1' },
-  { staff_code: 'DOC02', name: 'Dr. Sara Ahmed', email: 'sara@samiha.local', dept: 'PED',
+  { staff_code: 'DOC02', phone: '919840110002', name: 'Dr. Sara Ahmed', email: 'sara@samiha.local', dept: 'PED',
     qualification: 'MBBS, DCH', specialization: 'Neonatal & child health',
     reg_no: 'TN/51122', consult_fee: 450, follow_up_fee: 250, slot_minutes: 15, room_no: 'OPD-2' },
-  { staff_code: 'DOC03', name: 'Dr. Nafisa Rahman', email: 'nafisa@samiha.local', dept: 'GYN',
+  { staff_code: 'DOC03', phone: '919840110003', name: 'Dr. Nafisa Rahman', email: 'nafisa@samiha.local', dept: 'GYN',
     qualification: 'MBBS, MS (OBG)', specialization: 'High-risk pregnancy & infertility',
     reg_no: 'TN/48890', consult_fee: 600, follow_up_fee: 350, slot_minutes: 20, room_no: 'OPD-3' },
-  { staff_code: 'DOC06', name: 'Dr. Arif Hussain', email: 'arif@samiha.local', dept: 'CAR',
+  { staff_code: 'DOC06', phone: '919840110006', name: 'Dr. Arif Hussain', email: 'arif@samiha.local', dept: 'CAR',
     qualification: 'MBBS, MD, DM (Cardiology)', specialization: 'Interventional cardiology & echo',
     reg_no: 'TN/53412', consult_fee: 800, follow_up_fee: 450, slot_minutes: 20, room_no: 'OPD-6' },
-  { staff_code: 'DOC07', name: 'Dr. Neha Kulkarni', email: 'neha@samiha.local', dept: 'DEN',
+  { staff_code: 'DOC07', phone: '919840110007', name: 'Dr. Neha Kulkarni', email: 'neha@samiha.local', dept: 'DEN',
     qualification: 'BDS, MDS', specialization: 'Conservative dentistry & endodontics',
     reg_no: 'TN/DEN/2201', consult_fee: 400, follow_up_fee: 250, slot_minutes: 30, room_no: 'DENTAL-1' },
-  { staff_code: 'DOC05', name: 'Dr. Priya Menon', email: 'priya@samiha.local', dept: 'DER',
+  { staff_code: 'DOC05', phone: '919840110005', name: 'Dr. Priya Menon', email: 'priya@samiha.local', dept: 'DER',
     qualification: 'MBBS, MD (Dermatology)', specialization: 'Clinical & cosmetic dermatology',
     reg_no: 'TN/49775', consult_fee: 550, follow_up_fee: 300, slot_minutes: 15, room_no: 'OPD-5' },
-  { staff_code: 'DOC04', name: 'Dr. Vikram Rao', email: 'vikram@samiha.local', dept: 'ORT',
+  { staff_code: 'DOC04', phone: '919840110004', name: 'Dr. Vikram Rao', email: 'vikram@samiha.local', dept: 'ORT',
     qualification: 'MBBS, MS (Ortho)', specialization: 'Joint replacement & spine',
     reg_no: 'TN/52310', consult_fee: 600, follow_up_fee: 350, slot_minutes: 20, room_no: 'OPD-4' },
 ];
 
 for (const d of doctors) {
   const id = upsert('users', 'staff_code', {
-    staff_code: d.staff_code, name: d.name, email: d.email, role: 'doctor',
+    staff_code: d.staff_code, name: d.name, email: d.email, phone: d.phone, role: 'doctor',
     department_id: deptId[d.dept], password_hash: hashPassword('samiha@123'),
   });
-  db.prepare('UPDATE users SET department_id = ?, name = ? WHERE id = ?').run(deptId[d.dept], d.name, id);
+  // The mobile is what a booking alert reaches them on, so keep it current.
+  db.prepare('UPDATE users SET department_id = ?, name = ?, phone = COALESCE(phone, ?) WHERE id = ?')
+    .run(deptId[d.dept], d.name, d.phone, id);
   if (!db.prepare('SELECT 1 FROM doctor_profiles WHERE user_id = ?').get(id)) {
     db.prepare(
       `INSERT INTO doctor_profiles (user_id, qualification, specialization, reg_no, consult_fee,

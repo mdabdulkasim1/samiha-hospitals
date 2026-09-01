@@ -49,6 +49,7 @@ app.use('/api/whatsapp', require('./routes/whatsapp'));
 app.use('/api/auth', require('./routes/auth'));
 
 app.use('/api', auth.requireAuth);
+app.use('/api/me', require('./routes/me'));
 app.use('/api/masters', require('./routes/masters'));
 app.use('/api/patients', require('./routes/patients'));
 app.use('/api/enquiries', require('./routes/enquiries'));

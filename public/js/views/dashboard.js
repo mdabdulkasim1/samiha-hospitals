@@ -146,7 +146,11 @@ APP.register('dashboard', {
     try {
       const board = await API.get('/api/visits/board');
       const active = board.rows.filter((r) => r.status !== 'checked_out');
-      document.getElementById('mini-queue').innerHTML = active.length
+      // The user may have navigated on while this was in flight, in which case
+      // the host is gone and there is nothing left to draw into.
+      const queueHost = document.getElementById('mini-queue');
+      if (!queueHost) return;
+      queueHost.innerHTML = active.length
         ? UI.table([
             { label: 'Token', render: (r) => `<span class="badge crimson">${UI.esc(r.token_no || '—')}</span>` },
             { label: 'Patient', render: (r) => `<b>${UI.esc(r.patient_name)}</b><div class="muted small">${UI.esc(r.uhid)}</div>` },
@@ -156,7 +160,8 @@ APP.register('dashboard', {
           ], active.slice(0, 8))
         : UI.empty('No patients in the clinic right now.', '🌤');
     } catch (err) {
-      document.getElementById('mini-queue').innerHTML = `<div class="alert warn">${UI.esc(err.message)}</div>`;
+      const host = document.getElementById('mini-queue');
+      if (host) host.innerHTML = `<div class="alert warn">${UI.esc(err.message)}</div>`;
     }
   },
 });

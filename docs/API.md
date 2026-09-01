@@ -125,6 +125,13 @@ status: `400` invalid input · `401` not signed in · `403` wrong role · `404` 
 | GET | `/stock/register` · `/stock/register/:drugId/movements` | counter roles |
 | GET/POST | `/stock/takes` · GET `/stock/takes/:id` · `/stock/takes/new/sheet` | pharmacy (read: counter roles) |
 | POST | `/stock/write-off-expired` | pharmacy |
+| GET | `/pharmacy/sales/:id/invoice` | any clinical / pharmacy |
+| GET/POST | `/masters/doctors/:id/availability` · DELETE `/masters/availability/:id` | read: any; write: admin, reception |
+| GET | `/appointments/my-day?date=&doctorId=` | the doctor themselves; desk roles for others |
+| GET | `/me/notifications` · `/me/notifications/count` | the signed-in user |
+| POST | `/me/notifications/:id/read` · `/me/notifications/read-all` | the signed-in user |
+| GET/PATCH | `/me/alert-settings` | the signed-in user |
+| POST | `/me/leave` · DELETE `/me/leave/:date` | doctors |
 
 ## Billing
 | Method | Path | Roles |

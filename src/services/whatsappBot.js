@@ -3,6 +3,7 @@ const { db } = require('../db');
 const config = require('../config');
 const { generate } = require('../lib/ids');
 const scheduling = require('./scheduling');
+const staffAlerts = require('./staffAlerts');
 const whatsapp = require('./whatsapp');
 
 /**
@@ -234,6 +235,13 @@ function commitBooking(waNumber, ctx) {
       .run(appt.lastInsertRowid, enq.lastInsertRowid);
     return { appointmentId: appt.lastInsertRowid };
   })();
+
+  // The doctor is told the same way whether the booking came from the front
+  // desk or from a patient's own WhatsApp.
+  staffAlerts.appointmentBooked(
+    db.prepare('SELECT * FROM appointments WHERE id = ?').get(result.appointmentId),
+    { patientName: ctx.patientName, bookedBy: 'WhatsApp' }
+  );
 
   // Reminder the evening before.
   const reminderDate = new Date(`${ctx.date}T${ctx.time}:00`);

@@ -221,6 +221,132 @@
     });
   }
 
+  /**
+   * Fixing when a doctor actually sits. One date, or the same window repeated
+   * across a range — "Tuesdays and Fridays, 6 to 8, for the next month" is one
+   * entry, not twelve.
+   */
+  function openAvailability(doctor, onDone) {
+    const today = UI.today();
+    const monthOut = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+
+    UI.modal({
+      title: `Visiting hours — ${doctor.name}`,
+      size: 'wide',
+      body: `
+        <div class="tabs" id="av-mode">
+          <button class="active" data-mode="single">One day</button>
+          <button data-mode="repeat">Repeat over a range</button>
+        </div>
+
+        <form id="av-form">
+          <div id="av-single">
+            ${UI.field({ name: 'date', label: 'Date', type: 'date', value: today, required: true })}
+          </div>
+
+          <div id="av-repeat" hidden>
+            <div class="grid c2">
+              ${UI.field({ name: 'from', label: 'From', type: 'date', value: today })}
+              ${UI.field({ name: 'to', label: 'To', type: 'date', value: monthOut })}
+            </div>
+            <label class="field"><span>Days of the week</span></label>
+            <div class="btn-row" id="av-days">
+              ${DAYS.map((d, i) => `<button type="button" class="btn ghost sm" data-wd="${i}">${d.slice(0, 3)}</button>`).join('')}
+            </div>
+            <div class="muted small">Pick none to fix every day in the range.</div>
+          </div>
+
+          <div class="grid c4 mt">
+            ${UI.field({ name: 'startTime', label: 'Starts at', type: 'time', value: '18:00', required: true })}
+            ${UI.field({ name: 'endTime', label: 'Ends at', type: 'time', value: '20:00', required: true })}
+            ${UI.field({ name: 'slotMinutes', label: 'Minutes per patient', type: 'number', min: 5, max: 120,
+              value: doctor.slot_minutes || 15 })}
+            ${UI.field({ name: 'maxTokens', label: 'Maximum patients', type: 'number', min: 0, value: 0,
+              hint: '0 = as many as the hours hold' })}
+          </div>
+          ${UI.field({ name: 'note', label: 'Note', placeholder: 'Evening OPD, camp day…' })}
+        </form>
+        <div id="av-preview" class="alert ok"></div>`,
+      footer: `<button class="btn ghost" data-act="__close">Cancel</button>
+               <button class="btn" data-act="save">Fix these hours</button>`,
+      onMount(modal) {
+        const weekdays = new Set();
+        let mode = 'single';
+
+        modal.querySelectorAll('#av-mode button').forEach((b) => b.addEventListener('click', () => {
+          mode = b.dataset.mode;
+          modal.querySelectorAll('#av-mode button').forEach((x) => x.classList.toggle('active', x === b));
+          modal.querySelector('#av-single').hidden = mode !== 'single';
+          modal.querySelector('#av-repeat').hidden = mode !== 'repeat';
+          modal.querySelector('[name=date]').required = mode === 'single';
+          preview();
+        }));
+
+        modal.querySelectorAll('#av-days [data-wd]').forEach((b) => b.addEventListener('click', () => {
+          const wd = Number(b.dataset.wd);
+          if (weekdays.has(wd)) weekdays.delete(wd); else weekdays.add(wd);
+          b.classList.toggle('teal', weekdays.has(wd));
+          preview();
+        }));
+
+        /** Say up front how many patients these hours will hold. */
+        const preview = () => {
+          const v = UI.formValues(modal.querySelector('#av-form'));
+          const mins = (t) => { const [h, m] = String(t || '').split(':').map(Number); return (h * 60) + (m || 0); };
+          const span = mins(v.endTime) - mins(v.startTime);
+          const step = Number(v.slotMinutes) || 15;
+          const host = modal.querySelector('#av-preview');
+          if (!(span > 0)) {
+            host.className = 'alert danger';
+            host.innerHTML = 'The end time must be after the start time.';
+            return;
+          }
+          let fits = Math.floor(span / step);
+          if (Number(v.maxTokens) > 0) fits = Math.min(fits, Number(v.maxTokens));
+          const hours = (span / 60).toFixed(span % 60 ? 1 : 0);
+          let days = 1;
+          if (mode === 'repeat' && v.from && v.to) {
+            days = 0;
+            for (let d = new Date(v.from + 'T00:00:00'); d <= new Date(v.to + 'T00:00:00'); d.setDate(d.getDate() + 1)) {
+              if (weekdays.size && !weekdays.has(d.getDay())) continue;
+              days += 1;
+            }
+          }
+          host.className = 'alert ok';
+          host.innerHTML = `<b>${hours} hour(s)</b> per day — room for <b>${fits}</b> patient(s) each day` +
+            (mode === 'repeat' ? ` across <b>${days}</b> day(s), <b>${fits * days}</b> appointments in all.` : '.');
+        };
+
+        modal.querySelectorAll('#av-form input, #av-form select')
+          .forEach((i) => i.addEventListener('input', preview));
+        preview();
+        modal.__avail = { getWeekdays: () => [...weekdays], getMode: () => mode };
+      },
+      async onAction(act, modal) {
+        if (act !== 'save') return;
+        const form = modal.querySelector('#av-form');
+        if (!form.reportValidity()) return 'keep';
+        const v = UI.formValues(form);
+        const { getWeekdays, getMode } = modal.__avail;
+
+        const payload = {
+          startTime: v.startTime, endTime: v.endTime,
+          slotMinutes: v.slotMinutes, maxTokens: v.maxTokens, note: v.note,
+        };
+        if (getMode() === 'single') payload.date = v.date;
+        else Object.assign(payload, { from: v.from, to: v.to, weekdays: getWeekdays() });
+
+        const res = await API.post(`/api/masters/doctors/${doctor.id}/availability`, payload);
+        UI.ok(`${res.added} visiting day(s) fixed.`);
+        if (res.skipped.length) {
+          UI.warn(`${res.skipped.length} day(s) skipped — hours already set: ` +
+            res.skipped.slice(0, 3).map((x) => x.date).join(', ') + (res.skipped.length > 3 ? '…' : ''));
+        }
+        if (onDone) onDone();
+      },
+    });
+  }
+
   function openDepartmentForm() {
     UI.modal({
       title: 'Add a department', size: 'narrow',
@@ -280,12 +406,26 @@
           </div>
 
           ${isDoctor ? `<div class="card">
-            <div class="card-head"><h3>OPD sessions</h3>
+            <div class="card-head"><h3>Visiting hours</h3>
+              <span class="muted small">Fixed dates — what the appointment screen actually offers</span>
+              <button class="btn sm" id="add-avail">+ Fix visiting hours</button></div>
+            <div class="card-body">
+              <p class="muted small">Our consultants sit for two or three hours on agreed days. A window set
+                here <b>replaces</b> the weekly rota below for that date, so the front desk and the WhatsApp
+                bot offer exactly these times and no more.</p>
+              <div id="avail-list">${UI.loading()}</div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h3>Weekly rota</h3>
+              <span class="muted small">Fallback for any date with no fixed hours</span>
               <button class="btn ghost sm" id="add-session">+ Add a session</button></div>
             <div class="card-body">
-              ${u.sessions.length ? '' : `<div class="alert warn">
-                <b>No sessions set.</b> Until you add one, this doctor has no bookable slots — they will not
-                appear as available on the appointment screen or in the WhatsApp booking flow.</div>`}
+              ${(u.sessions.length || (u.availability || []).length) ? '' : `<div class="alert warn">
+                <b>No hours set at all.</b> Until visiting hours are fixed above, or a weekly session is added
+                here, this doctor has no bookable slots — they will not appear as available on the appointment
+                screen or in the WhatsApp booking flow.</div>`}
               <div id="sess-list"></div>
             </div>
           </div>` : ''}
@@ -352,6 +492,44 @@
 
     drawSessions();
     drawLeave();
+
+    // ------------------------------------------------- fixed visiting hours
+    const drawAvailability = async () => {
+      const host = el.querySelector('#avail-list');
+      const { rows } = await API.get(`/api/masters/doctors/${u.id}/availability`);
+      if (!rows.length) {
+        host.innerHTML = UI.empty('No visiting hours fixed yet. Set the dates this doctor sits.', '🗓');
+        return;
+      }
+      host.innerHTML = UI.table([
+        { label: 'Date', render: (r) => `<b>${UI.esc(UI.date(r.avail_date))}</b>` +
+          `${r.on_leave ? ' ' + UI.badge('Blocked', 'danger') : ''}` +
+          `${r.note ? `<div class="muted small">${UI.esc(r.note)}</div>` : ''}` },
+        { label: 'Hours', render: (r) => `${UI.esc(UI.to12h(r.start_time))} – ${UI.esc(UI.to12h(r.end_time))}` +
+          `<div class="muted small">${UI.esc(r.slot_minutes)} min per patient</div>` },
+        { label: 'Holds', num: true, render: (r) => UI.num(r.capacity) },
+        { label: 'Booked', num: true, render: (r) => UI.num(r.booked) },
+        { label: 'Free', num: true, render: (r) => r.free
+          ? UI.num(r.free) : UI.badge('Full', 'warn') },
+        { label: '', render: (r) => `<button class="btn ghost sm" data-del-avail="${r.id}">Remove</button>` },
+      ], rows);
+
+      host.querySelectorAll('[data-del-avail]').forEach((b) => b.addEventListener('click', async () => {
+        if (!(await UI.confirm('Remove this visiting window? Nobody will be bookable in it.'))) return;
+        try {
+          await API.del(`/api/masters/availability/${b.dataset.delAvail}`);
+        } catch (err) {
+          if (!(await UI.confirm(`${err.message} Remove it anyway and leave those appointments in place?`,
+            { title: 'Patients are booked', danger: true }))) return;
+          await API.del(`/api/masters/availability/${b.dataset.delAvail}?force=1`);
+        }
+        UI.ok('Visiting window removed.');
+        drawAvailability();
+      }));
+    };
+    drawAvailability();
+
+    el.querySelector('#add-avail').addEventListener('click', () => openAvailability(u, drawAvailability));
 
     el.querySelector('#add-session').addEventListener('click', () => {
       UI.modal({

@@ -721,8 +721,10 @@
         const id = inp.dataset.count;
         if (inp.value === '') delete counts[id];
         else counts[id] = Number(inp.value);
-        drawSheet();
-        summarise();
+        // `change` fires while the input is losing focus, so redrawing the sheet
+        // synchronously would tear the node out from under the blur. Let the
+        // browser finish first.
+        setTimeout(() => { drawSheet(); summarise(); }, 0);
       }));
       body.querySelectorAll('[data-reason]').forEach((inp) => inp.addEventListener('input', () => {
         reasons[inp.dataset.reason] = inp.value;

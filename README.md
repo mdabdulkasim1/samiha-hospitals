@@ -145,7 +145,8 @@ documented exception exists. Check-out books the follow-up and issues an exit pa
 |---|---|
 | **WhatsApp** | Patients book, confirm, cancel, check report status and request refills in chat. See [`docs/WHATSAPP.md`](docs/WHATSAPP.md). |
 | **Enquiries** | Every first contact — walk-in, phone, WhatsApp, web, camp — tracked to conversion or closure. |
-| **Appointments** | Doctor sessions and leave, live slot availability, token numbers, no-show handling. |
+| **Appointments** | Fixed visiting hours per doctor per date, live slot availability, a doctor picker grouped by speciality, token numbers, no-show handling. |
+| **Doctors** | Each doctor signs in, sees their own day on their phone, blocks their own days — and is told on WhatsApp the moment the front desk books a patient with them. See [`docs/DOCTORS.md`](docs/DOCTORS.md). |
 | **Diagnostics** | Order → sample barcode → processing → result entry with automatic abnormal flagging → verification → report released to the patient. |
 | **Pharmacy** | Batch and expiry tracking, first-expiry-first-out allocation, allergy safety check, stock ledger, low-stock and expiry alerts, and over-the-counter sales to walk-ins who are not our patients. |
 | **Barcodes & stock register** | A barcode on every medicine and every batch — scanned at the counter, printed from the ERP — plus suppliers, goods-received notes, a reconciling stock register and physical stock takes. See [`docs/PHARMACY-STOCK.md`](docs/PHARMACY-STOCK.md). |
