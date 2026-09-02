@@ -534,13 +534,20 @@
     UI.print(html, 'Invoice ' + inv.invoice_no);
   }
 
+  /**
+   * The receipt. The cashier who took the money signs it — they are the clinic's
+   * own counter — but the treating doctor appears only as their code, the same
+   * rule the bill it settles follows.
+   */
   async function printReceipt(receiptNo) {
     const r = await API.get(`/api/billing/receipts/${receiptNo}`);
     const html = `<div class="doc">
       ${UI.docHeader('Payment Receipt', [`Receipt: ${r.receipt_no}`, `Date: ${UI.dateTime(r.paid_at)}`])}
       <table><tbody>
         <tr><th>Received from</th><td>${UI.esc(r.first_name)} ${UI.esc(r.last_name || '')} (${UI.esc(r.uhid)})</td></tr>
-        <tr><th>Against invoice</th><td>${UI.esc(r.invoice_no)}</td></tr>
+        <tr><th>Against invoice</th><td>${UI.esc(r.invoice_no)}${
+          r.visit_no || r.ip_no ? ` · ${UI.esc(r.visit_no || r.ip_no)}` : ''}</td></tr>
+        ${r.doctor_code ? `<tr><th>Treating doctor</th><td>${UI.esc(r.doctor_code)}</td></tr>` : ''}
         <tr><th>Mode</th><td>${UI.esc(UI.titleise(r.mode))} ${r.reference ? '· ' + UI.esc(r.reference) : ''}</td></tr>
         <tr><th>Amount received</th><td style="font-size:19px"><b>${UI.money(r.amount)}</b></td></tr>
         <tr><th>Invoice balance</th><td>${UI.money(r.balance)}</td></tr>
@@ -605,4 +612,5 @@
   }
   // Exposed so the browser checks can print without hunting for a button.
   window.__printInvoice = printInvoice;
+  window.__printReceipt = printReceipt;
 })();

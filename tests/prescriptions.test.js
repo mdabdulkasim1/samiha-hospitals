@@ -370,6 +370,16 @@ test('the bill and the discharge summary carry the code, not the doctor', async 
   const standalone = (await api('POST', '/api/billing/invoices', { patientId: p.id, kind: 'pharmacy' })).body;
   assert.strictEqual((await api('GET', `/api/billing/invoices/${standalone.id}`)).body.doctor_code, null);
 
+  // And the receipt for money taken against that bill.
+  const paid = (await api('POST', `/api/billing/invoices/${inv.id}/payments`,
+    { amount: 500, mode: 'cash' })).body;
+  const receiptNo = paid.receipt ? paid.receipt.receipt_no
+    : (paid.receiptNo || paid.invoice.payments.at(-1).receipt_no);
+  const receipt = (await api('GET', `/api/billing/receipts/${receiptNo}`)).body;
+  assert.strictEqual(receipt.doctor_code, code);
+  assert.strictEqual(receipt.visit_no, visit.visit_no);
+  assert.ok(receipt.received_by_name, 'the cashier who took it still signs the receipt');
+
   // The discharge summary the same way.
   const wards = (await api('GET', '/api/ipd/wards')).body;
   const bed = (wards.wards || wards).flatMap((w) => w.beds).find((b) => b.status === 'vacant');

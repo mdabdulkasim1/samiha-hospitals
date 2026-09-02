@@ -131,6 +131,7 @@ Everything the patient takes home carries the code and no doctor's name:
 | **Prescription** | The code beside the prescription number, and a blank box for the stamp |
 | **Diagnostic report** | The referring doctor's code beside the order number, and a blank box |
 | **Bill / tax invoice** | The treating doctor's code, taken from the visit or admission the bill was raised against |
+| **Payment receipt** | The same code as the bill it settles. The cashier who took the money still signs it — they are the clinic's own counter |
 | **Discharge summary** | The consultant's code, and a blank box for their stamp |
 
 A bill raised against neither a visit nor an admission — a straight pharmacy

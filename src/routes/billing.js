@@ -280,10 +280,22 @@ router.post('/invoices/:id/assistance-cover', requireRole('cashier', 'counselor'
 }));
 
 router.get('/receipts/:receiptNo', viewRoles, wrap((req, res) => {
+  /*
+   * `received_by_name` is the cashier who took the money — they are the clinic's
+   * own counter and belong on the receipt. The treating doctor comes through as
+   * their code, the same as on the bill it settles.
+   */
   const receipt = db.prepare(
-    `SELECT pay.*, i.invoice_no, i.net, i.balance, p.uhid, p.first_name, p.last_name, p.phone, u.name AS received_by_name
-       FROM payments pay JOIN invoices i ON i.id = pay.invoice_id JOIN patients p ON p.id = pay.patient_id
+    `SELECT pay.*, i.invoice_no, i.net, i.balance, i.kind,
+            p.uhid, p.first_name, p.last_name, p.phone,
+            u.name AS received_by_name, dp.doctor_code, v.visit_no, adm.ip_no
+       FROM payments pay
+       JOIN invoices i ON i.id = pay.invoice_id
+       JOIN patients p ON p.id = pay.patient_id
        LEFT JOIN users u ON u.id = pay.received_by
+       LEFT JOIN visits v ON v.id = i.visit_id
+       LEFT JOIN admissions adm ON adm.id = i.admission_id
+       LEFT JOIN doctor_profiles dp ON dp.user_id = COALESCE(v.doctor_id, adm.doctor_id)
       WHERE pay.receipt_no = ?`
   ).get(str(req.params.receiptNo));
   if (!receipt) throw notFound('Receipt not found');
