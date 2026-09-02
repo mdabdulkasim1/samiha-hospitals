@@ -11,28 +11,90 @@
 
       APP.actions([{ id: 'daybook', label: 'Day book', onClick: openDaybook }]);
 
-      const [invoices, plans] = await Promise.all([
+      const [invoices, plans, pending] = await Promise.all([
         API.get('/api/billing/invoices' + API.qs({ status: params.status })),
         API.get('/api/billing/payment-plans?status=active'),
+        API.get('/api/billing/pending').catch(() => ({ rows: [], totals: {} })),
       ]);
 
       el.innerHTML = `
         <div class="grid c4 mb">
-          <div class="stat teal"><div class="label">Billed (all time)</div><div class="value">${UI.money(invoices.totals.billed)}</div></div>
-          <div class="stat ok"><div class="label">Collected</div><div class="value">${UI.money(invoices.totals.collected)}</div></div>
-          <div class="stat crimson"><div class="label">Outstanding</div><div class="value">${UI.money(invoices.totals.outstanding)}</div></div>
-          <div class="stat orange"><div class="label">Active payment plans</div><div class="value">${UI.num(plans.length)}</div>
-            <div class="foot">Instalment agreements</div></div>
+          <div class="stat crimson"><div class="label">To collect today</div>
+            <div class="value">${UI.money(pending.totals.amountToCollect || 0)}</div>
+            <div class="foot">${UI.num(pending.totals.toCollect || 0)} patient(s) with a bill to settle</div></div>
+          <div class="stat orange"><div class="label">Waiting for a bill</div>
+            <div class="value">${UI.num(pending.totals.awaitingBill || 0)}</div>
+            <div class="foot">In the clinic, nothing raised yet</div></div>
+          <div class="stat ok"><div class="label">Collected (all time)</div>
+            <div class="value">${UI.money(invoices.totals.collected)}</div></div>
+          <div class="stat teal"><div class="label">Outstanding (all time)</div>
+            <div class="value">${UI.money(invoices.totals.outstanding)}</div>
+            <div class="foot">${UI.num(plans.length)} payment plan(s) running</div></div>
         </div>
 
         <div class="tabs" id="b-tabs">
-          <button class="active" data-tab="invoices">Invoices</button>
+          <button class="active" data-tab="today">Today's collections${
+            pending.totals.toCollect ? ` <span class="pill">${UI.num(pending.totals.toCollect)}</span>` : ''}</button>
+          <button data-tab="invoices">Invoices</button>
           <button data-tab="plans">Payment plans</button>
         </div>
         <div id="b-body"></div>`;
 
       const body = el.querySelector('#b-body');
       const tabs = {
+        /**
+         * The day, patient by patient: who is booked, who is in the building,
+         * who has a bill waiting and who has paid. The desk's question is
+         * "who do I still have to collect from", and it is answered by
+         * reading down one list rather than by guessing which invoices belong
+         * to people who are actually here.
+         */
+        today() {
+          const t = pending.totals;
+          const LABEL = {
+            expected: ['Booked', 'info', 'Not arrived yet'],
+            awaiting_bill: ['Needs a bill', 'warn', 'In the clinic'],
+            to_collect: ['To collect', 'danger', 'Bill ready'],
+            settled: ['Settled', 'ok', 'Nothing to collect'],
+          };
+          body.innerHTML = `
+            ${t.toCollect
+              ? `<div class="alert warn"><b>${UI.num(t.toCollect)} patient(s)</b> have a bill
+                   waiting — ${UI.money(t.amountToCollect)} to collect.</div>`
+              : '<div class="alert ok">Nothing waiting to be collected right now.</div>'}
+            <div class="card"><div class="card-head"><h3>Today at the clinic</h3>
+              <span class="muted small">${UI.num(t.expected || 0)} booked ·
+                ${UI.num(t.awaitingBill || 0)} needing a bill ·
+                ${UI.num(t.settled || 0)} settled</span></div>
+              <div class="card-body tight" id="t-list"></div></div>`;
+
+          const host = body.querySelector('#t-list');
+          host.innerHTML = UI.table([
+            { label: 'Time', render: (r) => `<b>${UI.esc(UI.time(r.at))}</b>` +
+              (r.token_no ? `<div class="muted small">Token ${UI.esc(r.token_no)}</div>` : '') },
+            { label: 'Patient', render: (r) => `<b>${UI.esc(r.patient_name || '—')}</b>` +
+              `<div class="muted small">${UI.esc(r.uhid || 'not registered')}${
+                r.phone ? ' · ' + UI.esc(r.phone) : ''}</div>` },
+            { label: 'Doctor', render: (r) => UI.esc(r.doctor_code || r.doctor_name || '—') },
+            { label: 'Where', render: (r) => (r.visit_status
+              ? UI.statusBadge(r.visit_status)
+              : `<span class="muted small">${UI.esc(LABEL[r.state][2])}</span>`) },
+            { label: 'Bill', render: (r) => (r.invoice_no
+              ? `<code>${UI.esc(r.invoice_no)}</code>` : '<span class="muted">—</span>') },
+            { label: 'To collect', num: true, render: (r) => (r.state === 'to_collect'
+              ? `<b style="color:var(--danger)">${UI.money(r.balance)}</b>`
+              : (r.invoice_id ? UI.money(0) : '<span class="muted">—</span>')) },
+            { label: 'Stage', render: (r) => UI.badge(LABEL[r.state][0], LABEL[r.state][1]) },
+            { label: '', render: (r) => (r.visit_id
+              ? `<button class="btn sm" data-visit="${r.visit_id}">${
+                  r.state === 'to_collect' ? 'Collect' : 'Open'}</button>` : '') },
+          ], pending.rows, {
+            emptyText: 'Nobody is booked and nobody has walked in today.',
+          });
+          host.querySelectorAll('[data-visit]').forEach((b) => b.addEventListener('click', () =>
+            APP.navigate('billing', { visitId: b.dataset.visit })));
+        },
+
         invoices() {
           body.innerHTML = `
             <div class="search-row"><select id="i-status">
@@ -80,7 +142,7 @@
         el.querySelectorAll('#b-tabs button').forEach((x) => x.classList.toggle('active', x === b));
         tabs[b.dataset.tab]();
       }));
-      tabs.invoices();
+      tabs.today();
     },
   });
 

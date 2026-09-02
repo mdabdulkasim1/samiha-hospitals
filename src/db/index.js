@@ -169,6 +169,14 @@ function migrate() {
    * because recalc derives `discount` from the lines every time it runs, and
    * would wipe out anything written there by hand.
    */
+  /*
+   * What a pharmacy item is filed under on the shelf, and what it comes in.
+   * "Analgesics", "Emergency / Crash-cart" — the headings the clinic's own
+   * stock list uses, so the register reads the way the pharmacist thinks.
+   */
+  ensureColumn('drugs', 'category', 'TEXT');
+  ensureColumn('drugs', 'pack_size', 'TEXT');
+
   ensureColumn('invoices', 'bill_discount', 'REAL NOT NULL DEFAULT 0');
   ensureColumn('invoices', 'bill_discount_reason', 'TEXT');
 

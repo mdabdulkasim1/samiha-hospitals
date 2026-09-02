@@ -375,3 +375,156 @@ test('discharge posts the bed and does not bill a charge twice', async () => {
   // The discount survives discharge as the rupee figure it was.
   assert.strictEqual(after.bill_discount, 100);
 });
+
+// --------------------------------------------------- who is still to be paid
+test('the collections list walks the day, and only the bills are money', async () => {
+  const today = new Date().toISOString().slice(0, 10);
+  const doctorId = ids.imran;
+  const avail = (await api('GET',
+    `/api/appointments/availability?doctorId=${doctorId}&date=${today}`, undefined, 'reception')).body;
+  const free = (avail.slots || []).map((x) => `${today} ${x.time}:00`);
+  assert.ok(free.length >= 2, 'the doctor needs free slots today for this test');
+
+  // Booked, has not walked in.
+  const booked = await newPatient('Booked');
+  await api('POST', '/api/appointments',
+    { doctorId, patientId: booked, scheduledAt: free[0], reason: 'Review' }, 'reception');
+
+  // Arrived, nothing raised yet.
+  const arrived = await newPatient('Arrived');
+  await api('POST', '/api/appointments',
+    { doctorId, patientId: arrived, scheduledAt: free[1], reason: 'Fever' }, 'reception');
+  await api('POST', '/api/visits/arrive',
+    { patientId: arrived, doctorId, visitType: 'opd', reasonForVisit: 'Fever' }, 'reception');
+
+  // Walked in, bill raised and unpaid.
+  const walkin = await newPatient('Walkin');
+  const v = (await api('POST', '/api/visits/arrive',
+    { patientId: walkin, doctorId, visitType: 'opd', reasonForVisit: 'Cough' }, 'reception')).body;
+  const visitId = v.id || v.visit.id;
+  const inv = (await api('POST', `/api/visits/${visitId}/prepare-bill`, {}, 'cashier')).body;
+  assert.ok(inv && inv.id, 'a bill was raised: ' + JSON.stringify(inv));
+  await api('POST', `/api/billing/invoices/${inv.id}/items`,
+    { description: 'Consultation', qty: 1, unitPrice: 500 }, 'cashier');
+
+  const res = await api('GET', '/api/billing/pending', undefined, 'cashier');
+  assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+  const row = (id) => res.body.rows.find((r) => r.patient_id === id);
+
+  assert.strictEqual(row(booked).state, 'expected', 'booked but not arrived');
+  assert.strictEqual(row(booked).visit_id, null);
+  assert.strictEqual(row(arrived).state, 'awaiting_bill', 'here, nothing raised');
+  assert.strictEqual(row(walkin).state, 'to_collect', 'a bill with a balance');
+  assert.strictEqual(row(walkin).balance, 500);
+
+  // A patient who has not arrived is not money the cashier can collect.
+  assert.strictEqual(row(booked).balance, null);
+  const t = res.body.totals;
+  assert.ok(t.expected >= 1 && t.awaitingBill >= 1 && t.toCollect >= 1);
+  assert.strictEqual(t.amountToCollect,
+    round2(res.body.rows.filter((r) => r.state === 'to_collect')
+      .reduce((a, r) => a + Number(r.balance), 0)),
+    'the headline must be the sum of the rows behind it');
+
+  // Everyone booked or arrived today is on the list exactly once.
+  const ids2 = res.body.rows.map((r) => `${r.appointment_id}:${r.visit_id}`);
+  assert.strictEqual(new Set(ids2).size, ids2.length, 'nobody is listed twice');
+
+  ids.pendingInvoice = inv.id;
+  ids.pendingPatient = walkin;
+});
+
+test('collecting the money moves the patient off the list', async () => {
+  const before = (await api('GET', '/api/billing/pending', undefined, 'cashier')).body;
+  const was = before.rows.find((r) => r.patient_id === ids.pendingPatient);
+  assert.strictEqual(was.state, 'to_collect');
+
+  await api('POST', `/api/billing/invoices/${ids.pendingInvoice}/payments`,
+    { amount: was.balance, mode: 'cash' }, 'cashier');
+
+  const after = (await api('GET', '/api/billing/pending', undefined, 'cashier')).body;
+  const now = after.rows.find((r) => r.patient_id === ids.pendingPatient);
+  assert.strictEqual(now.state, 'settled');
+  assert.strictEqual(after.totals.toCollect, before.totals.toCollect - 1);
+  assert.strictEqual(after.totals.amountToCollect,
+    round2(before.totals.amountToCollect - was.balance));
+});
+
+test('the collections list is the money desk\'s, not a doctor\'s', async () => {
+  assert.strictEqual((await api('GET', '/api/billing/pending', undefined, 'imran')).status, 403);
+  assert.strictEqual((await api('GET', '/api/billing/pending', undefined, 'reception')).status, 200);
+  assert.strictEqual((await api('GET', '/api/billing/pending', undefined, null)).status, 401);
+});
+
+// ------------------------------------------------------------- the formulary
+test('the clinic\'s starter formulary is loaded, priced by nobody and stocked by nobody', async () => {
+  const formulary = require('../src/db/formulary');
+  assert.ok(formulary.length >= 90, `expected the full list, got ${formulary.length}`);
+
+  const codes = formulary.map((f) => f[0]);
+  assert.strictEqual(new Set(codes).size, codes.length, 'every item has its own code');
+
+  for (const [code, name, generic, form, , category] of formulary) {
+    assert.ok(code && name && generic && form && category, `incomplete row: ${code}`);
+  }
+
+  const loaded = db.prepare('SELECT COUNT(*) c FROM drugs WHERE category IS NOT NULL').get().c;
+  assert.strictEqual(loaded, formulary.length, 'all of it reached the drug master');
+
+  // No rate is invented: an MRP comes off the pack at goods receipt.
+  assert.strictEqual(
+    db.prepare('SELECT COUNT(*) c FROM drugs WHERE category IS NOT NULL AND mrp > 0').get().c, 0);
+
+  // And no stock either — the register must not claim what nobody has counted.
+  assert.strictEqual(db.prepare(
+    `SELECT COUNT(*) c FROM drug_batches b JOIN drugs d ON d.id = b.drug_id
+      WHERE d.category IS NOT NULL`).get().c, 0);
+
+  // Every item can be labelled the day it is loaded.
+  assert.strictEqual(db.prepare(
+    "SELECT COUNT(*) c FROM drugs WHERE barcode IS NULL OR barcode = ''").get().c, 0);
+  const bc = db.prepare('SELECT barcode FROM drugs').all().map((d) => d.barcode);
+  assert.strictEqual(new Set(bc).size, bc.length, 'barcodes are unique');
+});
+
+test('the scheduled medicines on the list are flagged as scheduled', async () => {
+  const scheduled = db.prepare(
+    "SELECT code, name FROM drugs WHERE schedule_type IN ('H1','X') AND category IS NOT NULL").all();
+  const names = scheduled.map((d) => d.name).join(' ');
+  assert.match(names, /Tramadol/, 'Tramadol is Schedule H1 and must be flagged');
+  assert.match(names, /Diazepam/, 'Diazepam is Schedule H1 and must be flagged');
+
+  // A dressing pad is not a scheduled drug and must not be treated as one.
+  const gauze = db.prepare("SELECT * FROM drugs WHERE code LIKE 'GAUZE%'").get();
+  assert.ok(gauze, 'the consumables are on the list too');
+  assert.ok(!['H', 'H1', 'X'].includes(gauze.schedule_type || ''),
+    'a bandage roll does not need a prescription');
+});
+
+test('a formulary item can be received, and only then does it have stock and a price', async () => {
+  const drug = db.prepare("SELECT * FROM drugs WHERE code = 'PARA-500MG-TAB'").get();
+  assert.ok(drug, 'the item is on the formulary');
+  assert.strictEqual(drug.mrp, 0, 'no price until goods arrive');
+
+  const stockBefore = db.prepare(
+    'SELECT COALESCE(SUM(qty_available),0) q FROM drug_batches WHERE drug_id = ?').get(drug.id).q;
+  assert.strictEqual(stockBefore, 0);
+
+  // Suppliers are the clinic's own, so none is seeded — the pharmacy adds
+  // its distributor before the first goods-received note.
+  const supplier = (await api('POST', '/api/stock/suppliers',
+    { name: 'Melapalayam Distributors', phone: '9840011223' }, 'pharmacy')).body;
+  assert.ok(supplier && supplier.id, JSON.stringify(supplier));
+  const grn = await api('POST', '/api/stock/purchases', {
+    supplierId: supplier.id, invoiceNo: 'MD-1001',
+    items: [{ drugId: drug.id, batchNo: 'B-2601', expiryDate: '2028-06-30',
+      qty: 500, purchasePrice: 0.9, mrp: 1.6 }],
+  }, 'pharmacy');
+  assert.strictEqual(grn.status, 201, JSON.stringify(grn.body));
+
+  const after = db.prepare(
+    'SELECT COALESCE(SUM(qty_available),0) q FROM drug_batches WHERE drug_id = ?').get(drug.id).q;
+  assert.strictEqual(after, 500, 'the stock is what was received, no more');
+  const batch = db.prepare('SELECT * FROM drug_batches WHERE drug_id = ?').get(drug.id);
+  assert.strictEqual(batch.mrp, 1.6, 'the price comes off the pack that arrived');
+});

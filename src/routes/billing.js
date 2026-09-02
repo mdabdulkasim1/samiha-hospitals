@@ -33,6 +33,96 @@ router.get('/invoices', viewRoles, wrap((req, res) => {
   res.json({ rows, totals, page, limit });
 }));
 
+/**
+ * Who the cashier still has to collect from today.
+ *
+ * The desk's question is not "which invoices exist" but "who is in the
+ * building owing us money, and who is about to be". So this walks the day
+ * forward rather than the ledger backward: everyone booked today, everyone who
+ * walked in without an appointment, and where each of them has got to.
+ *
+ * A row is in one of four states, and they are deliberately different things:
+ *
+ *   expected       booked, not arrived — nothing to collect yet, but the desk
+ *                  can see it coming
+ *   awaiting_bill  in the clinic, no bill raised — somebody has to assemble it
+ *   to_collect     a bill with a balance — this is the actual work
+ *   settled        paid, or nothing to pay
+ *
+ * Only the third is money. Counting the first as "pending collection" would
+ * give the cashier a number they cannot act on and that falls when patients
+ * simply fail to turn up.
+ */
+// The money desk's list, and only theirs: it names every patient in the
+// building and what each of them owes, which is not a doctor's to read across
+// the whole clinic — they see their own day in My Clinic.
+const deskRoles = requireRole('cashier', 'reception', 'counselor');
+
+router.get('/pending', deskRoles, wrap((req, res) => {
+  const date = str(req.query.date) || new Date().toISOString().slice(0, 10);
+
+  const rows = db.prepare(
+    `WITH day AS (
+       -- Everyone booked today, whether or not they have arrived.
+       SELECT a.id AS appointment_id, a.patient_id, a.scheduled_at AS at,
+              a.status AS appt_status, a.doctor_id, a.guest_name, a.guest_phone,
+              (SELECT v.id FROM visits v
+                WHERE (v.appointment_id = a.id
+                       OR (v.patient_id = a.patient_id AND date(v.arrived_at) = ?))
+                  AND v.status != 'cancelled'
+                ORDER BY v.id DESC LIMIT 1) AS visit_id
+         FROM appointments a
+        WHERE date(a.scheduled_at) = ? AND a.status != 'cancelled'
+       UNION ALL
+       -- ...and everyone who simply walked in.
+       SELECT NULL, v.patient_id, v.arrived_at, NULL, v.doctor_id, NULL, NULL, v.id
+         FROM visits v
+        WHERE date(v.arrived_at) = ? AND v.status != 'cancelled'
+          AND (v.appointment_id IS NULL OR NOT EXISTS (
+                SELECT 1 FROM appointments a2
+                 WHERE a2.id = v.appointment_id AND date(a2.scheduled_at) = ?))
+     )
+     SELECT day.appointment_id, day.visit_id, day.at, day.appt_status,
+            COALESCE(TRIM(p.first_name || ' ' || COALESCE(p.last_name, '')), day.guest_name) AS patient_name,
+            p.id AS patient_id, p.uhid, COALESCE(p.phone, day.guest_phone) AS phone,
+            u.name AS doctor_name, dp.doctor_code,
+            v.visit_no, v.status AS visit_status, v.token_no,
+            i.id AS invoice_id, i.invoice_no, i.net, i.paid, i.balance, i.status AS invoice_status
+       FROM day
+       LEFT JOIN patients p ON p.id = day.patient_id
+       LEFT JOIN users u ON u.id = day.doctor_id
+       LEFT JOIN doctor_profiles dp ON dp.user_id = u.id
+       LEFT JOIN visits v ON v.id = day.visit_id
+       LEFT JOIN invoices i ON i.id = (
+         SELECT i2.id FROM invoices i2
+          WHERE i2.visit_id = day.visit_id AND i2.status != 'cancelled'
+          ORDER BY i2.id DESC LIMIT 1)
+      ORDER BY day.at`
+  ).all(date, date, date, date);
+
+  for (const r of rows) {
+    if (r.invoice_id && r.balance > 0.009) r.state = 'to_collect';
+    else if (r.invoice_id) r.state = 'settled';
+    else if (r.visit_id) r.state = 'awaiting_bill';
+    else r.state = 'expected';
+  }
+
+  const count = (s) => rows.filter((r) => r.state === s).length;
+  res.json({
+    date,
+    rows,
+    totals: {
+      expected: count('expected'),
+      awaitingBill: count('awaiting_bill'),
+      toCollect: count('to_collect'),
+      settled: count('settled'),
+      amountToCollect: billing.round2(rows
+        .filter((r) => r.state === 'to_collect')
+        .reduce((t, r) => t + Number(r.balance || 0), 0)),
+    },
+  });
+}));
+
 router.get('/invoices/:id', viewRoles, wrap((req, res) => {
   const inv = billing.fullInvoice(int(req.params.id));
   if (!inv) throw notFound('Invoice not found');

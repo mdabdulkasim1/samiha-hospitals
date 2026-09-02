@@ -288,6 +288,27 @@ for (const [code, name, category, bill_group, sample_type, unit, ref_low, ref_hi
   });
 }
 
+/*
+ * The clinic's own starter formulary — every item from the pharmacy stock
+ * list, loaded so it can be prescribed, ordered and billed.
+ *
+ * Rate and stock are left alone on purpose: an MRP is printed on the pack that
+ * arrives and is recorded at goods receipt, and writing opening batches here
+ * would put quantities in the register that nobody has counted. The sheet's
+ * opening quantity becomes the reorder level (a quarter of it), so the
+ * low-stock warning is meaningful the moment real stock is received.
+ */
+for (const [code, name, generic, form, strength, category, sched, pack, opening]
+  of require('./formulary')) {
+  upsert('drugs', 'code', {
+    code, name, generic_name: generic, form, strength, category, pack_size: pack,
+    schedule_type: sched || null, hsn: '3004', tax_pct: 12,
+    mrp: 0, purchase_price: 0,
+    reorder_level: Math.max(1, Math.round((opening || 0) * 0.25)),
+  });
+}
+
+
 // -------------------------------------------------------------- drug master
 const drugs = [
   ['PARA500', 'Dolo 650', 'Paracetamol', 'tablet', '650 mg', 'Micro Labs', 12, 2.2, 1.5, 'OTC', 200],
@@ -456,6 +477,14 @@ console.log('  Staff       :', db.prepare('SELECT COUNT(*) AS c FROM users').get
 // Doctors are created above, after the migration has already run, so their
 // codes are issued here — every doctor must have one before anything prints.
 require('./index').backfillDoctorCodes();
+
+// Every item gets its own barcode, so the pharmacist can print a shelf label
+// the day the formulary is loaded rather than having to ask for one first.
+for (const d of db.prepare(
+  "SELECT id FROM drugs WHERE active = 1 AND (barcode IS NULL OR barcode = '')"
+).all()) {
+  db.prepare('UPDATE drugs SET barcode = ? WHERE id = ?').run(generate('drugBarcode'), d.id);
+}
 
 console.log('  Lab tests   :', db.prepare('SELECT COUNT(*) AS c FROM lab_tests').get().c);
 console.log('  Drugs       :', db.prepare('SELECT COUNT(*) AS c FROM drugs').get().c);
