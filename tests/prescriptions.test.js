@@ -438,6 +438,34 @@ test('an X-ray or scan is reported in words, and still carries the code', async 
   assert.match(report.items[1].result_notes, /gall bladder calculus/);
 });
 
+test('an ECG is reported like an imaging study but is not called imaging', async () => {
+  const tests = (await api('GET', '/api/masters/lab-tests')).body;
+  const ecg = tests.find((t) => t.code === 'ECG12');
+  assert.strictEqual(ecg.category, 'cardiology', 'a tracing, not a picture and not a number');
+
+  const order = (await api('POST', '/api/lab/orders', {
+    patientId: ids.patient, doctorId: ids.imran,
+    clinicalNotes: 'Palpitations on exertion', tests: [{ testId: ecg.id }],
+  }, 'imran')).body;
+  await api('POST', `/api/lab/orders/${order.id}/collect`, { sampleType: 'tracing' }, 'admin');
+
+  const item = (await api('GET', `/api/lab/orders/${order.id}`, undefined, 'admin')).body.items[0];
+  assert.strictEqual(item.category, 'cardiology');
+
+  await api('POST', `/api/lab/orders/${order.id}/results`, {
+    results: [{ itemId: item.id, value: 'Sinus rhythm at 78 bpm. Normal axis. QTc 410 ms.',
+      notes: 'Normal 12-lead ECG.', abnormalFlag: 'normal' }],
+  }, 'admin');
+  await api('POST', `/api/lab/orders/${order.id}/verify`, {}, 'admin');
+
+  const report = (await api('GET', `/api/lab/orders/${order.id}/report`, undefined, 'admin')).body;
+  assert.match(report.doctor_code, /^SPC-[A-Z]{3}-\d{3}$/);
+  assert.strictEqual(report.items[0].category, 'cardiology',
+    'so the sheet heads itself Cardiology Report and speaks of a tracing, not of images');
+  assert.match(report.items[0].result_value, /Sinus rhythm/);
+  assert.match(report.items[0].result_notes, /Normal 12-lead ECG/);
+});
+
 // ------------------------------------------------------ what a doctor may see
 test('a doctor\'s dashboard shows their own clinic and no colleague\'s', async () => {
   const asDoctor = (await api('GET', '/api/reports/dashboard', undefined, 'imran')).body;

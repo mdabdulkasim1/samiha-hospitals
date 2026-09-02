@@ -80,7 +80,9 @@
       <fieldset><legend>${UI.esc(i.test_name)} ${UI.statusBadge(i.status)}</legend>
         ${open(i) ? `
           ${UI.field({ name: `find-${i.id}`, label: 'Findings', rows: 5, value: i.result_value || '',
-            placeholder: 'Technique, and what is seen — lung fields, cardiac silhouette, bony cage…' })}
+            placeholder: String(i.category || '').toLowerCase() === 'cardiology'
+              ? 'Rate, rhythm, axis, intervals, ST-T changes…'
+              : 'Technique, and what is seen — lung fields, cardiac silhouette, bony cage…' })}
           ${UI.field({ name: `imp-${i.id}`, label: 'Impression', value: i.result_notes || '',
             placeholder: 'The one line the referring doctor reads first' })}`
           : `<div class="muted small">Findings</div>
@@ -277,8 +279,13 @@
     // measured tests as a table and the imaging as narrative sections below it.
     const measured = o.items.filter((i) => !isImaging(i));
     const scans = o.items.filter(isImaging);
+    // An ECG is a tracing, not a picture, so it is not headed or footed as
+    // imaging even though it is reported in words like one.
+    const allCardiac = scans.length && scans.every((i) =>
+      String(i.category || '').toLowerCase() === 'cardiology');
     const title = scans.length && !measured.length
-      ? (scans.every((i) => /ultrasound|usg|doppler/i.test(i.test_name)) ? 'Ultrasound Report'
+      ? (allCardiac ? 'Cardiology Report'
+        : scans.every((i) => /ultrasound|usg|doppler/i.test(i.test_name)) ? 'Ultrasound Report'
         : scans.every((i) => /x-ray|xray|iopa/i.test(i.test_name)) ? 'Radiology Report'
         : 'Imaging Report')
       : 'Diagnostic Report';
@@ -381,7 +388,9 @@
 
         <div class="lr-foot">
           ${scans.length && !measured.length
-            ? 'This report is an opinion on the images acquired and is not a diagnosis on its own. Please correlate clinically.'
+            ? (allCardiac
+              ? 'This report is an interpretation of the tracing recorded at the time and is not a diagnosis on its own. Please correlate clinically.'
+              : 'This report is an opinion on the images acquired and is not a diagnosis on its own. Please correlate clinically.')
             : 'Results relate only to the sample received. Please correlate clinically.'}
         </div>
       </div>`, `Report ${o.order_no}`);

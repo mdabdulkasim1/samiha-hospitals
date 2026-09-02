@@ -131,7 +131,8 @@ Everything the patient takes home carries the code and no doctor's name:
 | **Prescription** | The code beside the prescription number, and a blank box for the stamp |
 | **Investigation request** | The ordering doctor's code, the tests and which sample each needs, the sample barcode once collected, and a blank box for whoever draws it |
 | **Diagnostic report** | The referring doctor's code beside the order number, and a blank box |
-| **Imaging report** (X-ray, USG, ECG) | The same, reported as findings and impression in prose rather than a results table |
+| **Imaging report** (X-ray, USG) | The same, reported as findings and impression in prose rather than a results table |
+| **Cardiology report** (ECG, Echo) | The same again, headed and worded as a tracing rather than as images |
 | **Bill / tax invoice** | The treating doctor's code, taken from the visit or admission the bill was raised against |
 | **Payment receipt** | The same code as the bill it settles. The cashier who took the money still signs it — they are the clinic's own counter |
 | **Discharge summary** | The consultant's code, and a blank box for their stamp |
@@ -152,24 +153,36 @@ makes it theirs; the code is how the clinic knows, from the paper alone, whose
 it was.
 
 
-# Imaging: X-ray, ultrasound and ECG
+# Reported in words: X-ray, ultrasound, ECG and echo
 
-An X-ray or a scan is reported in words, not in numbers, so it never belonged in
-the results table the blood tests use. Anything in the **radiology** or
-**cardiology** category of the test catalogue is handled as imaging.
+An X-ray, a scan or a tracing is reported in words, not in numbers, so none of
+them belonged in the results table the blood tests use. Anything in the
+**radiology** or **cardiology** category of the test catalogue is reported this
+way.
 
 **Reporting one.** Open the order in Diagnostics. Instead of a value box, each
-study gets a **Findings** area — technique and what is seen — and a one-line
-**Impression**, which is the line the referring doctor reads first.
+study gets a **Findings** area and a one-line **Impression**, which is the line
+the referring doctor reads first. The prompt follows the modality: an X-ray asks
+for technique and what is seen; an ECG asks for rate, rhythm, axis, intervals
+and ST-T changes.
 
-**The printed report** heads itself by what it holds: *Radiology Report* for
-X-rays only, *Ultrasound Report* for scans only, *Imaging Report* for a mix,
-and *Diagnostic Report* when measured tests are on it too. Each study prints as
-its own section with the findings as prose and the impression in bold. An order
-mixing bloods and imaging prints the table first and the narrative below it.
+**The printed report** heads itself by what it holds:
 
-The footnote changes with it: an imaging report says it is an opinion on the
-images acquired and not a diagnosis on its own.
+| The order holds | Heading |
+|---|---|
+| Ultrasound or Doppler only | Ultrasound Report |
+| X-rays only | Radiology Report |
+| ECG or echo only | Cardiology Report |
+| A mix of imaging | Imaging Report |
+| Measured tests as well | Diagnostic Report |
+
+Each study prints as its own section with the findings as prose and the
+impression in bold. An order mixing bloods and imaging prints the table first
+and the narrative below it.
+
+The footnote follows the modality too: an imaging report says it is an opinion
+on the images acquired; a cardiology report says it is an interpretation of the
+tracing recorded at the time. Neither is a diagnosis on its own.
 
 Everything else is the same as any other report — the polyclinic's name and
 address, the referring doctor's code, and a blank box for the reporting doctor
