@@ -43,6 +43,19 @@ APP.register('dashboard', {
           `${d.ipd.beds.occupancyPct}% occupancy · ${UI.num(d.ipd.currentInPatients)} in-patient(s)`)}
       </div>
 
+      ${APP.can(['cashier', 'reception', 'counselor']) ? `
+        <div class="grid c4 mb">
+          ${stat('crimson', 'Still to collect', UI.money(d.revenue.outstanding),
+            'Open invoices across the clinic')}
+          ${stat('ok', 'Taken today', UI.money(d.revenue.collected),
+            `${UI.num(d.revenue.receipts)} receipt(s)`)}
+          ${stat('teal', 'Self-paying patients', UI.num(d.patients ? d.patients.uninsured : 0),
+            'No insurance on file — they settle at the counter')}
+          ${stat('orange', 'With an insurer', UI.num(d.patients ? d.patients.insured : 0),
+            d.insurance && d.insurance.receivable
+              ? `${UI.money(d.insurance.receivable)} approved, not yet received` : 'Cashless and reimbursement')}
+        </div>` : ''}
+
       ${d.insurance && d.insurance.receivable > 0 ? `<div class="alert info mb" style="cursor:pointer" onclick="APP.navigate('insurance')">
         <b>${UI.money(d.insurance.receivable)}</b> approved by insurers but not yet received.
         ${d.insurance.overdueClaims ? `<b>${d.insurance.overdueClaims}</b> claim(s) are past their settlement date.` : ''}
@@ -119,6 +132,8 @@ APP.register('dashboard', {
               <div class="btn-row">
                 ${APP.can(['reception']) ? '<button class="btn sm" data-go="patients">Register patient</button>' : ''}
                 ${APP.can(['reception','nurse','doctor','counselor','cashier']) ? '<button class="btn teal sm" data-go="appointments">Book appointment</button>' : ''}
+                ${APP.can(['cashier','reception','counselor']) ? '<button class="btn sm" data-go="billing">₹ Collect payment</button>' : ''}
+                ${APP.can(['cashier','reception','counselor']) ? '<button class="btn ghost sm" data-go="insurance">Insurance &amp; TPA</button>' : ''}
                 <button class="btn ghost sm" data-go="whatsapp">WhatsApp desk</button>
                 <button class="btn ghost sm" data-go="workflow">Workflow map</button>
               </div>

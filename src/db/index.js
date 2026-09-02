@@ -112,6 +112,29 @@ function migrate() {
   ensureColumn('prescriptions', 'sheet_id', 'INTEGER REFERENCES prescription_sheets(id)');
   ensureColumn('prescriptions', 'doctor_id', 'INTEGER REFERENCES users(id)');
 
+  /*
+   * How the medicine is actually taken, in the form an Indian patient reads it:
+   * a dose per slot (the familiar 1-0-1 pattern), whether it goes before or
+   * after food, and what one dose is measured in — a tablet, a spoon, a drop.
+   * `frequency` stays as the clinical shorthand, derived from the slots.
+   */
+  for (const [col, def] of [
+    ['dose_morning', 'REAL NOT NULL DEFAULT 0'],
+    ['dose_afternoon', 'REAL NOT NULL DEFAULT 0'],
+    ['dose_night', 'REAL NOT NULL DEFAULT 0'],
+    ['dose_unit', 'TEXT'],
+    ['food_relation', 'TEXT'],
+  ]) ensureColumn('prescriptions', col, def);
+
+  /*
+   * A doctor's signature, stored once and stamped onto what they sign. It is an
+   * image and nothing else — no name goes on a printed sheet — and the blank
+   * box is still there for a physical stamp when a sheet is not signed here.
+   */
+  ensureColumn('doctor_profiles', 'signature_image', 'TEXT');
+  ensureColumn('prescription_sheets', 'signed_at', 'TEXT');
+  ensureColumn('prescription_sheets', 'signature_image', 'TEXT');
+
   // Why the reading was taken. A reading tied to a visit inherits the visit's
   // reason; one recorded at the desk carries its own.
   ensureColumn('vitals', 'purpose', 'TEXT');

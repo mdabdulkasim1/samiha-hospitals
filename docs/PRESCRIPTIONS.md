@@ -8,9 +8,50 @@ which searches their own patients: anyone booked with them, seen by them, or
 prescribed for by them before. A doctor never searches the whole register.
 
 Medicines come from the pharmacy's **own formulary**, with live stock shown as
-you type, so what is written is what the counter can actually hand over. Each
-line takes dose, frequency, route, duration and instructions; the quantity is
-worked out from frequency × duration and can be overridden.
+you type, so what is written is what the counter can actually hand over.
+
+### How to take it
+
+A prescription is only as good as the patient's understanding of it, so each
+medicine is written the way it is read across India:
+
+| | |
+|---|---|
+| **Morning · Noon · Night** | A dose for each — the familiar **1 - 0 - 1** |
+| **Food** | Before food, after food, with food, on an empty stomach, at bedtime, any time |
+| **For how many days** | And the total to dispense, worked out from the two but overridable |
+| **Note for the patient** | "Finish the full course", "plenty of water", "do not chew" |
+
+The clinical shorthand follows from the slots rather than being typed — one slot
+is OD, two is BD, three is TDS — and the unit follows the medicine's form, so a
+syrup is prescribed in **ml** and a tablet in **tablets**. A medicine taken only
+when needed has no slots and keeps **SOS** or **STAT** instead.
+
+As the doctor types, the line reads back in plain words:
+
+> **1 - 1 - 1**  1 tablet in the morning, 1 tablet in the noon and 1 tablet in
+> the night, after food · for 3 day(s) · 9 tablets in all
+
+and that is what prints, so the patient reads exactly what the doctor meant.
+
+### Save, Sign, Print
+
+Three separate things, because they are:
+
+| | |
+|---|---|
+| **Save** | The prescription exists and **the pharmacy can see it**. Written against a visit it joins the dispensing queue; without one it appears under Pharmacy → Prescriptions. |
+| **Sign** | The doctor's own signature goes onto it. The first time, they draw it or upload a scan; after that it is stamped on with one press. |
+| **Print** | The patient walks out with the paper. |
+
+Saving happens once — signing and printing act on the sheet that was saved, so a
+doctor can save now and sign or print later without a second prescription being
+created for the same consultation.
+
+A signature is stored per doctor and **stamped onto the sheet at the moment of
+signing**, so changing or removing it later never rewrites a prescription
+already in a patient's hands. Unsigned sheets still print the blank box for a
+physical stamp.
 
 **Allergies are checked before anything is saved**, by name, by generic name and
 by **drug class** — a patient whose file says "penicillin" is stopped from being

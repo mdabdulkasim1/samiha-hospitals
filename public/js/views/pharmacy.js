@@ -27,6 +27,7 @@
         <div class="tabs" id="ph-tabs">
           <button class="active" data-tab="queue">Dispensing queue</button>
           <button data-tab="counter">Counter sale</button>
+          <button data-tab="prescriptions">Prescriptions</button>
           <button data-tab="sales">Bills</button>
           <button data-tab="stock">Stock &amp; alerts</button>
           <button data-tab="barcodes">Barcodes</button>
@@ -237,6 +238,35 @@
           });
 
           drawCart();
+        },
+
+        /**
+         * Prescriptions the doctors have saved. A prescription written against
+         * a visit is already in the dispensing queue; one written without a
+         * visit only exists here, and this is where the counter finds it.
+         */
+        async prescriptions() {
+          const rows = await API.get('/api/prescriptions?limit=60');
+          body.innerHTML = `<div class="card">
+            <div class="card-head"><h3>Prescriptions from the doctors</h3>
+              <span class="muted small">Newest first — open one to dispense against it</span></div>
+            <div class="card-body tight" id="rx-list"></div></div>`;
+
+          body.querySelector('#rx-list').innerHTML = UI.table([
+            { label: 'Rx', render: (r) => `<code>${UI.esc(r.rx_no)}</code>` },
+            { label: 'When', render: (r) => UI.esc(UI.dateTime(r.created_at)) },
+            { label: 'Patient', render: (r) => `<b>${UI.esc(r.patient_name)}</b>` +
+              `<div class="muted small">${UI.esc(r.uhid)} · ${UI.esc(r.age_years || '—')}` +
+              `${r.age_years ? 'y' : ''} ${UI.esc(UI.titleise(r.gender || ''))}</div>` },
+            { label: 'Diagnosis', render: (r) => UI.esc(r.diagnosis || '—') },
+            { label: 'Medicines', render: (r) => `<div class="small">${UI.esc(r.medicines || '')}</div>` },
+            { label: 'Signed', render: (r) => r.signed_at
+              ? UI.badge('Signed', 'ok') : UI.badge('Not signed', '') },
+            { label: '', render: (r) => `<button class="btn ghost sm" data-rx="${r.id}">Open</button>` },
+          ], rows, { emptyText: 'No prescription has been written yet.' });
+
+          body.querySelectorAll('[data-rx]').forEach((b) =>
+            b.addEventListener('click', () => openPrescription(Number(b.dataset.rx))));
         },
 
         async sales() {
@@ -640,6 +670,69 @@
         .receipt { background: #fff; box-shadow: 0 2px 12px rgba(0,0,0,.18); }
       }
     </style>`;
+  }
+
+  /**
+   * One prescription, as the counter reads it: what to hand over, how much of
+   * it, and the directions to repeat back to the patient.
+   */
+  async function openPrescription(id) {
+    const rx = await API.get(`/api/prescriptions/${id}`);
+    const slotText = (i) => {
+      const per = [i.dose_morning, i.dose_afternoon, i.dose_night];
+      return per.some((n) => n > 0) ? per.map((n) => Number(n) || 0).join('-') : (i.frequency || '');
+    };
+    const food = {
+      after_food: 'after food', before_food: 'before food', with_food: 'with food',
+      empty_stomach: 'on an empty stomach', bedtime: 'at bedtime', anytime: 'any time',
+    };
+
+    UI.modal({
+      title: `${rx.rx_no} — ${rx.first_name} ${rx.last_name || ''}`.trim(),
+      size: 'wide',
+      body: `
+        <div class="row-between mb">
+          <div class="muted small">${UI.esc(rx.uhid)} ·
+            ${UI.esc(rx.age_years || '—')}${rx.age_years ? 'y' : ''} ·
+            ${UI.esc(UI.titleise(rx.gender || '—'))} ·
+            ${UI.esc(UI.dateTime(rx.created_at))}</div>
+          <div class="muted small">${UI.esc(rx.doctor_code || '')}
+            ${rx.signed_at ? UI.badge('Signed', 'ok') : UI.badge('Not signed', 'warn')}</div>
+        </div>
+        ${rx.allergies ? `<div class="alert danger">Allergic to: ${UI.esc(rx.allergies)}</div>` : ''}
+        ${rx.diagnosis ? `<div class="alert info"><b>Diagnosis:</b> ${UI.esc(rx.diagnosis)}</div>` : ''}
+        ${UI.table([
+          { label: 'Medicine', render: (i) => `<b>${UI.esc(i.drug_name)}</b>` +
+            `<div class="muted small">${UI.esc(i.form || '')}` +
+            `${['H', 'H1', 'X'].includes(String(i.schedule_type || '').toUpperCase())
+              ? ' · ' + UI.badge('Schedule ' + i.schedule_type, 'warn') : ''}</div>` },
+          { label: 'How to take it', render: (i) => `<b>${UI.esc(slotText(i))}</b>` +
+            `<div class="muted small">${UI.esc(food[i.food_relation] || '')}` +
+            `${i.duration_days ? ` · ${UI.esc(i.duration_days)} day(s)` : ''}` +
+            `${i.instructions ? ` · ${UI.esc(i.instructions)}` : ''}</div>` },
+          { label: 'To hand over', num: true, render: (i) => `<b>${UI.esc(i.quantity)}</b> ` +
+            `${UI.esc(i.dose_unit || '')}` },
+          { label: 'Dispensed', num: true, render: (i) => UI.esc(i.dispensed_qty || 0) },
+          { label: 'Status', render: (i) => UI.statusBadge(i.status) },
+        ], rx.items)}
+        ${rx.advice ? `<div class="mt"><span class="muted small">Advice</span>
+          <div>${UI.esc(rx.advice)}</div></div>` : ''}`,
+      footer: `<button class="btn ghost" data-act="__close">Close</button>
+        ${rx.visit_id
+          ? '<button class="btn" data-act="queue">Open the dispensing queue</button>'
+          : '<button class="btn" data-act="counter">Dispense at the counter</button>'}`,
+      onAction(act) {
+        if (act === 'queue') return void APP.navigate('pharmacy', { visitId: rx.visit_id });
+        if (act === 'counter') {
+          // A prescription with no visit is settled at the counter, so the
+          // medicines and the Rx number go across rather than being re-typed.
+          UI.closeAllModals();
+          APP.navigate('pharmacy');
+          setTimeout(() => UI.warn(
+            `Open Counter sale and quote ${rx.rx_no} as the prescription reference.`), 400);
+        }
+      },
+    });
   }
 
   function openReceive() {

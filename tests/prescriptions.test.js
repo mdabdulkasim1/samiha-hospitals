@@ -56,6 +56,8 @@ test.before(async () => {
   ids.para = drugs.find((d) => d.code === 'PARA500').id;
   ids.pan = drugs.find((d) => d.code === 'PAN40').id;
   ids.amox = drugs.find((d) => d.code === 'AMOX500').id;
+  ids.pan = drugs.find((d) => d.code === 'PAN40').id;
+  ids.syrup = drugs.find((d) => d.code === 'SYRPARA').id;   // paracetamol syrup
 
   ids.patient = (await api('POST', '/api/patients', {
     firstName: 'Kumar', lastName: 'Raman', phone: '9845020001', gender: 'male',
@@ -98,6 +100,51 @@ test('a doctor writes a prescription from the pharmacy formulary', async () => {
   // Quantity is worked out from frequency × duration when it is not given.
   assert.strictEqual(rx.body.items[0].quantity, 9, 'three times a day for three days');
   assert.strictEqual(rx.body.items[1].quantity, 5);
+});
+
+test('how to take it is captured as morning, noon and night', async () => {
+  const res = await api('POST', '/api/prescriptions', {
+    patientId: ids.patient,
+    items: [
+      // A tablet three times a day after food.
+      { drugId: ids.para, doseMorning: 1, doseAfternoon: 1, doseNight: 1,
+        foodRelation: 'after_food', durationDays: 3 },
+      // A syrup, morning and night, measured in millilitres.
+      { drugId: ids.syrup, doseMorning: 5, doseNight: 5, foodRelation: 'after_food', durationDays: 5 },
+      // One before breakfast.
+      { drugId: ids.pan, doseMorning: 1, foodRelation: 'before_food', durationDays: 7 },
+    ],
+  }, 'imran');
+  assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+
+  const [tds, syrup, od] = res.body.items;
+  assert.deepStrictEqual([tds.dose_morning, tds.dose_afternoon, tds.dose_night], [1, 1, 1]);
+  assert.strictEqual(tds.frequency, 'TDS', 'the shorthand follows the slots, it is not typed');
+  assert.strictEqual(tds.food_relation, 'after_food');
+  assert.strictEqual(tds.dose_unit, 'tablet');
+  assert.strictEqual(tds.quantity, 9, 'three a day for three days');
+  assert.strictEqual(tds.dose, '1-1-1 tablet', 'readable on its own in the ward chart');
+
+  // A syrup is measured in millilitres, not in "1".
+  assert.strictEqual(syrup.dose_unit, 'ml');
+  assert.strictEqual(syrup.frequency, 'BD');
+  assert.strictEqual(syrup.quantity, 50, '10 ml a day for five days');
+
+  assert.strictEqual(od.frequency, 'OD');
+  assert.strictEqual(od.food_relation, 'before_food');
+  assert.strictEqual(od.quantity, 7);
+});
+
+test('a medicine taken only when needed keeps its plain frequency', async () => {
+  const rx = (await api('POST', '/api/prescriptions', {
+    patientId: ids.patient,
+    items: [{ drugId: ids.para, frequency: 'SOS', durationDays: 3, instructions: 'If the fever is above 100 F' }],
+  }, 'imran')).body;
+  const it = rx.items[0];
+  assert.strictEqual(it.frequency, 'SOS');
+  assert.strictEqual(it.dose_morning + it.dose_afternoon + it.dose_night, 0,
+    'no slot is ticked, because there is no fixed time');
+  assert.ok(it.quantity > 0, 'the counter still knows how much to hand over');
 });
 
 test('a medicine the pharmacy has never heard of cannot be prescribed', async () => {
@@ -279,6 +326,53 @@ test('registering on a known number names the household rather than just refusin
   });
   assert.strictEqual(added.status, 201);
   assert.strictEqual((await api('GET', '/api/patients/by-phone?phone=9845020001')).body.count, 4);
+});
+
+// -------------------------------------------------------- saving and signing
+test('saving, signing and printing are three separate things', async () => {
+  const rx = (await api('POST', '/api/prescriptions', {
+    patientId: ids.patient,
+    items: [{ drugId: ids.para, doseMorning: 1, doseNight: 1, foodRelation: 'after_food', durationDays: 3 }],
+  }, 'imran')).body;
+
+  // Saved, but not signed — the pharmacy can already see it.
+  assert.strictEqual(rx.signed_at, null);
+  assert.ok((await api('GET', '/api/prescriptions', undefined, 'pharmacy')).body.some((r) => r.id === rx.id));
+
+  // Signing needs a signature on file, and says so rather than failing quietly.
+  const noSig = await api('POST', `/api/prescriptions/${rx.id}/sign`, {}, 'imran');
+  assert.strictEqual(noSig.status, 400);
+  assert.match(noSig.body.error, /No signature on file/i);
+
+  // Only an image is accepted, and only a small one.
+  assert.strictEqual((await api('PUT', '/api/me/signature', { signature: 'not-an-image' }, 'imran')).status, 400);
+  assert.strictEqual((await api('PUT', '/api/me/signature',
+    { signature: `data:image/png;base64,${'A'.repeat(500000)}` }, 'imran')).status, 400);
+
+  const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  assert.strictEqual((await api('PUT', '/api/me/signature', { signature: png }, 'imran')).status, 200);
+
+  const signed = (await api('POST', `/api/prescriptions/${rx.id}/sign`, {}, 'imran')).body;
+  assert.ok(signed.signed_at, 'the sheet records when it was signed');
+  assert.strictEqual(signed.signature_image, png, 'and carries the ink that was used');
+
+  // Only the prescriber signs their own.
+  assert.strictEqual((await api('POST', `/api/prescriptions/${rx.id}/sign`, {}, 'sara')).status, 403);
+});
+
+test('changing a signature does not rewrite what is already signed', async () => {
+  const first = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const sheets = (await api('GET', '/api/prescriptions', undefined, 'imran')).body;
+  const signed = sheets.find((r) => r.signed_at);
+  assert.ok(signed, 'something has been signed by now');
+
+  await api('PUT', '/api/me/signature', { signature: null }, 'imran');
+  const still = (await api('GET', `/api/prescriptions/${signed.id}`, undefined, 'imran')).body;
+  assert.strictEqual(still.signature_image, first,
+    'a sheet already in a patient\'s hand keeps the signature it went out with');
+
+  // And a doctor can take their signature off the file entirely.
+  assert.strictEqual((await api('GET', '/api/me/signature', undefined, 'imran')).body.signature, null);
 });
 
 // ---------------------------------------------------------- the doctor code

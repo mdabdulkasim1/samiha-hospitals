@@ -13,17 +13,73 @@
 (function () {
   'use strict';
 
-  const FREQUENCIES = [
-    { value: 'OD', label: 'OD — once a day', perDay: 1 },
-    { value: 'BD', label: 'BD — twice a day', perDay: 2 },
-    { value: 'TDS', label: 'TDS — three times a day', perDay: 3 },
-    { value: 'QID', label: 'QID — four times a day', perDay: 4 },
-    { value: 'HS', label: 'HS — at bedtime', perDay: 1 },
-    { value: 'SOS', label: 'SOS — as needed', perDay: 1 },
-    { value: 'STAT', label: 'STAT — at once', perDay: 1 },
-  ];
   const ROUTES = ['oral', 'topical', 'inhalation', 'eye', 'ear', 'nasal', 'iv', 'im', 'sc', 'rectal'];
-  const perDay = (f) => (FREQUENCIES.find((x) => x.value === f) || { perDay: 1 }).perDay;
+
+  /*
+   * A prescription is only as good as the patient's understanding of it, so
+   * this is written the way it is read across India: a dose for the morning,
+   * for midday and for the night — the familiar 1-0-1 — and whether it goes
+   * before or after food. The clinical shorthand (OD, BD, TDS) follows from
+   * that rather than being typed.
+   */
+  const SLOTS = [
+    { key: 'doseMorning', label: 'Morning', hint: 'ā§å' },
+    { key: 'doseAfternoon', label: 'Noon', hint: '' },
+    { key: 'doseNight', label: 'Night', hint: '' },
+  ];
+
+  const FOOD = [
+    { value: 'after_food', label: 'After food', plain: 'after food' },
+    { value: 'before_food', label: 'Before food', plain: 'before food' },
+    { value: 'with_food', label: 'With food', plain: 'with food' },
+    { value: 'empty_stomach', label: 'Empty stomach', plain: 'on an empty stomach' },
+    { value: 'bedtime', label: 'At bedtime', plain: 'at bedtime' },
+    { value: 'anytime', label: 'Any time', plain: 'at any time' },
+  ];
+
+  /** As-needed medicines have no slots — they keep a plain frequency. */
+  const AS_NEEDED = [
+    { value: 'SOS', label: 'SOS — only if needed' },
+    { value: 'STAT', label: 'STAT — one dose, at once' },
+  ];
+
+  /** What one dose is measured in, so "1" is never left to guesswork. */
+  const UNIT_BY_FORM = {
+    tablet: 'tablet', capsule: 'capsule', syrup: 'ml', suspension: 'ml', solution: 'ml',
+    drops: 'drop', injection: 'dose', ointment: 'application', cream: 'application',
+    gel: 'application', sachet: 'sachet', inhaler: 'puff', spray: 'spray',
+    lotion: 'application', suppository: 'suppository',
+  };
+  const unitFor = (form) => UNIT_BY_FORM[String(form || '').toLowerCase()] || 'dose';
+
+  /** Plural only where a patient would say it: 2 tablets, but 5 ml. */
+  const unitLabel = (n, unit) =>
+    (['ml', 'puff', 'spray'].includes(unit) || Number(n) === 1) ? unit : `${unit}s`;
+
+  /** "1-0-1" — the pattern every patient recognises. */
+  const pattern = (l) => [l.doseMorning, l.doseAfternoon, l.doseNight]
+    .map((n) => (Number(n) === 0 ? '0' : String(Number(n)))).join(' - ');
+
+  const perDayOf = (l) => Number(l.doseMorning || 0) + Number(l.doseAfternoon || 0) + Number(l.doseNight || 0);
+
+  /**
+   * The line the patient actually follows: how much, when in the day, and
+   * where food comes into it.
+   */
+  function plainDirection(l) {
+    const food = (FOOD.find((f) => f.value === l.foodRelation) || {}).plain;
+    if (perDayOf(l) <= 0) {
+      const when = l.frequency === 'STAT' ? 'Take one dose now' : 'Take only when needed';
+      return `${when}${food && food !== 'at any time' ? ', ' + food : ''}`;
+    }
+    const parts = SLOTS
+      .filter((sl) => Number(l[sl.key]) > 0)
+      .map((sl) => `${Number(l[sl.key])} ${unitLabel(l[sl.key], l.unit)} in the ${sl.label.toLowerCase()}`);
+    const joined = parts.length > 1
+      ? `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}`
+      : parts[0];
+    return `${joined}${food ? ', ' + food : ''}`;
+  }
 
   /**
    * Open the pad for a patient. `context` may carry a visitId (which puts the
@@ -32,6 +88,10 @@
   async function open(patient, context = {}) {
     const drugs = await API.get('/api/pharmacy/drugs?limit=500');
     const lines = [];
+    // The sheet, once saved. Signing and printing act on this rather than
+    // creating a second prescription for the same consultation.
+    let saved = null;
+    let needsRefresh = false;
 
     UI.modal({
       title: `Prescription — ${patient.first_name} ${patient.last_name || ''}`.trim(),
@@ -76,10 +136,15 @@
             ${UI.field({ name: 'followUpDate', label: 'Review on', type: 'date' })}
           </div>
         </form>`,
+      onClose() { if (needsRefresh && context.onDone) context.onDone(); },
       footer: `<button class="btn ghost" data-act="__close">Cancel</button>
-               <button class="btn" data-act="save" disabled>Sign &amp; print</button>`,
+               <button class="btn ghost" data-act="save" disabled>Save</button>
+               <button class="btn teal" data-act="sign" disabled>Sign</button>
+               <button class="btn" data-act="print" disabled>Print</button>`,
       onMount(modal) {
         const saveBtn = document.querySelector('[data-act=save]');
+        const signBtn = document.querySelector('[data-act=sign]');
+        const printBtn = document.querySelector('[data-act=print]');
         const linesHost = modal.querySelector('#rx-lines');
         const resultsHost = modal.querySelector('#rx-results');
         const search = modal.querySelector('#rx-q');
@@ -91,40 +156,96 @@
         };
 
         const draw = () => {
-          linesHost.innerHTML = lines.length ? UI.table([
-            { label: '#', render: (l, i) => String(i + 1) },
-            { label: 'Medicine', render: (l) => `<b>${UI.esc(l.drugName)}</b>` +
-              `<div class="muted small">${UI.esc(l.form || '')}` +
-              `${l.scheduleType && ['H', 'H1', 'X'].includes(String(l.scheduleType).toUpperCase())
-                ? ' · ' + UI.badge('Schedule ' + l.scheduleType, 'warn') : ''}` +
-              `${l.allergy ? ' · ' + UI.badge('⚠ allergy', 'danger') : ''}</div>` },
-            { label: 'Dose', render: (l, i) =>
-              `<input type="text" value="${UI.esc(l.dose)}" data-f="dose" data-i="${i}" style="width:96px">` },
-            { label: 'Frequency', render: (l, i) =>
-              `<select data-f="frequency" data-i="${i}" style="width:130px">${FREQUENCIES.map((f) =>
-                `<option value="${f.value}"${f.value === l.frequency ? ' selected' : ''}>${f.value}</option>`).join('')}</select>` },
-            { label: 'Route', render: (l, i) =>
-              `<select data-f="route" data-i="${i}" style="width:110px">${ROUTES.map((r) =>
-                `<option value="${r}"${r === l.route ? ' selected' : ''}>${r.toUpperCase()}</option>`).join('')}</select>` },
-            { label: 'Days', num: true, render: (l, i) =>
-              `<input type="number" min="1" value="${UI.esc(l.durationDays)}" data-f="durationDays" data-i="${i}" style="width:64px;text-align:right">` },
-            { label: 'Qty', num: true, render: (l, i) =>
-              `<input type="number" min="0" value="${UI.esc(l.quantity)}" data-f="quantity" data-i="${i}" style="width:70px;text-align:right">` },
-            { label: 'Instructions', render: (l, i) =>
-              `<input type="text" value="${UI.esc(l.instructions)}" data-f="instructions" data-i="${i}" placeholder="after food" style="width:130px">` },
-            { label: '', render: (l, i) => `<button type="button" class="btn ghost sm" data-rm="${i}">×</button>` },
-          ], lines) : UI.empty('Search above and add the medicines you are prescribing.', '℞');
+          if (!lines.length) {
+            linesHost.innerHTML = UI.empty('Search above and add the medicines you are prescribing.', '℞');
+            [saveBtn, signBtn, printBtn].forEach((b) => { if (b) b.disabled = true; });
+            return;
+          }
+
+          // A card per medicine rather than a row: there is too much that
+          // matters here to squeeze into a table, and this is the part the
+          // patient has to be able to follow.
+          linesHost.innerHTML = lines.map((l, i) => `
+            <div class="rx-line">
+              <div class="rx-line-head">
+                <span class="rx-n">${i + 1}</span>
+                <span class="rx-med">
+                  <b>${UI.esc(l.drugName)}</b>
+                  <span class="muted small">${UI.esc(l.form || '')}
+                    ${l.scheduleType && ['H', 'H1', 'X'].includes(String(l.scheduleType).toUpperCase())
+                      ? UI.badge('Schedule ' + l.scheduleType, 'warn') : ''}
+                    ${l.allergy ? UI.badge('⚠ allergy', 'danger') : ''}</span>
+                </span>
+                <button type="button" class="btn ghost sm" data-rm="${i}" title="Remove">×</button>
+              </div>
+
+              <div class="rx-line-grid">
+                <div class="rx-slots">
+                  <label class="field"><span>How much, and when</span></label>
+                  <div class="rx-slot-row">
+                    ${SLOTS.map((sl) => `
+                      <label class="rx-slot">
+                        <span>${sl.label}</span>
+                        <input type="number" min="0" step="0.5" data-f="${sl.key}" data-i="${i}"
+                               value="${UI.esc(l[sl.key])}">
+                      </label>`).join('')}
+                    <span class="rx-unit">${UI.esc(unitLabel(2, l.unit))}</span>
+                  </div>
+                </div>
+
+                <label class="field"><span>Food</span>
+                  <select data-f="foodRelation" data-i="${i}">
+                    ${FOOD.map((f) => `<option value="${f.value}"${
+                      f.value === l.foodRelation ? ' selected' : ''}>${f.label}</option>`).join('')}
+                  </select>
+                </label>
+
+                <label class="field"><span>For how many days</span>
+                  <input type="number" min="1" data-f="durationDays" data-i="${i}" value="${UI.esc(l.durationDays)}">
+                </label>
+
+                <label class="field"><span>Total to dispense</span>
+                  <input type="number" min="0" step="0.5" data-f="quantity" data-i="${i}" value="${UI.esc(l.quantity)}">
+                </label>
+              </div>
+
+              <div class="rx-line-grid">
+                <label class="field" style="grid-column:span 2"><span>Note for the patient</span>
+                  <input type="text" data-f="instructions" data-i="${i}" value="${UI.esc(l.instructions)}"
+                         placeholder="Finish the full course · plenty of water · do not chew">
+                </label>
+                <label class="field"><span>Only when needed?</span>
+                  <select data-f="frequency" data-i="${i}"${perDayOf(l) > 0 ? ' disabled' : ''}>
+                    ${AS_NEEDED.map((f) => `<option value="${f.value}"${
+                      f.value === l.frequency ? ' selected' : ''}>${f.label}</option>`).join('')}
+                  </select>
+                </label>
+                <label class="field"><span>Route</span>
+                  <select data-f="route" data-i="${i}">
+                    ${ROUTES.map((r) => `<option value="${r}"${r === l.route ? ' selected' : ''}>${
+                      r.toUpperCase()}</option>`).join('')}
+                  </select>
+                </label>
+              </div>
+
+              <div class="rx-preview">
+                <b>${UI.esc(pattern(l))}</b>
+                <span>${UI.esc(plainDirection(l))}</span>
+                <span class="muted">${l.durationDays ? `for ${UI.esc(l.durationDays)} day(s)` : ''}
+                  ${l.quantity ? `· ${UI.esc(l.quantity)} ${UI.esc(unitLabel(l.quantity, l.unit))} in all` : ''}</span>
+              </div>
+            </div>`).join('');
 
           linesHost.querySelectorAll('[data-f]').forEach((input) => {
             input.addEventListener('change', () => {
               const line = lines[Number(input.dataset.i)];
               line[input.dataset.f] = input.value;
-              // Changing how long or how often re-suggests the quantity, unless
-              // the doctor has already typed one of their own.
-              if (['frequency', 'durationDays'].includes(input.dataset.f) && !line.qtyTouched) {
-                line.quantity = perDay(line.frequency) * (Number(line.durationDays) || 0);
-              }
               if (input.dataset.f === 'quantity') line.qtyTouched = true;
+              // Change how much or how long, and the total to dispense follows —
+              // unless the doctor has set one of their own.
+              if (!line.qtyTouched && input.dataset.f !== 'quantity') {
+                line.quantity = Math.ceil(Math.max(perDayOf(line), 1) * (Number(line.durationDays) || 1));
+              }
               setTimeout(draw, 0);
             });
           });
@@ -132,18 +253,22 @@
             lines.splice(Number(b.dataset.rm), 1);
             draw();
           }));
-          saveBtn.disabled = !lines.length;
+          [saveBtn, signBtn, printBtn].forEach((b) => { if (b) b.disabled = false; });
         };
 
         const add = (drug) => {
           if (lines.some((l) => l.drugId === drug.id)) return UI.warn(`${drug.name} is already on this prescription.`);
+          // Twice a day after food for five days is the commonest thing an OPD
+          // writes, so the line starts there and is changed from there.
           lines.push({
             drugId: drug.id,
             drugName: `${drug.name}${drug.strength ? ' ' + drug.strength : ''}`,
             form: drug.form, scheduleType: drug.schedule_type,
             allergy: allergyHit(drug),
-            dose: '1', frequency: 'BD', route: 'oral', durationDays: 5,
-            quantity: 10, instructions: '',
+            unit: unitFor(drug.form),
+            doseMorning: 1, doseAfternoon: 0, doseNight: 1,
+            foodRelation: 'after_food', frequency: 'SOS',
+            route: 'oral', durationDays: 5, quantity: 10, instructions: '',
           });
           if (allergyHit(drug)) UI.err(`⚠ ${drug.name} may conflict with a recorded allergy.`);
           search.value = '';
@@ -183,36 +308,196 @@
 
         draw();
       },
+      /*
+       * Three things a doctor does with a prescription, and they are not the
+       * same thing:
+       *   Save   — the pharmacy can see it and start dispensing
+       *   Sign   — the doctor's own signature goes onto it
+       *   Print  — the patient walks out with the paper
+       *
+       * Saving happens once; signing and printing act on what was saved, so a
+       * doctor can save now, sign, and print later without a second sheet
+       * being created.
+       */
       async onAction(act, modal) {
-        if (act !== 'save') return;
+        if (!['save', 'sign', 'print'].includes(act)) return;
         if (!lines.length) { UI.err('Add at least one medicine.'); return 'keep'; }
 
-        const payload = {
-          patientId: patient.id,
-          visitId: context.visitId || undefined,
-          appointmentId: context.appointmentId || undefined,
-          ...UI.formValues(modal.querySelector('#rx-head')),
-          ...UI.formValues(modal.querySelector('#rx-foot')),
-          items: lines.map((l) => ({
-            drugId: l.drugId, dose: l.dose, frequency: l.frequency, route: l.route,
-            durationDays: l.durationDays, quantity: l.quantity, instructions: l.instructions,
-          })),
+        const save = async () => {
+          if (saved) return saved;
+          const payload = {
+            patientId: patient.id,
+            visitId: context.visitId || undefined,
+            appointmentId: context.appointmentId || undefined,
+            ...UI.formValues(modal.querySelector('#rx-head')),
+            ...UI.formValues(modal.querySelector('#rx-foot')),
+            items: lines.map((l) => ({
+              drugId: l.drugId, route: l.route, durationDays: l.durationDays,
+              quantity: l.quantity, instructions: l.instructions,
+              doseMorning: l.doseMorning, doseAfternoon: l.doseAfternoon, doseNight: l.doseNight,
+              doseUnit: l.unit, foodRelation: l.foodRelation,
+              // Only meaningful when no slot is ticked.
+              frequency: l.frequency,
+            })),
+          };
+          try {
+            saved = await API.post('/api/prescriptions', payload);
+          } catch (err) {
+            if (err.status === 409 && /Safety check/.test(err.message)) {
+              if (!(await UI.confirm(err.message, { title: 'Allergy warning', danger: true }))) return null;
+              saved = await API.post('/api/prescriptions', { ...payload, acknowledgeWarnings: true });
+            } else throw err;
+          }
+          // The caller usually refreshes the screen behind us, which would tear
+          // this modal down mid-flow — so it is told once, on the way out.
+          needsRefresh = true;
+          return saved;
         };
 
-        let sheet;
-        try {
-          sheet = await API.post('/api/prescriptions', payload);
-        } catch (err) {
-          if (err.status === 409 && /Safety check/.test(err.message)) {
-            if (!(await UI.confirm(err.message, { title: 'Allergy warning', danger: true }))) return 'keep';
-            sheet = await API.post('/api/prescriptions', { ...payload, acknowledgeWarnings: true });
-          } else throw err;
+        const sheet = await save();
+        if (!sheet) return 'keep';
+
+        if (act === 'save') {
+          UI.ok(`Prescription ${sheet.rx_no} saved — the pharmacy can see it now.`);
+          markSaved(modal, sheet);
+          return 'keep';
         }
 
-        UI.ok(`Prescription ${sheet.rx_no} signed.`);
-        printSheet(sheet);
-        if (context.onDone) context.onDone();
+        if (act === 'sign') {
+          let signed;
+          try {
+            signed = await API.post(`/api/prescriptions/${sheet.id}/sign`, {});
+          } catch (err) {
+            if (!/No signature on file/i.test(err.message)) throw err;
+            // Nothing to sign with yet — take one now rather than sending them
+            // away to a settings screen mid-consultation.
+            const image = await captureSignature();
+            if (!image) return 'keep';
+            await API.put('/api/me/signature', { signature: image });
+            signed = await API.post(`/api/prescriptions/${sheet.id}/sign`, {});
+          }
+          saved = signed;
+          UI.ok(`Prescription ${signed.rx_no} signed.`);
+          markSaved(modal, signed);
+          return 'keep';
+        }
+
+        printSheet(saved);
+        markSaved(modal, saved);
+        return 'keep';
       },
+    });
+  }
+
+  /** Once saved, the sheet has a number and a state the doctor can see. */
+  function markSaved(modal, sheet) {
+    const saveBtn = document.querySelector('[data-act=save]');
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saved'; }
+    const cancelBtn = document.querySelector('[data-act=__close]');
+    if (cancelBtn && cancelBtn.textContent === 'Cancel') cancelBtn.textContent = 'Close';
+    const signBtn = document.querySelector('[data-act=sign]');
+    if (signBtn && sheet.signed_at) { signBtn.disabled = true; signBtn.textContent = 'Signed'; }
+
+    let bar = modal.querySelector('#rx-state');
+    if (!bar) {
+      const head = modal.querySelector('#rx-head');
+      bar = document.createElement('div');
+      bar.id = 'rx-state';
+      bar.className = 'alert ok mb';
+      head.parentNode.insertBefore(bar, head);
+    }
+    bar.innerHTML = `<b>${UI.esc(sheet.rx_no)}</b> saved — the pharmacy can see it.
+      ${sheet.signed_at
+        ? `Signed ${UI.esc(UI.dateTime(sheet.signed_at))}.`
+        : 'Not signed yet — press <b>Sign</b> to add your signature, or stamp the printed sheet by hand.'}`;
+  }
+
+  /**
+   * Take a signature. A doctor signs with a finger on a tablet or a mouse at a
+   * desk, so the pad accepts either — and an uploaded scan of a signature they
+   * already have, which is what most will do once.
+   */
+  function captureSignature() {
+    return new Promise((resolve) => {
+      let done = false;
+      UI.modal({
+        title: 'Your signature',
+        size: 'narrow',
+        body: `<p class="muted">Sign once and it goes onto everything you sign from now on.
+          Draw it below, or upload a scan of your usual signature.</p>
+          <canvas id="sig-pad" width="560" height="200" class="sig-pad"></canvas>
+          <div class="btn-row mt">
+            <button type="button" class="btn ghost sm" id="sig-clear">Clear</button>
+            <label class="btn ghost sm" style="cursor:pointer">Upload an image
+              <input type="file" id="sig-file" accept="image/png,image/jpeg" hidden>
+            </label>
+          </div>
+          <div id="sig-out"></div>`,
+        footer: `<button class="btn ghost" data-act="__close">Cancel</button>
+                 <button class="btn" data-act="use">Use this signature</button>`,
+        onMount(modal) {
+          const canvas = modal.querySelector('#sig-pad');
+          const ctx = canvas.getContext('2d');
+          ctx.fillStyle = '#fff';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.lineWidth = 2.4;
+          ctx.lineCap = 'round';
+          ctx.lineJoin = 'round';
+          ctx.strokeStyle = '#16232B';
+
+          let drawing = false;
+          let drawn = false;
+          const at = (e) => {
+            const r = canvas.getBoundingClientRect();
+            const p = e.touches ? e.touches[0] : e;
+            return { x: (p.clientX - r.left) * (canvas.width / r.width),
+                     y: (p.clientY - r.top) * (canvas.height / r.height) };
+          };
+          const start = (e) => { e.preventDefault(); drawing = true; drawn = true;
+            const p = at(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); };
+          const move = (e) => { if (!drawing) return; e.preventDefault();
+            const p = at(e); ctx.lineTo(p.x, p.y); ctx.stroke(); };
+          const end = () => { drawing = false; };
+          canvas.addEventListener('mousedown', start);
+          canvas.addEventListener('mousemove', move);
+          window.addEventListener('mouseup', end);
+          canvas.addEventListener('touchstart', start, { passive: false });
+          canvas.addEventListener('touchmove', move, { passive: false });
+          canvas.addEventListener('touchend', end);
+
+          modal.querySelector('#sig-clear').addEventListener('click', () => {
+            ctx.fillStyle = '#fff';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            drawn = false;
+            modal.__uploaded = null;
+            modal.querySelector('#sig-out').innerHTML = '';
+          });
+
+          modal.querySelector('#sig-file').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            if (file.size > 300 * 1024) return UI.err('Keep the image under 300 KB.');
+            const reader = new FileReader();
+            reader.onload = () => {
+              modal.__uploaded = reader.result;
+              modal.querySelector('#sig-out').innerHTML =
+                `<div class="alert ok mt">Using the uploaded image.
+                   <img src="${reader.result}" alt="" style="max-height:60px;display:block;margin-top:6px"></div>`;
+            };
+            reader.readAsDataURL(file);
+          });
+
+          modal.__signature = () => modal.__uploaded || (drawn ? canvas.toDataURL('image/png') : null);
+        },
+        onAction(act, modal) {
+          if (act !== 'use') return;
+          const image = modal.__signature();
+          if (!image) { UI.err('Draw or upload a signature first.'); return 'keep'; }
+          done = true;
+          resolve(image);
+        },
+        onClose() { if (!done) resolve(null); },
+      });
     });
   }
 
@@ -234,92 +519,96 @@
     const c = APP.clinic || {};
     const age = sheet.age_years ? `${sheet.age_years} yrs` : '—';
 
-    UI.print(`
+    UI.print(`${UI.sheetStyles()}
       <style>
-        /* A5 is what the clinic's prescription pads are cut to. */
-        .rx { width: 128mm; margin: 0 auto; font-family: Georgia, "Times New Roman", serif;
-              color: #16232B; font-size: 11px; }
-        .rx-head { text-align: center; border-bottom: 2px solid #9E1B34; padding-bottom: 6px; }
-        .rx-head .clinic { font-size: 17px; font-weight: 700; letter-spacing: .5px; color: #9E1B34; }
-        .rx-head .tag { font-size: 8px; letter-spacing: 1.4px; text-transform: uppercase; color: #176B7C; margin-top: 2px; }
-        .rx-head .addr { font-size: 9.5px; color: #43555F; margin-top: 4px; }
-        .rx-patient { display: flex; flex-wrap: wrap; gap: 3px 16px; padding: 8px 0;
-          border-bottom: 1px dashed #B9C6CC; font-size: 10.5px; }
-        .rx-patient span b { font-weight: 700; }
-        .rx-note { font-size: 10.5px; margin: 7px 0 0; }
-        .rx-note .k { color: #74858E; font-size: 8.5px; text-transform: uppercase; letter-spacing: .06em; }
-        .rx-symbol { font-size: 26px; line-height: 1; margin: 9px 0 3px; color: #9E1B34; }
-        table.rx-meds { width: 100%; border-collapse: collapse; font-size: 11px; }
-        table.rx-meds td { padding: 4.5px 4px; vertical-align: top; border-bottom: 1px dotted #DFE6EA; }
-        table.rx-meds .n { width: 22px; color: #74858E; }
-        table.rx-meds .med { font-weight: 700; }
-        table.rx-meds .sig { color: #43555F; font-size: 10px; }
-        .rx-allergy { color: #B03A2E; font-weight: 700; font-size: 10.5px; margin-top: 5px; }
-        /* Left blank on purpose: the doctor stamps and signs the printed sheet. */
-        .rx-sign { margin-top: 16px; display: flex; justify-content: flex-end; }
-        .rx-stamp { text-align: center; width: 58mm; }
-        .rx-stamp-box { height: 22mm; border: 1px dashed #B9C6CC; border-radius: 3px; }
-        .rx-stamp-label { margin-top: 3px; font-size: 8.5px; color: #74858E;
-          letter-spacing: .06em; text-transform: uppercase; }
-        .rx-foot { margin-top: 12px; border-top: 1px solid #DFE6EA; padding-top: 5px;
-          font-size: 8.5px; color: #74858E; text-align: center; }
-        @media print { @page { size: A5 portrait; margin: 9mm; } .rx { width: auto; } }
-        @media screen { body { background: #eef1f3; padding: 14px 0; }
-          .rx { background: #fff; padding: 9mm; box-shadow: 0 2px 14px rgba(0,0,0,.15); } }
+        .rx-symbol {
+          font-family: Georgia, "Times New Roman", serif; font-size: 26px; line-height: 1;
+          margin: 12px 0 2px; color: #9E1B34;
+        }
+        .rx-med { font-weight: 700; font-size: 11.5px; }
+        .rx-how { margin-top: 2px; }
+        .rx-pat {
+          display: inline-block; font-weight: 700; letter-spacing: 1px; color: #9E1B34;
+          border: 1px solid #9E1B34; border-radius: 3px; padding: 0 5px; margin-right: 7px;
+          font-size: 10.5px;
+        }
+        .rx-sig { color: #5A6B74; font-size: 9.5px; margin-top: 2px; }
+        .rx-key { margin-top: 5px; font-size: 8px; color: #8B9AA2; }
+        .rx-qty { font-weight: 600; }
       </style>
-      <div class="rx">
-        <div class="rx-head">
-          <div class="clinic">${UI.esc(c.name || 'SAMIHA POLYCLINIC & DIAGNOSTICS')}</div>
-          <div class="tag">Care • Compassion • Commitment</div>
-          <div class="addr">${UI.esc(c.address || '')}${c.phone ? ' · ' + UI.esc(c.phone) : ''}</div>
+      <div class="sheet">
+        ${UI.sheetHead('Prescription')}
+
+        <div class="who">
+          <div style="grid-column:span 2">
+            <div class="k">Patient</div>
+            <div class="v lead">${UI.esc(sheet.first_name)} ${UI.esc(sheet.last_name || '')}</div>
+          </div>
+          <div><div class="k">Age / Sex</div>
+            <div class="v">${UI.esc(age)} · ${UI.esc(UI.titleise(sheet.gender || '—'))}</div></div>
+          <div><div class="k">UHID</div><div class="v">${UI.esc(sheet.uhid || '—')}</div></div>
+          <div><div class="k">Date</div><div class="v">${UI.esc(UI.date(sheet.created_at))}</div></div>
+          <div><div class="k">Prescription</div><div class="v">${UI.esc(sheet.rx_no)}</div></div>
+          <div><div class="k">Doctor code</div><div class="v">${UI.esc(sheet.doctor_code || '—')}</div></div>
         </div>
 
-        <div class="rx-patient">
-          <span><b>${UI.esc(sheet.first_name)} ${UI.esc(sheet.last_name || '')}</b></span>
-          <span>${UI.esc(age)} · ${UI.esc(UI.titleise(sheet.gender || '—'))}</span>
-          ${sheet.uhid ? `<span>UHID ${UI.esc(sheet.uhid)}</span>` : ''}
-          <span>${UI.esc(UI.date(sheet.created_at))}</span>
-          <span>${UI.esc(sheet.rx_no)}${sheet.doctor_code ? ' · ' + UI.esc(sheet.doctor_code) : ''}</span>
-        </div>
-
-        ${sheet.allergies ? `<div class="rx-allergy">Allergic to: ${UI.esc(sheet.allergies)}</div>` : ''}
-        ${sheet.complaints ? `<div class="rx-note"><span class="k">Complaints</span><br>${UI.esc(sheet.complaints)}</div>` : ''}
-        ${sheet.findings ? `<div class="rx-note"><span class="k">On examination</span><br>${UI.esc(sheet.findings)}</div>` : ''}
-        ${sheet.diagnosis ? `<div class="rx-note"><span class="k">Diagnosis</span><br><b>${UI.esc(sheet.diagnosis)}</b></div>` : ''}
+        ${sheet.allergies ? `<div class="warn">Allergic to: ${UI.esc(sheet.allergies)}</div>` : ''}
+        ${sheet.complaints ? `<div class="block"><div class="k">Complaints</div>
+          <p>${UI.esc(sheet.complaints)}</p></div>` : ''}
+        ${sheet.findings ? `<div class="block"><div class="k">On examination</div>
+          <p>${UI.esc(sheet.findings)}</p></div>` : ''}
+        ${sheet.diagnosis ? `<div class="block"><div class="k">Diagnosis</div>
+          <p class="strong">${UI.esc(sheet.diagnosis)}</p></div>` : ''}
 
         <div class="rx-symbol">℞</div>
-        <table class="rx-meds"><tbody>
-          ${sheet.items.map((it, i) => `<tr>
-            <td class="n">${i + 1}.</td>
-            <td>
-              <div class="med">${UI.esc(it.drug_name)}</div>
-              <div class="sig">${[
-                it.dose ? `${UI.esc(it.dose)}` : '',
-                it.frequency ? UI.esc(it.frequency) : '',
-                it.route && it.route !== 'oral' ? UI.esc(it.route.toUpperCase()) : '',
-                it.duration_days ? `× ${UI.esc(it.duration_days)} day(s)` : '',
-                it.instructions ? `— ${UI.esc(it.instructions)}` : '',
-              ].filter(Boolean).join(' · ')}</div>
-            </td>
-            <td class="sig" style="text-align:right;white-space:nowrap">
-              ${it.quantity ? `Qty ${UI.esc(it.quantity)}` : ''}</td>
-          </tr>`).join('')}
-        </tbody></table>
+        <table>
+          <thead><tr><th style="width:16px"></th><th>Medicine and how to take it</th>
+            <th class="num">Total</th></tr></thead>
+          <tbody>${sheet.items.map((it, i) => {
+            const line = {
+              doseMorning: it.dose_morning, doseAfternoon: it.dose_afternoon, doseNight: it.dose_night,
+              unit: it.dose_unit || 'dose', foodRelation: it.food_relation, frequency: it.frequency,
+            };
+            return `<tr>
+              <td style="color:#8B9AA2">${i + 1}.</td>
+              <td>
+                <div class="rx-med">${UI.esc(it.drug_name)}</div>
+                <div class="rx-how">
+                  ${perDayOf(line) > 0 ? `<span class="rx-pat">${UI.esc(pattern(line))}</span>` : ''}
+                  ${UI.esc(plainDirection(line))}
+                </div>
+                <div class="rx-sig">${[
+                  it.duration_days ? `For ${UI.esc(it.duration_days)} day(s)` : '',
+                  it.route && it.route !== 'oral' ? UI.esc(it.route.toUpperCase()) : '',
+                  it.instructions ? UI.esc(it.instructions) : '',
+                ].filter(Boolean).join(' · ')}</div>
+              </td>
+              <td class="num rx-qty">${it.quantity
+                ? `${UI.esc(it.quantity)} ${UI.esc(unitLabel(it.quantity, line.unit))}` : ''}</td>
+            </tr>`;
+          }).join('')}</tbody>
+        </table>
+        <div class="rx-key">1 - 0 - 1 means morning – noon – night.</div>
 
-        ${sheet.advice ? `<div class="rx-note" style="margin-top:16px">
-          <span class="k">Advice</span><br>${UI.esc(sheet.advice)}</div>` : ''}
-        ${sheet.follow_up_date ? `<div class="rx-note">
-          <span class="k">Review on</span><br><b>${UI.esc(UI.date(sheet.follow_up_date))}</b></div>` : ''}
+        ${sheet.advice ? `<div class="block"><div class="k">Advice</div>
+          <p>${UI.esc(sheet.advice)}</p></div>` : ''}
+        ${sheet.follow_up_date ? `<div class="block"><div class="k">Review on</div>
+          <p class="strong">${UI.esc(UI.date(sheet.follow_up_date))}</p></div>` : ''}
 
-        <div class="rx-sign">
-          <div class="rx-stamp">
-            <div class="rx-stamp-box"></div>
-            <div class="rx-stamp-label">Doctor's stamp &amp; signature</div>
+        <div class="stamp-row">
+          <div class="stamp">
+            <div class="box${sheet.signature_image ? ' signed' : ''}">
+              ${sheet.signature_image
+                ? `<img src="${UI.esc(sheet.signature_image)}" alt="">` : ''}
+            </div>
+            <div class="cap">${sheet.signature_image
+              ? "Doctor's signature" : "Doctor's stamp &amp; signature"}</div>
           </div>
         </div>
 
-        <div class="rx-foot">
-          Not valid for medico-legal purposes. Take medicines only as directed and complete the course.
+        <div class="note">
+          Not valid for medico-legal purposes. Take the medicines only as directed above
+          and complete the full course.
         </div>
       </div>`, `Prescription ${sheet.rx_no}`);
   }

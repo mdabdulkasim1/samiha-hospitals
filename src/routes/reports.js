@@ -128,6 +128,14 @@ router.get('/dashboard', requireAuth, wrap((req, res) => {
         registeredToday: db.prepare(
           "SELECT COUNT(*) AS c FROM patients WHERE active = 1 AND stage = 'registered' AND date(registered_at) = ?"
         ).get(date).c,
+        // Who pays for themselves and who has an insurer behind them. Most of
+        // an OPD is self-paying, and the cash counter is sized for that.
+        uninsured: db.prepare(
+          "SELECT COUNT(*) AS c FROM patients WHERE active = 1 AND stage = 'registered' AND is_uninsured = 1"
+        ).get().c,
+        insured: db.prepare(
+          "SELECT COUNT(*) AS c FROM patients WHERE active = 1 AND stage = 'registered' AND is_uninsured = 0"
+        ).get().c,
         // Enquiries that turned into registrations, all time — the conversion rate.
         convertedFromEnquiry: db.prepare(
           `SELECT COUNT(DISTINCT p.id) AS c FROM patients p

@@ -73,6 +73,39 @@ router.patch('/alert-settings', wrap((req, res) => {
 }));
 
 /**
+ * The doctor's own signature, stored once and stamped onto what they sign.
+ *
+ * It is held as a data URL because it is one small image per doctor and it has
+ * to travel with a printed sheet without a second request. Nothing else about
+ * them goes on that sheet.
+ */
+router.get('/signature', wrap((req, res) => {
+  const row = db.prepare('SELECT signature_image FROM doctor_profiles WHERE user_id = ?').get(req.user.id);
+  res.json({ signature: (row && row.signature_image) || null });
+}));
+
+router.put('/signature', wrap((req, res) => {
+  if (req.user.role !== 'doctor') throw badRequest('Only a doctor signs a prescription.');
+  const image = str(req.body.signature);
+  if (!image) {
+    db.prepare('UPDATE doctor_profiles SET signature_image = NULL WHERE user_id = ?').run(req.user.id);
+    audit.log(req, 'clear_signature', 'doctor', req.user.id);
+    return res.json({ signature: null });
+  }
+  if (!/^data:image\/(png|jpeg|jpg|webp|gif);base64,/.test(image)) {
+    throw badRequest('Upload the signature as a PNG or JPEG image.');
+  }
+  // A signature is a small strip of ink. Anything larger is a photograph that
+  // will not print well and will bloat every sheet it goes on.
+  if (image.length > 400_000) throw badRequest('That image is too large — keep the signature under 300 KB.');
+
+  db.prepare('INSERT OR IGNORE INTO doctor_profiles (user_id) VALUES (?)').run(req.user.id);
+  db.prepare('UPDATE doctor_profiles SET signature_image = ? WHERE user_id = ?').run(image, req.user.id);
+  audit.log(req, 'set_signature', 'doctor', req.user.id);
+  res.json({ signature: image });
+}));
+
+/**
  * A doctor blocking a day for themselves — they know before admin does when
  * they cannot sit. Existing appointments are left alone; the desk has to move
  * them, which is deliberate.

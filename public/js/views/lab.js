@@ -172,89 +172,60 @@
     const age = o.age_years ? `${o.age_years} yrs` : '—';
     const sample = o.samples && o.samples[0];
 
-    UI.print(`
+    UI.print(`${UI.sheetStyles()}
       <style>
-        @page { size: A5 portrait; margin: 9mm; }
-        .rq { width: 128mm; margin: 0 auto; font-family: Georgia, "Times New Roman", serif;
-              color: #16232B; font-size: 11px; }
-        .rq-head { text-align: center; border-bottom: 2px solid #9E1B34; padding-bottom: 6px; }
-        .rq-head .clinic { font-size: 17px; font-weight: 700; letter-spacing: .5px; color: #9E1B34; }
-        .rq-head .tag { font-size: 8px; letter-spacing: 1.4px; text-transform: uppercase; color: #176B7C; margin-top: 2px; }
-        .rq-head .addr { font-size: 9.5px; color: #43555F; margin-top: 3px; }
-        .rq-title { margin-top: 6px; font-size: 11px; font-weight: 700; letter-spacing: 2.4px;
-                    text-transform: uppercase; color: #176B7C; }
-        .rq-patient { display: flex; flex-wrap: wrap; gap: 3px 16px; padding: 8px 0;
-          border-bottom: 1px dashed #B9C6CC; font-size: 10.5px; }
-        .rq-urgent { margin-top: 6px; font-weight: 700; color: #B03A2E; font-size: 11px;
-          letter-spacing: .08em; text-transform: uppercase; }
-        table.rq-tests { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 8px; }
-        table.rq-tests th { text-align: left; font-size: 8.5px; letter-spacing: .06em; text-transform: uppercase;
-          color: #74858E; border-bottom: 1px solid #16232B; padding: 0 4px 3px; font-weight: 600; }
-        table.rq-tests td { padding: 5px 4px; border-bottom: 1px dotted #DFE6EA; vertical-align: top; }
-        table.rq-tests .n { width: 22px; color: #74858E; }
-        table.rq-tests .test { font-weight: 700; }
-        .rq-note { font-size: 10px; margin-top: 8px; }
-        .rq-note .k { color: #74858E; font-size: 8.5px; text-transform: uppercase; letter-spacing: .06em; }
-        .rq-barcode { margin-top: 10px; text-align: center; }
-        .rq-barcode .code { font-family: monospace; font-size: 10px; letter-spacing: .08em; }
-        .rq-sign { margin-top: 16px; display: flex; justify-content: flex-end; }
-        .rq-stamp { text-align: center; width: 58mm; }
-        .rq-stamp-box { height: 20mm; border: 1px dashed #B9C6CC; border-radius: 3px; }
-        .rq-stamp-label { margin-top: 3px; font-size: 8.5px; color: #74858E;
-          letter-spacing: .06em; text-transform: uppercase; }
-        .rq-foot { margin-top: 12px; border-top: 1px solid #DFE6EA; padding-top: 5px;
-          font-size: 8.5px; color: #74858E; text-align: center; }
-        @media screen { body { background: #eef1f3; padding: 14px 0; }
-          .rq { background: #fff; padding: 9mm; box-shadow: 0 2px 14px rgba(0,0,0,.15); } }
+        .rq-test { font-weight: 700; }
+        .rq-barcode { margin-top: 12px; text-align: center; }
+        .rq-barcode svg { max-width: 62mm; }
       </style>
-      <div class="rq">
-        <div class="rq-head">
-          <div class="clinic">${UI.esc(c.name || 'SAMIHA POLYCLINIC & DIAGNOSTICS')}</div>
-          <div class="tag">Care • Compassion • Commitment</div>
-          <div class="addr">${UI.esc(c.address || '')}${c.phone ? ' · ' + UI.esc(c.phone) : ''}</div>
-          <div class="rq-title">Investigation Request</div>
-        </div>
+      <div class="sheet">
+        ${UI.sheetHead('Investigation Request')}
 
-        <div class="rq-patient">
-          <span><b>${UI.esc(o.patient_name)}</b></span>
-          <span>${UI.esc(age)} · ${UI.esc(UI.titleise(o.gender || '—'))}</span>
-          <span>UHID ${UI.esc(o.uhid)}</span>
-          <span>${UI.esc(UI.dateTime(o.ordered_at))}</span>
-          <span>${UI.esc(o.order_no)}${o.doctor_code ? ' · Ordered by ' + UI.esc(o.doctor_code) : ''}</span>
-          ${o.visit_no || o.ip_no ? `<span>${UI.esc(o.visit_no || o.ip_no)}</span>` : ''}
+        <div class="who">
+          <div style="grid-column:span 2">
+            <div class="k">Patient</div>
+            <div class="v lead">${UI.esc(o.patient_name)}</div>
+          </div>
+          <div><div class="k">Age / Sex</div>
+            <div class="v">${UI.esc(age)} · ${UI.esc(UI.titleise(o.gender || '—'))}</div></div>
+          <div><div class="k">UHID</div><div class="v">${UI.esc(o.uhid)}</div></div>
+          <div><div class="k">Ordered</div><div class="v">${UI.esc(UI.dateTime(o.ordered_at))}</div></div>
+          <div><div class="k">Order</div><div class="v">${UI.esc(o.order_no)}</div></div>
+          <div><div class="k">Ordered by</div><div class="v">${UI.esc(o.doctor_code || '—')}</div></div>
+          ${o.visit_no || o.ip_no
+            ? `<div><div class="k">Episode</div><div class="v">${UI.esc(o.visit_no || o.ip_no)}</div></div>` : ''}
         </div>
 
         ${o.priority && o.priority !== 'routine'
-          ? `<div class="rq-urgent">${UI.esc(o.priority)} — process ahead of the routine queue</div>` : ''}
-        ${o.allergies ? `<div class="rq-urgent">Allergic to: ${UI.esc(o.allergies)}</div>` : ''}
+          ? `<div class="warn">${UI.esc(o.priority.toUpperCase())} — process ahead of the routine queue</div>` : ''}
+        ${o.allergies ? `<div class="warn">Allergic to: ${UI.esc(o.allergies)}</div>` : ''}
 
-        <table class="rq-tests">
-          <thead><tr><th></th><th>Investigation requested</th><th>Sample</th></tr></thead>
+        <table>
+          <thead><tr><th style="width:16px"></th><th>Investigation requested</th><th>Sample</th></tr></thead>
           <tbody>${o.items.map((i, n) => `<tr>
-            <td class="n">${n + 1}.</td>
-            <td class="test">${UI.esc(i.test_name)}</td>
+            <td style="color:#8B9AA2">${n + 1}.</td>
+            <td class="rq-test">${UI.esc(i.test_name)}</td>
             <td>${UI.esc(i.sample_type || '')}</td>
           </tr>`).join('')}</tbody>
         </table>
 
-        ${o.clinical_notes ? `<div class="rq-note">
-          <span class="k">Clinical notes</span><br>${UI.esc(o.clinical_notes)}</div>` : ''}
+        ${o.clinical_notes ? `<div class="block"><div class="k">Clinical notes</div>
+          <p>${UI.esc(o.clinical_notes)}</p></div>` : ''}
 
         ${sample ? `<div class="rq-barcode">
-          ${window.Barcode ? Barcode.svg(sample.barcode, { module: 1.4, height: 34, fontSize: 9 })
-                           : `<div class="code">${UI.esc(sample.barcode)}</div>`}
-          <div class="rq-note">Sample collected ${UI.esc(UI.dateTime(sample.collected_at))}</div>
-        </div>` : `<div class="rq-note"><span class="k">Sample</span><br>Not yet collected —
-          hand this slip in at the collection counter.</div>`}
+          ${window.Barcode ? Barcode.svg(sample.barcode, { module: 1.4, height: 32, fontSize: 8 })
+                           : UI.esc(sample.barcode)}
+          <div class="block" style="margin-top:2px"><div class="k">Sample collected</div>
+            <p>${UI.esc(UI.dateTime(sample.collected_at))}</p></div>
+        </div>` : `<div class="block"><div class="k">Sample</div>
+          <p>Not yet collected — hand this slip in at the collection counter.</p></div>`}
 
-        <div class="rq-sign">
-          <div class="rq-stamp">
-            <div class="rq-stamp-box"></div>
-            <div class="rq-stamp-label">Collected by · stamp &amp; signature</div>
-          </div>
+        <div class="stamp-row">
+          <div class="stamp"><div class="box"></div>
+            <div class="cap">Collected by · stamp &amp; signature</div></div>
         </div>
 
-        <div class="rq-foot">
+        <div class="note">
           Fasting samples must be taken before any food or drink other than water.
           Bring this slip when you come to collect the report.
         </div>
@@ -290,103 +261,74 @@
         : 'Imaging Report')
       : 'Diagnostic Report';
 
-    UI.print(`
+    UI.print(`${UI.sheetStyles()}
       <style>
-        @page { size: A5 portrait; margin: 9mm; }
-        .lr { width: 128mm; margin: 0 auto; font-family: Georgia, "Times New Roman", serif;
-              color: #16232B; font-size: 11px; }
-        .lr-head { text-align: center; border-bottom: 2px solid #9E1B34; padding-bottom: 6px; }
-        .lr-head .clinic { font-size: 17px; font-weight: 700; letter-spacing: .5px; color: #9E1B34; }
-        .lr-head .tag { font-size: 8px; letter-spacing: 1.4px; text-transform: uppercase; color: #176B7C; margin-top: 2px; }
-        .lr-head .addr { font-size: 9.5px; color: #43555F; margin-top: 3px; }
-        .lr-title { margin-top: 6px; font-size: 11px; font-weight: 700; letter-spacing: 2.4px;
-                    text-transform: uppercase; color: #176B7C; }
-        .lr-patient { display: flex; flex-wrap: wrap; gap: 3px 16px; padding: 8px 0;
-          border-bottom: 1px dashed #B9C6CC; font-size: 10.5px; }
-        table.lr-res { width: 100%; border-collapse: collapse; font-size: 10.5px; margin-top: 8px; }
-        table.lr-res th { text-align: left; font-size: 8.5px; letter-spacing: .06em; text-transform: uppercase;
-          color: #74858E; border-bottom: 1px solid #16232B; padding: 0 4px 3px; font-weight: 600; }
-        table.lr-res td { padding: 5px 4px; border-bottom: 1px dotted #DFE6EA; vertical-align: top; }
-        table.lr-res .test { font-weight: 700; }
-        table.lr-res .val { font-weight: 700; text-align: right; white-space: nowrap; }
-        table.lr-res .flag { text-align: right; font-weight: 700; font-size: 9.5px; white-space: nowrap; }
-        table.lr-res .high { color: #B03A2E; }
-        table.lr-res .low  { color: #B26A00; }
-        .lr-scan { margin-top: 10px; }
-        .lr-scan h3 { margin: 0 0 4px; font-size: 11.5px; letter-spacing: .06em;
-          text-transform: uppercase; color: #176B7C; border-bottom: 1px solid #DFE6EA; padding-bottom: 2px; }
-        .lr-scan .k { color: #74858E; font-size: 8.5px; text-transform: uppercase;
-          letter-spacing: .06em; margin-top: 6px; }
-        .lr-scan p { margin: 2px 0 0; white-space: pre-wrap; font-size: 10.5px; line-height: 1.45; }
-        .lr-scan .imp { font-weight: 700; }
-        .lr-note { font-size: 10px; margin-top: 8px; }
-        .lr-note .k { color: #74858E; font-size: 8.5px; text-transform: uppercase; letter-spacing: .06em; }
-        .lr-sign { margin-top: 16px; display: flex; justify-content: flex-end; }
-        .lr-stamp { text-align: center; width: 58mm; }
-        .lr-stamp-box { height: 22mm; border: 1px dashed #B9C6CC; border-radius: 3px; }
-        .lr-stamp-label { margin-top: 3px; font-size: 8.5px; color: #74858E;
-          letter-spacing: .06em; text-transform: uppercase; }
-        .lr-foot { margin-top: 12px; border-top: 1px solid #DFE6EA; padding-top: 5px;
-          font-size: 8.5px; color: #74858E; text-align: center; }
-        @media screen { body { background: #eef1f3; padding: 14px 0; }
-          .lr { background: #fff; padding: 9mm; box-shadow: 0 2px 14px rgba(0,0,0,.15); } }
+        .lr-test { font-weight: 700; }
+        .lr-val { font-weight: 700; }
+        .lr-high { color: #B03A2E; }
+        .lr-low { color: #B26A00; }
+        .lr-scan { margin-top: 11px; }
+        .lr-scan h3 {
+          margin: 0 0 3px; font-size: 10px; letter-spacing: 1.4px; text-transform: uppercase;
+          color: #176B7C; border-bottom: 1px solid #E4EAED; padding-bottom: 2px; font-weight: 700;
+        }
       </style>
-      <div class="lr">
-        <div class="lr-head">
-          <div class="clinic">${UI.esc(c.name || 'SAMIHA POLYCLINIC & DIAGNOSTICS')}</div>
-          <div class="tag">Care • Compassion • Commitment</div>
-          <div class="addr">${UI.esc(c.address || '')}${c.phone ? ' · ' + UI.esc(c.phone) : ''}</div>
-          <div class="lr-title">${UI.esc(title)}</div>
+      <div class="sheet">
+        ${UI.sheetHead(title)}
+
+        <div class="who">
+          <div style="grid-column:span 2">
+            <div class="k">Patient</div>
+            <div class="v lead">${UI.esc(o.first_name)} ${UI.esc(o.last_name || '')}</div>
+          </div>
+          <div><div class="k">Age / Sex</div>
+            <div class="v">${UI.esc(age)} · ${UI.esc(UI.titleise(o.gender || '—'))}</div></div>
+          <div><div class="k">UHID</div><div class="v">${UI.esc(o.uhid)}</div></div>
+          <div><div class="k">Reported</div>
+            <div class="v">${UI.esc(UI.dateTime(o.reported_at || o.ordered_at))}</div></div>
+          <div><div class="k">Order</div><div class="v">${UI.esc(o.order_no)}</div></div>
+          <div><div class="k">Referred by</div><div class="v">${UI.esc(o.doctor_code || '—')}</div></div>
         </div>
 
-        <div class="lr-patient">
-          <span><b>${UI.esc(o.first_name)} ${UI.esc(o.last_name || '')}</b></span>
-          <span>${UI.esc(age)} · ${UI.esc(UI.titleise(o.gender || '—'))}</span>
-          <span>UHID ${UI.esc(o.uhid)}</span>
-          <span>${UI.esc(UI.dateTime(o.reported_at || o.ordered_at))}</span>
-          <span>${UI.esc(o.order_no)}${o.doctor_code ? ' · Ref ' + UI.esc(o.doctor_code) : ''}</span>
-        </div>
-
-        ${measured.length ? `<table class="lr-res">
-          <thead><tr><th>Investigation</th><th style="text-align:right">Result</th>
-            <th>Unit</th><th>Reference range</th><th style="text-align:right">Flag</th></tr></thead>
+        ${measured.length ? `<table>
+          <thead><tr><th>Investigation</th><th class="num">Result</th>
+            <th>Unit</th><th>Reference range</th><th class="num">Flag</th></tr></thead>
           <tbody>${measured.map((i) => {
             const flag = String(i.abnormal_flag || '').toLowerCase();
-            const cls = flag === 'high' || flag === 'critical' ? 'high' : (flag === 'low' ? 'low' : '');
+            const cls = flag === 'high' || flag === 'critical' ? 'lr-high' : (flag === 'low' ? 'lr-low' : '');
             return `<tr>
-              <td class="test">${UI.esc(i.test_name)}</td>
-              <td class="val ${cls}">${UI.esc(i.result_value || '—')}</td>
+              <td class="lr-test">${UI.esc(i.test_name)}</td>
+              <td class="num lr-val ${cls}">${UI.esc(i.result_value || '—')}</td>
               <td>${UI.esc(i.unit || '')}</td>
               <td>${UI.esc(i.ref_range || '')}</td>
-              <td class="flag ${cls}">${flag && flag !== 'normal' ? UI.esc(flag.toUpperCase()) : ''}</td>
+              <td class="num ${cls}" style="font-weight:700">${
+                flag && flag !== 'normal' ? UI.esc(flag.toUpperCase()) : ''}</td>
             </tr>`;
           }).join('')}</tbody>
         </table>` : ''}
 
         ${scans.map((i) => `<div class="lr-scan">
           <h3>${UI.esc(i.test_name)}</h3>
-          <div class="k">Findings</div>
-          <p>${UI.esc(i.result_value || 'Not reported.')}</p>
-          ${i.result_notes ? `<div class="k">Impression</div>
-            <p class="imp">${UI.esc(i.result_notes)}</p>` : ''}
+          <div class="block" style="margin-top:5px"><div class="k">Findings</div>
+            <p>${UI.esc(i.result_value || 'Not reported.')}</p></div>
+          ${i.result_notes ? `<div class="block"><div class="k">Impression</div>
+            <p class="strong">${UI.esc(i.result_notes)}</p></div>` : ''}
         </div>`).join('')}
 
-        ${abnormal.some((i) => !isImaging(i)) ? `<div class="lr-note">
-          <span class="k">Outside the reference range</span><br>
-          ${abnormal.filter((i) => !isImaging(i))
-            .map((i) => UI.esc(`${i.test_name} — ${i.result_value} ${i.unit || ''}`.trim())).join('; ')}
+        ${abnormal.some((i) => !isImaging(i)) ? `<div class="block">
+          <div class="k">Outside the reference range</div>
+          <p>${abnormal.filter((i) => !isImaging(i))
+            .map((i) => UI.esc(`${i.test_name} — ${i.result_value} ${i.unit || ''}`.trim())).join('; ')}</p>
         </div>` : ''}
-        ${o.clinical_notes ? `<div class="lr-note">
-          <span class="k">Notes</span><br>${UI.esc(o.clinical_notes)}</div>` : ''}
+        ${o.clinical_notes ? `<div class="block"><div class="k">Clinical notes</div>
+          <p>${UI.esc(o.clinical_notes)}</p></div>` : ''}
 
-        <div class="lr-sign">
-          <div class="lr-stamp">
-            <div class="lr-stamp-box"></div>
-            <div class="lr-stamp-label">Doctor's stamp &amp; signature</div>
-          </div>
+        <div class="stamp-row">
+          <div class="stamp"><div class="box"></div>
+            <div class="cap">Doctor's stamp &amp; signature</div></div>
         </div>
 
-        <div class="lr-foot">
+        <div class="note">
           ${scans.length && !measured.length
             ? (allCardiac
               ? 'This report is an interpretation of the tracing recorded at the time and is not a diagnosis on its own. Please correlate clinically.'
@@ -395,6 +337,7 @@
         </div>
       </div>`, `Report ${o.order_no}`);
   }
+
   // Exposed so the browser checks can print a report without hunting for a button.
   window.__printReport = printReport;
   window.__openOrder = openOrder;

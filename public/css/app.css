@@ -617,3 +617,34 @@ table.matrix tr.tfoot td:first-child { background: var(--bg); }
 }
 .family-card .fam-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .family-card .fam-name { font-weight: 650; font-size: 14px; }
+
+/* The prescription pad: one card per medicine, because how a patient takes it
+   is more than will fit in a table row. */
+.rx-line { border: 1px solid var(--line); border-left: 3px solid var(--crimson);
+  border-radius: var(--radius-s); padding: 10px 12px; margin-bottom: 10px; background: var(--surface); }
+.rx-line-head { display: flex; align-items: flex-start; gap: 9px; margin-bottom: 8px; }
+.rx-line-head .rx-n {
+  flex: 0 0 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--crimson); color: #fff; font-size: 11.5px; font-weight: 700;
+}
+.rx-line-head .rx-med { flex: 1 1 auto; display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.rx-line-grid { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: 8px; align-items: end; }
+.rx-line-grid .field { margin-bottom: 0; }
+.rx-slot-row { display: flex; align-items: flex-end; gap: 6px; }
+.rx-slot { display: flex; flex-direction: column; gap: 2px; }
+.rx-slot > span { font-size: 10.5px; color: var(--ink-3); text-transform: uppercase; letter-spacing: .05em; }
+.rx-slot input { width: 62px; text-align: center; font-weight: 600; }
+.rx-unit { font-size: 12px; color: var(--ink-3); padding-bottom: 8px; }
+.rx-preview {
+  margin-top: 8px; padding: 6px 9px; border-radius: var(--radius-s); background: var(--teal-soft);
+  font-size: 12.5px; display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline;
+}
+.rx-preview b { color: var(--crimson); letter-spacing: .06em; }
+@media (max-width: 860px) { .rx-line-grid { grid-template-columns: 1fr 1fr; } }
+
+/* Signing: a doctor signs with a finger on a tablet or a mouse at a desk. */
+.sig-pad {
+  width: 100%; height: auto; aspect-ratio: 560 / 200; display: block;
+  border: 1px dashed var(--line); border-radius: var(--radius-s);
+  background: #fff; cursor: crosshair; touch-action: none;
+}

@@ -23,8 +23,46 @@ const prescriberRoles = requireRole('doctor');
 // The pharmacy and the desk read prescriptions; only a doctor writes one.
 const readerRoles = requireRole('doctor', 'pharmacy', 'nurse', 'reception');
 
-/** Doses per day, used to suggest a quantity from frequency × duration. */
-const PER_DAY = { OD: 1, BD: 2, TDS: 3, QID: 4, HS: 1, SOS: 1, STAT: 1, QID6H: 4 };
+/** Doses per day, for the frequencies that are not written as a slot pattern. */
+const PER_DAY = { OD: 1, BD: 2, TDS: 3, QID: 4, HS: 1, SOS: 1, STAT: 1 };
+
+/**
+ * What one dose is measured in. A patient told to take "1" of a syrup has been
+ * told nothing; told "5 ml" they know to reach for the cup.
+ */
+const UNIT_BY_FORM = {
+  tablet: 'tablet', capsule: 'capsule', syrup: 'ml', suspension: 'ml', solution: 'ml',
+  drops: 'drop', injection: 'dose', ointment: 'application', cream: 'application',
+  gel: 'application', sachet: 'sachet', inhaler: 'puff', spray: 'spray',
+  lotion: 'application', suppository: 'suppository',
+};
+
+const FOOD_RELATIONS = ['before_food', 'after_food', 'with_food', 'empty_stomach', 'bedtime', 'anytime'];
+
+/**
+ * Turn the three slots into the shorthand a doctor writes and the words a
+ * patient reads. Morning-noon-night is how a prescription is read across India,
+ * so it is what the sheet is built on; a medicine taken as needed keeps its
+ * SOS or STAT frequency instead.
+ */
+function doseSchedule(item) {
+  const slots = {
+    morning: num(item.doseMorning, 0),
+    afternoon: num(item.doseAfternoon, 0),
+    night: num(item.doseNight, 0),
+  };
+  const perDay = slots.morning + slots.afternoon + slots.night;
+  const timesADay = [slots.morning, slots.afternoon, slots.night].filter((n) => n > 0).length;
+
+  // No slot ticked means the doctor is using a plain frequency — SOS, STAT, or
+  // something they have typed themselves.
+  if (perDay <= 0) {
+    const frequency = str(item.frequency, 'SOS');
+    return { slots, perDay: PER_DAY[frequency] || 1, frequency };
+  }
+  const frequency = { 1: 'OD', 2: 'BD', 3: 'TDS' }[timesADay] || `${timesADay}x`;
+  return { slots, perDay, frequency };
+}
 
 function sheetOr404(id) {
   const sheet = db.prepare(
@@ -67,7 +105,8 @@ router.get('/', readerRoles, wrap((req, res) => {
             (p.first_name || ' ' || COALESCE(p.last_name,'')) AS patient_name,
             p.uhid, p.age_years, p.gender,
             (SELECT COUNT(*) FROM prescriptions rx WHERE rx.sheet_id = s.id) AS items,
-            (SELECT GROUP_CONCAT(rx.drug_name, ', ') FROM prescriptions rx WHERE rx.sheet_id = s.id) AS medicines
+            (SELECT GROUP_CONCAT(rx.drug_name, ', ') FROM prescriptions rx WHERE rx.sheet_id = s.id) AS medicines,
+            p.age_years, p.gender
        FROM prescription_sheets s
        JOIN users u ON u.id = s.doctor_id
        JOIN patients p ON p.id = s.patient_id
@@ -136,20 +175,32 @@ router.post('/', prescriberRoles, wrap((req, res) => {
       const name = drug ? `${drug.name}${drug.strength ? ' ' + drug.strength : ''}` : str(it.drugName);
       if (!name) throw badRequest('Every line needs a medicine.');
 
-      const frequency = str(it.frequency, 'BD');
+      const { slots, perDay, frequency } = doseSchedule(it);
       const days = int(it.durationDays, 0);
+      const unit = str(it.doseUnit)
+        || (drug && UNIT_BY_FORM[String(drug.form || '').toLowerCase()])
+        || 'dose';
       const qty = it.quantity !== undefined && it.quantity !== ''
         ? num(it.quantity)
-        : (PER_DAY[frequency] || 1) * days;
+        : Math.ceil(perDay * (days || 1));
+      const food = FOOD_RELATIONS.includes(str(it.foodRelation)) ? str(it.foodRelation) : null;
+
+      // `dose` stays readable on its own, because the pharmacy queue and the
+      // ward chart show that single line and nothing else.
+      const dose = str(it.dose) || (slots.morning + slots.afternoon + slots.night > 0
+        ? `${[slots.morning, slots.afternoon, slots.night].join('-')} ${unit}`
+        : `1 ${unit}`);
 
       db.prepare(
         `INSERT INTO prescriptions
            (sheet_id, doctor_id, visit_id, patient_id, drug_id, drug_name, dose, frequency,
-            route, duration_days, quantity, instructions, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            route, duration_days, quantity, instructions,
+            dose_morning, dose_afternoon, dose_night, dose_unit, food_relation, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(sheetId, req.user.id, visitId, patient.id, drug ? drug.id : null, name,
-            str(it.dose), frequency, str(it.route, 'oral'), days || null, qty,
+            dose, frequency, str(it.route, 'oral'), days || null, qty,
             str(it.instructions),
+            slots.morning, slots.afternoon, slots.night, unit, food,
             // Without a visit there is no pharmacy queue to join: the patient
             // carries the paper to a counter, ours or anyone's.
             visitId ? 'pending' : 'external');
@@ -163,6 +214,30 @@ router.post('/', prescriberRoles, wrap((req, res) => {
   sheet.items = db.prepare('SELECT * FROM prescriptions WHERE sheet_id = ? ORDER BY id').all(out);
   sheet.warnings = warnings;
   res.status(201).json(sheet);
+}));
+
+/**
+ * Sign a prescription with the doctor's stored signature. Signing is what turns
+ * a saved sheet into one the patient can carry, so it stamps the image onto the
+ * sheet itself — a signature later changed does not rewrite what is already out
+ * in the world.
+ */
+router.post('/:id/sign', prescriberRoles, wrap((req, res) => {
+  const sheet = sheetOr404(int(req.params.id));
+  if (sheet.doctor_id !== req.user.id) throw forbidden('Only the prescriber can sign their prescription.');
+  if (sheet.status === 'cancelled') throw conflict('This prescription was cancelled.');
+
+  const profile = db.prepare('SELECT signature_image FROM doctor_profiles WHERE user_id = ?').get(req.user.id);
+  if (!profile || !profile.signature_image) {
+    throw badRequest('No signature on file. Upload one from My Clinic → Alert settings before signing.');
+  }
+  db.prepare("UPDATE prescription_sheets SET signed_at = datetime('now'), signature_image = ? WHERE id = ?")
+    .run(profile.signature_image, sheet.id);
+
+  audit.log(req, 'sign', 'prescription_sheet', sheet.id, { rxNo: sheet.rx_no });
+  const signed = sheetOr404(sheet.id);
+  signed.items = db.prepare('SELECT * FROM prescriptions WHERE sheet_id = ? ORDER BY id').all(sheet.id);
+  res.json(signed);
 }));
 
 router.post('/:id/cancel', prescriberRoles, wrap((req, res) => {

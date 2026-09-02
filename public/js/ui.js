@@ -100,7 +100,7 @@
      * Open a modal. `render` returns HTML for the body; `footer` returns HTML
      * for the action row. Buttons are wired by `[data-act]`.
      */
-    modal({ title, body, footer = '', size = '', onMount, onAction }) {
+    modal({ title, body, footer = '', size = '', onMount, onAction, onClose }) {
       const root = document.getElementById('modal-root');
       // Modals stack: a confirmation opened from inside a modal sits on top of
       // it, and dismissing the confirmation returns you to what you were doing.
@@ -125,6 +125,9 @@
         const i = UI._modals.indexOf(close);
         if (i !== -1) UI._modals.splice(i, 1);
         if (backdrop.isConnected) backdrop.remove();
+        // Callers that wait on a modal's answer need to hear about a dismissal
+        // as much as about a choice.
+        if (onClose) onClose();
       };
       UI._modals.push(close);
       document.addEventListener('keydown', onKey);
@@ -385,6 +388,111 @@
       w.document.close();
       w.onload = () => { w.focus(); w.print(); };
     },
+    /**
+     * The house style for the A5 sheets a patient takes home — the
+     * prescription, the diagnostic and imaging reports, and the investigation
+     * request. One stylesheet so they read as one clinic's paperwork.
+     *
+     * The letterhead is set in a serif, because that is what a clinic's name
+     * should look like, and the body in a sans with lining, tabular figures —
+     * a serif's old-style numerals make dates and codes look hand-set and
+     * amateurish at this size, and every number here is one somebody has to
+     * read exactly.
+     */
+    sheetStyles() {
+      return `<style>
+        @page { size: A5 portrait; margin: 9mm; }
+        .sheet {
+          width: 128mm; margin: 0 auto; color: #16232B; font-size: 10.5px; line-height: 1.45;
+          font-family: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+          font-variant-numeric: lining-nums tabular-nums;
+          -webkit-font-smoothing: antialiased;
+        }
+        .sheet .head { text-align: center; border-bottom: 1.6px solid #9E1B34; padding-bottom: 7px; }
+        .sheet .head .clinic {
+          font-family: Georgia, "Times New Roman", serif; font-size: 18px; font-weight: 700;
+          letter-spacing: .3px; color: #9E1B34; line-height: 1.2;
+        }
+        .sheet .head .tag {
+          font-size: 7.5px; letter-spacing: 2.2px; text-transform: uppercase;
+          color: #176B7C; margin-top: 3px; font-weight: 600;
+        }
+        .sheet .head .addr { font-size: 9px; color: #5A6B74; margin-top: 4px; }
+        .sheet .doc-title {
+          margin-top: 7px; font-size: 10px; font-weight: 700; letter-spacing: 3px;
+          text-transform: uppercase; color: #176B7C;
+        }
+
+        /* The patient strip: label above value, so nothing has to be guessed at. */
+        .sheet .who {
+          display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px 12px;
+          padding: 9px 0; border-bottom: 1px solid #E4EAED;
+        }
+        .sheet .who > div { min-width: 0; }
+        .sheet .who .k {
+          font-size: 7.5px; letter-spacing: .9px; text-transform: uppercase;
+          color: #8B9AA2; font-weight: 600;
+        }
+        .sheet .who .v { font-size: 11px; font-weight: 600; margin-top: 1px; }
+        .sheet .who .v.lead { font-size: 12.5px; font-weight: 700; }
+
+        .sheet .block { margin-top: 9px; }
+        .sheet .block .k {
+          font-size: 7.5px; letter-spacing: .9px; text-transform: uppercase;
+          color: #8B9AA2; font-weight: 600;
+        }
+        .sheet .block p { margin: 1px 0 0; white-space: pre-wrap; }
+        .sheet .block .strong { font-weight: 700; font-size: 11.5px; }
+        .sheet .warn { color: #B03A2E; font-weight: 700; margin-top: 7px; }
+
+        .sheet table { width: 100%; border-collapse: collapse; }
+        .sheet table th {
+          text-align: left; font-size: 7.5px; letter-spacing: .9px; text-transform: uppercase;
+          color: #8B9AA2; font-weight: 600; border-bottom: 1px solid #16232B; padding: 0 4px 3px;
+        }
+        .sheet table td { padding: 6px 4px; border-bottom: 1px solid #EDF1F3; vertical-align: top; }
+        .sheet table tr:last-child td { border-bottom: 0; }
+        .sheet .num { text-align: right; white-space: nowrap; }
+
+        /* Left blank on purpose: the doctor stamps and signs after printing. */
+        .sheet .stamp-row { margin-top: 16px; display: flex; justify-content: flex-end; }
+        .sheet .stamp { text-align: center; width: 58mm; }
+        .sheet .stamp .box {
+          height: 21mm; border: 1px dashed #B9C6CC; border-radius: 3px;
+          display: flex; align-items: center; justify-content: center; overflow: hidden;
+        }
+        /* Signed here: the ink replaces the dashed box, and the doctor need not
+           reach for a pen. */
+        .sheet .stamp .box.signed { border: 0; border-bottom: 1px solid #16232B; border-radius: 0; }
+        .sheet .stamp .box img { max-height: 19mm; max-width: 100%; object-fit: contain; }
+        .sheet .stamp .cap {
+          margin-top: 4px; font-size: 7.5px; color: #8B9AA2;
+          letter-spacing: .9px; text-transform: uppercase; font-weight: 600;
+        }
+        .sheet .note {
+          margin-top: 12px; border-top: 1px solid #E4EAED; padding-top: 6px;
+          font-size: 8px; color: #8B9AA2; text-align: center; line-height: 1.5;
+        }
+
+        @media print { .sheet { width: auto; } }
+        @media screen {
+          body { background: #eef1f3; padding: 14px 0; margin: 0; }
+          .sheet { background: #fff; padding: 9mm; box-shadow: 0 2px 14px rgba(0,0,0,.15); }
+        }
+      </style>`;
+    },
+
+    /** The letterhead every A5 sheet opens with. */
+    sheetHead(title) {
+      const c = (window.APP && APP.clinic) || {};
+      return `<div class="head">
+        <div class="clinic">${esc(c.name || 'SAMIHA POLYCLINIC & DIAGNOSTICS')}</div>
+        <div class="tag">Care • Compassion • Commitment</div>
+        <div class="addr">${esc(c.address || '')}${c.phone ? ' · ' + esc(c.phone) : ''}</div>
+        ${title ? `<div class="doc-title">${esc(title)}</div>` : ''}
+      </div>`;
+    },
+
     docHeader(title, meta = []) {
       const c = (window.APP && APP.clinic) || {};
       return `<div class="doc-head">
