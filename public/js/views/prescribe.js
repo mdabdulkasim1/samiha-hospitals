@@ -519,7 +519,7 @@
     const c = APP.clinic || {};
     const age = sheet.age_years ? `${sheet.age_years} yrs` : '—';
 
-    UI.print(`${UI.sheetStyles()}
+    UI.printSheet(`${UI.sheetStyles()}
       <style>
         .rx-symbol {
           font-family: Georgia, "Times New Roman", serif; font-size: 26px; line-height: 1;

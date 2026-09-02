@@ -380,13 +380,53 @@
         `<i style="height:${Math.max(2, Math.round((v / max) * 100))}%" title="${esc((labels && labels[i]) || '')}: ${esc(v)}"></i>`
       ).join('') + '</div>';
     },
-    print(html, title) {
-      const w = window.open('', '_blank', 'width=900,height=1000');
+    /**
+     * Open a document in its own window and print it.
+     *
+     * `standalone` leaves the application stylesheet out. A sheet that brings
+     * its own styles wants nothing from app.css — and app.css carries an
+     * `@page` rule of its own, which is exactly the sort of thing that quietly
+     * turns an A5 prescription into an A4 one.
+     */
+    print(html, title, { standalone = false, width = 900, height = 1000, watermark = true } = {}) {
+      const w = window.open('', '_blank', `width=${width},height=${height}`);
       if (!w) return UI.err('Allow pop-ups to print this document.');
       w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(title)}</title>` +
-        `<link rel="stylesheet" href="/css/app.css"></head><body>${html}</body></html>`);
+        (standalone ? '' : '<link rel="stylesheet" href="/css/app.css">') +
+        `</head><body>${watermark ? UI.watermark() : ''}${html}</body></html>`);
       w.document.close();
       w.onload = () => { w.focus(); w.print(); };
+    },
+
+    /**
+     * The clinic's logo, ghosted behind every page we print.
+     *
+     * It is fixed rather than absolute so the browser repeats it on each sheet
+     * of a document that runs to several pages, and it is painted over the
+     * content rather than under it: the sheets draw their own white page, and
+     * anything underneath that would simply be hidden. At four to five percent
+     * it tints the paper without competing with a single line of text, and it
+     * takes no clicks, so nothing on the page becomes harder to use.
+     */
+    watermark() {
+      return `<style>
+        .watermark {
+          position: fixed; inset: 0; z-index: 9999; pointer-events: none;
+          display: flex; align-items: center; justify-content: center;
+        }
+        .watermark img {
+          width: 62%; max-width: 118mm; opacity: .055;
+          -webkit-print-color-adjust: exact; print-color-adjust: exact;
+        }
+        /* Ink is dearer than pixels, and paper shows a tint more readily. */
+        @media print { .watermark img { opacity: .042; } }
+      </style><div class="watermark"><img src="/assets/logo.svg" alt=""></div>`;
+    },
+
+    /** Print one of the A5 sheets, which carry their own house style. */
+    printSheet(html, title) {
+      // Roughly A5 at 96dpi, so the window itself is the shape of the page.
+      return UI.print(html, title, { standalone: true, width: 620, height: 900 });
     },
     /**
      * The house style for the A5 sheets a patient takes home — the
@@ -403,7 +443,7 @@
       return `<style>
         @page { size: A5 portrait; margin: 9mm; }
         .sheet {
-          width: 128mm; margin: 0 auto; color: #16232B; font-size: 10.5px; line-height: 1.45;
+          margin: 0 auto; color: #16232B; font-size: 10.5px; line-height: 1.45;
           font-family: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
           font-variant-numeric: lining-nums tabular-nums;
           -webkit-font-smoothing: antialiased;
@@ -474,10 +514,20 @@
           font-size: 8px; color: #8B9AA2; text-align: center; line-height: 1.5;
         }
 
-        @media print { .sheet { width: auto; } }
+        /* On paper the page margin does the framing, so the sheet fills it. */
+        @media print {
+          html, body { margin: 0; padding: 0; background: #fff; }
+          .sheet { width: auto; min-height: 0; padding: 0; box-shadow: none; }
+        }
+        /* On screen it is drawn as the A5 portrait page it will print as —
+           148 × 210 mm — so nobody is surprised by the paper. */
         @media screen {
-          body { background: #eef1f3; padding: 14px 0; margin: 0; }
-          .sheet { background: #fff; padding: 9mm; box-shadow: 0 2px 14px rgba(0,0,0,.15); }
+          html, body { margin: 0; background: #eef1f3; }
+          body { padding: 14px 0; }
+          .sheet {
+            width: 148mm; min-height: 210mm; box-sizing: border-box; padding: 9mm;
+            background: #fff; box-shadow: 0 2px 14px rgba(0,0,0,.18);
+          }
         }
       </style>`;
     },

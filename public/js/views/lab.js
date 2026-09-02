@@ -172,7 +172,7 @@
     const age = o.age_years ? `${o.age_years} yrs` : '—';
     const sample = o.samples && o.samples[0];
 
-    UI.print(`${UI.sheetStyles()}
+    UI.printSheet(`${UI.sheetStyles()}
       <style>
         .rq-test { font-weight: 700; }
         .rq-barcode { margin-top: 12px; text-align: center; }
@@ -261,7 +261,7 @@
         : 'Imaging Report')
       : 'Diagnostic Report';
 
-    UI.print(`${UI.sheetStyles()}
+    UI.printSheet(`${UI.sheetStyles()}
       <style>
         .lr-test { font-weight: 700; }
         .lr-val { font-weight: 700; }

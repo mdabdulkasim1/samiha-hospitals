@@ -75,6 +75,8 @@
     for (const r of rows) {
       for (let i = 0; i < Math.max(1, Number(copies) || 1); i += 1) cells += labelCell(r, kind);
     }
+    // No watermark behind a sticker sheet: anything printed across a barcode
+    // costs the scanner reads it is there to make.
     UI.print(`
       <style>
         .labels { display:grid; grid-template-columns:repeat(${Number(columns) || 3}, 1fr); gap:4mm; }
@@ -84,7 +86,7 @@
         .label-meta { font-size:9px; color:#333; }
         .label svg { margin-top:2px; }
       </style>
-      <div class="labels">${cells}</div>`, title);
+      <div class="labels">${cells}</div>`, title, { watermark: false });
   }
 
   /** Ask how many stickers and how they sit on the sheet, then print. */

@@ -609,7 +609,9 @@
       UI.warn(`Bill printed, but ${missing.join(', ')} ${missing.length > 1 ? 'are' : 'is'} not configured — ` +
         'set them in the environment before issuing real tax invoices.');
     }
-    UI.print(receiptStyles() + html, `Tax invoice ${sale.bill_no}`);
+    // No watermark on the 80mm roll: a thermal head prints one shade of black,
+    // so a ghosted logo comes out as speckle across the bill rather than a tint.
+    UI.print(receiptStyles() + html, `Tax invoice ${sale.bill_no}`, { watermark: false });
   }
 
   /** Expiry on a medicine label is month and year, never a day. */
