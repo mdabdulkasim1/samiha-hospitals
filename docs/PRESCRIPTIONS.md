@@ -122,6 +122,21 @@ database will not hold two the same.
 Change it only **before the first sheet is printed**. After that, the code out
 in the world no longer matches the file.
 
+## Where it appears
+
+Everything the patient takes home carries the code and no doctor's name:
+
+| Document | Shows |
+|---|---|
+| **Prescription** | The code beside the prescription number, and a blank box for the stamp |
+| **Diagnostic report** | The referring doctor's code beside the order number, and a blank box |
+| **Bill / tax invoice** | The treating doctor's code, taken from the visit or admission the bill was raised against |
+| **Discharge summary** | The consultant's code, and a blank box for their stamp |
+
+A bill raised against neither a visit nor an admission — a straight pharmacy
+counter sale, for instance — has no treating doctor and leaves the field empty
+rather than guessing at one.
+
 ## Why the code and not the name
 
 A prescription and a lab report leave the building. Neither carries a doctor's

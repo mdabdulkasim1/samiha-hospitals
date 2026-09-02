@@ -118,9 +118,20 @@ function addPayment(invoiceId, { patientId, amount, mode, reference = null, note
 
 /** Invoice with its lines, payments, plan and any documented exception. */
 function fullInvoice(invoiceId) {
+  /*
+   * The treating doctor comes through as their code, never their name — a bill
+   * goes home with the patient and to their insurer, and the same rule applies
+   * to it as to a prescription or a report.
+   */
   const invoice = db.prepare(
-    `SELECT i.*, p.uhid, p.first_name, p.last_name, p.phone
-       FROM invoices i JOIN patients p ON p.id = i.patient_id
+    `SELECT i.*, p.uhid, p.first_name, p.last_name, p.phone, p.address,
+            dp.doctor_code, u.name AS doctor_name, v.visit_no, adm.ip_no
+       FROM invoices i
+       JOIN patients p ON p.id = i.patient_id
+       LEFT JOIN visits v ON v.id = i.visit_id
+       LEFT JOIN admissions adm ON adm.id = i.admission_id
+       LEFT JOIN users u ON u.id = COALESCE(v.doctor_id, adm.doctor_id)
+       LEFT JOIN doctor_profiles dp ON dp.user_id = u.id
       WHERE i.id = ?`
   ).get(invoiceId);
   if (!invoice) return null;

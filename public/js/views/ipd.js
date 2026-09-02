@@ -500,6 +500,11 @@
     });
   }
 
+  /**
+   * The discharge summary. Like the prescription and the report, it carries the
+   * clinic's name and the consultant's code, and leaves a blank box for the
+   * consultant to stamp and sign by hand once it is printed.
+   */
   async function printSummary(id) {
     const a = await API.get(`/api/ipd/admissions/${id}/discharge-summary`);
     const html = `<div class="doc">
@@ -511,7 +516,7 @@
             <th>Blood group</th><td>${UI.esc(a.blood_group || '—')}</td></tr>
         <tr><th>Admitted</th><td>${UI.esc(UI.dateTime(a.admitted_at))}</td>
             <th>Discharged</th><td>${a.discharged_at ? UI.esc(UI.dateTime(a.discharged_at)) : '—'}</td></tr>
-        <tr><th>Consultant</th><td>${UI.esc(a.doctor_name || '—')}</td>
+        <tr><th>Consultant</th><td>${UI.esc(a.doctor_code || '—')}</td>
             <th>Type</th><td>${UI.esc(UI.titleise(a.discharge_type || a.admission_type))}</td></tr>
       </tbody></table>
 
@@ -536,10 +541,13 @@
       ${a.follow_up_date ? `<p><b>Review on:</b> ${UI.esc(UI.date(a.follow_up_date))}</p>` : ''}
 
       <div class="sign"><div>Patient / attendant signature</div>
-        <div>${UI.esc(a.doctor_name || '')}<br>Consultant</div></div>
+        <div class="stamp-box"></div></div>
+      <div class="stamp-caption">Consultant's stamp &amp; signature</div>
       <div class="foot-note">Report to the clinic or the nearest emergency department if symptoms worsen.
         Bring this summary to every follow-up visit.</div>
     </div>`;
     UI.print(html, 'Discharge summary ' + a.ip_no);
   }
+  // Exposed so the browser checks can print without hunting for a button.
+  window.__printSummary = printSummary;
 })();

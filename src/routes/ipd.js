@@ -401,10 +401,12 @@ router.get('/admissions/:id/discharge-summary', viewRoles, wrap((req, res) => {
   const id = int(req.params.id);
   const a = db.prepare(
     `SELECT a.*, p.uhid, p.first_name, p.last_name, p.age_years, p.gender, p.blood_group, p.address, p.phone,
-            w.name AS ward_name, b.bed_no, u.name AS doctor_name
+            w.name AS ward_name, b.bed_no, u.name AS doctor_name, dp.doctor_code
        FROM admissions a JOIN patients p ON p.id = a.patient_id
        JOIN wards w ON w.id = a.ward_id JOIN beds b ON b.id = a.bed_id
-       LEFT JOIN users u ON u.id = a.doctor_id WHERE a.id = ?`
+       LEFT JOIN users u ON u.id = a.doctor_id
+       LEFT JOIN doctor_profiles dp ON dp.user_id = a.doctor_id
+      WHERE a.id = ?`
   ).get(id);
   if (!a) throw notFound('Admission not found');
   a.investigations = db.prepare(

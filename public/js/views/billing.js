@@ -494,6 +494,11 @@
   APP.openInvoice = openInvoice;
 
   // ---------------------------------------------------------- printable docs
+  /**
+   * The bill. The treating doctor appears as their code — SPC-MHD-002 — and not
+   * by name, the same rule the prescription and the report follow: a bill goes
+   * home with the patient and on to their insurer.
+   */
   function printInvoice(inv) {
     const html = `<div class="doc">
       ${UI.docHeader('Tax Invoice', [`Invoice: ${inv.invoice_no}`, `Date: ${UI.date(inv.created_at)}`,
@@ -503,6 +508,8 @@
             <th>UHID</th><td>${UI.esc(inv.uhid)}</td></tr>
         <tr><th>Phone</th><td>${UI.esc(inv.phone || '—')}</td>
             <th>Type</th><td>${UI.esc(inv.kind.toUpperCase())}</td></tr>
+        ${inv.doctor_code ? `<tr><th>Treating doctor</th><td>${UI.esc(inv.doctor_code)}</td>
+            <th>Visit</th><td>${UI.esc(inv.visit_no || inv.ip_no || '—')}</td></tr>` : ''}
       </tbody></table>
       <table class="mt"><thead><tr><th>#</th><th>Description</th><th class="num">Qty</th>
         <th class="num">Rate</th><th class="num">Amount</th></tr></thead><tbody>
@@ -596,4 +603,6 @@
       footer: `<button class="btn ghost" data-act="__close">Close</button>`,
     });
   }
+  // Exposed so the browser checks can print without hunting for a button.
+  window.__printInvoice = printInvoice;
 })();

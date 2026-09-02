@@ -347,6 +347,39 @@ test('printed sheets carry the code and never the doctor', async () => {
     (await api('GET', `/api/masters/staff/${ids.imran}`, undefined, 'admin')).body.doctor_code);
 });
 
+test('the bill and the discharge summary carry the code, not the doctor', async () => {
+  const code = (await api('GET', `/api/masters/staff/${ids.imran}`, undefined, 'admin')).body.doctor_code;
+
+  // A bill raised against a visit picks the treating doctor up from the visit.
+  const p = (await api('POST', '/api/patients', {
+    firstName: 'Bill', lastName: 'Check', phone: '9845040404', gender: 'male',
+    age: 52, consentTreatment: true,
+  })).body;
+  const visit = (await api('POST', '/api/visits/arrive', {
+    patientId: p.id, reasonForVisit: 'Chest pain', doctorId: ids.imran,
+  })).body.visit;
+  const inv = (await api('POST', '/api/billing/invoices', { patientId: p.id, visitId: visit.id })).body;
+  await api('POST', `/api/billing/invoices/${inv.id}/items`, { description: 'Consultation', unitPrice: 500 });
+
+  const bill = (await api('GET', `/api/billing/invoices/${inv.id}`)).body;
+  assert.strictEqual(bill.doctor_code, code, 'the bill knows whose patient this was');
+  assert.strictEqual(bill.visit_no, visit.visit_no, 'and which visit it settles');
+
+  // A bill with no visit and no admission has no doctor to name — and says so
+  // by leaving the field empty rather than guessing.
+  const standalone = (await api('POST', '/api/billing/invoices', { patientId: p.id, kind: 'pharmacy' })).body;
+  assert.strictEqual((await api('GET', `/api/billing/invoices/${standalone.id}`)).body.doctor_code, null);
+
+  // The discharge summary the same way.
+  const wards = (await api('GET', '/api/ipd/wards')).body;
+  const bed = (wards.wards || wards).flatMap((w) => w.beds).find((b) => b.status === 'vacant');
+  const adm = (await api('POST', '/api/ipd/admissions', {
+    patientId: p.id, doctorId: ids.imran, bedId: bed.id, reason: 'Observation',
+  })).body;
+  const summary = (await api('GET', `/api/ipd/admissions/${adm.id}/discharge-summary`)).body;
+  assert.strictEqual(summary.doctor_code, code);
+});
+
 // ------------------------------------------------------ what a doctor may see
 test('a doctor\'s dashboard shows their own clinic and no colleague\'s', async () => {
   const asDoctor = (await api('GET', '/api/reports/dashboard', undefined, 'imran')).body;
