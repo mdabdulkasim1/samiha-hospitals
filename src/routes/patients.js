@@ -7,6 +7,8 @@ const { required, str, int, num, bool, phone, paging, oneOf, aadhaar } = require
 const { generate } = require('../lib/ids');
 const audit = require('../lib/audit');
 
+const vitalsService = require('../services/vitals');
+
 const router = express.Router();
 const deskRoles = requireRole('reception', 'nurse', 'doctor', 'counselor', 'cashier', 'lab', 'pharmacy', 'ward');
 
@@ -423,9 +425,17 @@ router.post('/:id/vitals', requireRole('reception', 'nurse', 'doctor'), wrap((re
   const weight = num(req.body.weightKg, 0);
   const value = (v, cast = num) => (v === undefined || v === '' || v === null ? null : cast(v));
 
+  // A reading counts if it was actually entered. Zero is a real answer for
+  // pain — "none" is worth recording — so presence is what is tested, not
+  // truthiness, and anything that is not a number is not a reading.
+  const given = (x) => x !== undefined && x !== null && String(x).trim() !== ''
+    && Number.isFinite(Number(x));
+  // The raw body, not the parsed height and weight: those default to zero when
+  // absent, and a defaulted zero is not something the nurse measured.
   const any = [req.body.tempC, req.body.pulse, req.body.bpSystolic, req.body.bpDiastolic,
-    req.body.spo2, req.body.respRate, req.body.bloodSugar, height, weight]
-    .some((x) => x !== undefined && x !== '' && x !== null && Number(x) > 0);
+    req.body.spo2, req.body.respRate, req.body.bloodSugar, req.body.painScore,
+    req.body.heightCm, req.body.weightKg]
+    .some(given);
   if (!any) throw badRequest('Record at least one reading — weight, height, blood pressure or another observation.');
 
   // Height changes rarely; carry the last one forward so BMI still works when
@@ -437,20 +447,24 @@ router.post('/:id/vitals', requireRole('reception', 'nurse', 'doctor'), wrap((re
 
   const info = db.prepare(
     `INSERT INTO vitals (patient_id, visit_id, height_cm, weight_kg, bmi, temp_c, pulse, resp_rate,
-                         bp_systolic, bp_diastolic, spo2, blood_sugar, purpose, notes, recorded_by, recorded_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')))`
+                         bp_systolic, bp_diastolic, spo2, blood_sugar, pain_score, purpose, notes,
+                         recorded_by, recorded_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')))`
   ).run(id, int(req.body.visitId) || null,
         height > 0 ? height : null, weight > 0 ? weight : null,
         effectiveHeight > 0 && weight > 0
           ? Math.round((weight / ((effectiveHeight / 100) ** 2)) * 10) / 10 : null,
         value(req.body.tempC), value(req.body.pulse, int), value(req.body.respRate, int),
         value(req.body.bpSystolic, int), value(req.body.bpDiastolic, int),
-        value(req.body.spo2, int), value(req.body.bloodSugar),
+        value(req.body.spo2, int), value(req.body.bloodSugar), value(req.body.painScore, int),
         str(req.body.purpose), str(req.body.notes), req.user.id,
         str(req.body.recordedAt));
 
   audit.log(req, 'record_vitals', 'patient', id, { vitalsId: info.lastInsertRowid });
-  res.status(201).json(db.prepare('SELECT * FROM vitals WHERE id = ?').get(info.lastInsertRowid));
+  const recorded = db.prepare('SELECT * FROM vitals WHERE id = ?').get(info.lastInsertRowid);
+  // The same flags the vitals station raises on a queued patient. A reading
+  // that needs a doctor now needs one whether or not there is a visit open.
+  res.status(201).json({ ...recorded, alerts: vitalsService.alerts(recorded) });
 }));
 
 router.post('/:id/register', requireRole('reception'), wrap((req, res) => {

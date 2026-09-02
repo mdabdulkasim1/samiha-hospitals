@@ -10,6 +10,8 @@ const billing = require('../services/billing');
 const whatsapp = require('../services/whatsapp');
 const audit = require('../lib/audit');
 
+const vitalsService = require('../services/vitals');
+
 const router = express.Router();
 const clinicalRoles = requireRole('reception', 'nurse', 'doctor', 'counselor', 'cashier', 'lab', 'pharmacy');
 
@@ -222,22 +224,8 @@ router.post('/:id/vitals', requireRole('nurse', 'doctor'), wrap((req, res) => {
 
   const vitals = db.prepare('SELECT * FROM vitals WHERE id = ?').get(info.lastInsertRowid);
   audit.log(req, 'record_vitals', 'visit', id);
-  res.status(201).json({ vitals, alerts: vitalAlerts(vitals), nextStep: 'consultation' });
+  res.status(201).json({ vitals, alerts: vitalsService.alerts(vitals), nextStep: 'consultation' });
 }));
-
-/** Flags the nurse should escalate before the patient sits back down. */
-function vitalAlerts(v) {
-  const alerts = [];
-  if (v.bp_systolic >= 180 || v.bp_diastolic >= 110) alerts.push({ level: 'critical', text: 'Hypertensive crisis range — inform the doctor now.' });
-  else if (v.bp_systolic >= 140 || v.bp_diastolic >= 90) alerts.push({ level: 'warn', text: 'Blood pressure above normal.' });
-  if (v.bp_systolic && v.bp_systolic < 90) alerts.push({ level: 'critical', text: 'Hypotension — escalate.' });
-  if (v.spo2 && v.spo2 < 94) alerts.push({ level: v.spo2 < 90 ? 'critical' : 'warn', text: `SpO₂ ${v.spo2}% — low.` });
-  if (v.temp_c && v.temp_c >= 38) alerts.push({ level: 'warn', text: `Febrile (${v.temp_c} °C).` });
-  if (v.pulse && (v.pulse > 120 || v.pulse < 50)) alerts.push({ level: 'warn', text: `Pulse ${v.pulse} bpm — outside normal range.` });
-  if (v.blood_sugar && v.blood_sugar > 250) alerts.push({ level: 'warn', text: `Blood sugar ${v.blood_sugar} mg/dL — high.` });
-  if (v.bmi && v.bmi >= 30) alerts.push({ level: 'info', text: `BMI ${v.bmi} — obesity range.` });
-  return alerts;
-}
 
 // ---------------------------------------------------------- 4. consultation
 /**

@@ -31,10 +31,199 @@
 
     async render(el, params) {
       if (params.visitId) return renderVitalsForm(el, Number(params.visitId));
-      await pickVisit(el, ['checked_in', 'vitals_done'], 'Patients ready for vitals',
-        (id) => APP.navigate('vitals', { visitId: id }));
+      if (params.patientId) return renderWalkInVitals(el, Number(params.patientId));
+
+      /*
+       * The queue is the usual way in, but it is not the only one. A patient
+       * comes to this counter to have a blood pressure checked without seeing
+       * anybody, a diabetic drops in for a sugar reading, and a ward patient
+       * needs an observation taken between rounds — none of which appear in a
+       * visit queue. Leaving the station empty in those cases meant the
+       * reading was written on paper and never reached the record.
+       */
+      el.innerHTML = `
+        <div class="card mb">
+          <div class="card-head"><h3>Anyone else</h3>
+            <span class="muted small">Search by name, UHID or mobile — no appointment needed</span></div>
+          <div class="card-body">
+            <div class="search-row">
+              <input type="search" id="vs-q" placeholder="Name, UHID or mobile number…" autocomplete="off">
+            </div>
+            <div id="vs-results"></div>
+          </div>
+        </div>
+        <div id="vs-queue"></div>`;
+
+      let t;
+      const results = el.querySelector('#vs-results');
+      el.querySelector('#vs-q').addEventListener('input', (e) => {
+        clearTimeout(t);
+        t = setTimeout(async () => {
+          const q = e.target.value.trim();
+          if (q.length < 2) return void (results.innerHTML = '');
+          let rows = [];
+          try { rows = (await API.get('/api/patients' + API.qs({ q, limit: 8 }))).rows; }
+          catch (err) { return void (results.innerHTML = `<div class="alert warn">${UI.esc(err.message)}</div>`); }
+          results.innerHTML = rows.length ? rows.map((p) => `
+            <button type="button" class="btn ghost sm block mb" data-pt="${p.id}"
+              style="justify-content:space-between">
+              <span><b>${UI.esc(p.first_name)} ${UI.esc(p.last_name || '')}</b>
+                <span class="muted small"> ${UI.esc(p.uhid)} · ${UI.esc(p.age_years || '—')}${
+                  UI.esc((p.gender || '').charAt(0).toUpperCase())}</span></span>
+              <span class="muted small">${UI.esc(p.phone || '')}</span>
+            </button>`).join('')
+            : '<div class="muted small">Nobody matched. Register them at the front desk first.</div>';
+          results.querySelectorAll('[data-pt]').forEach((b) => b.addEventListener('click', () =>
+            APP.navigate('vitals', { patientId: b.dataset.pt })));
+        }, 220);
+      });
+
+      await pickVisit(el.querySelector('#vs-queue'), ['checked_in', 'vitals_done'],
+        'Patients ready for vitals', (id) => APP.navigate('vitals', { visitId: id }));
     },
   });
+
+  /*
+   * The vitals form, shared by the queue and the walk-in counter.
+   *
+   * Every field carries the range it is read against. A nurse taking a hundred
+   * readings a week knows them; the person covering the counter on a Saturday
+   * may not, and a reading nobody recognises as abnormal is a reading that does
+   * not get escalated. The ranges are the adult resting ones, and the BMI band
+   * follows the Indian cut-offs the rest of the system uses.
+   */
+  const VITAL_FIELDS = [
+    { name: 'bpSystolic', label: 'BP systolic', unit: 'mmHg', hint: 'under 120' },
+    { name: 'bpDiastolic', label: 'BP diastolic', unit: 'mmHg', hint: 'under 80' },
+    { name: 'pulse', label: 'Pulse', unit: 'bpm', hint: '60 – 100' },
+    { name: 'respRate', label: 'Respiratory rate', unit: '/min', hint: '12 – 20' },
+    { name: 'tempC', label: 'Temperature', unit: '°C', step: '0.1', hint: '36.1 – 37.2' },
+    { name: 'spo2', label: 'SpO₂', unit: '%', hint: '95 – 100', min: 0, max: 100 },
+    { name: 'heightCm', label: 'Height', unit: 'cm', step: '0.1', hint: 'for BMI' },
+    { name: 'weightKg', label: 'Weight', unit: 'kg', step: '0.1', hint: 'each visit' },
+    { name: 'bloodSugar', label: 'Blood sugar', unit: 'mg/dL', step: '0.1', hint: 'fasting 70 – 100' },
+    { name: 'painScore', label: 'Pain score', unit: '0–10', hint: '0 is none', min: 0, max: 10 },
+  ];
+
+  const vitalsFields = (last = null) => `
+    <div class="grid c4">
+      ${VITAL_FIELDS.map((f) => UI.field({
+        name: f.name,
+        label: `${f.label} (${f.unit})`,
+        type: 'number',
+        step: f.step || '1',
+        min: f.min,
+        max: f.max,
+        hint: f.hint,
+        // Height is the one reading that barely moves, so it is carried
+        // forward — the counter should not have to measure it every time.
+        value: f.name === 'heightCm' && last ? (last.height_cm || '') : '',
+      })).join('')}
+    </div>`;
+
+  /** BMI as the nurse types, banded the way every printed sheet bands it. */
+  function wireBmi(form, out) {
+    const show = () => {
+      const h = Number(form.heightCm.value);
+      const w = Number(form.weightKg.value);
+      if (!(h > 0 && w > 0)) return void (out.innerHTML = '');
+      const bmi = Math.round((w / ((h / 100) ** 2)) * 10) / 10;
+      const band = bmi < 18.5 ? ['Underweight', 'warn']
+        : bmi < 23 ? ['Normal', 'ok']
+          : bmi < 25 ? ['Overweight', 'warn'] : ['Obese', 'danger'];
+      out.innerHTML = `<div class="alert ${band[1]}">BMI <b>${bmi}</b> — ${band[0]}
+        <span class="muted small">(Indian cut-offs: overweight 23, obesity 25)</span></div>`;
+    };
+    form.heightCm.addEventListener('input', show);
+    form.weightKg.addEventListener('input', show);
+    show();
+  }
+
+  /** The flags the server sends back, shown the way the station shows them. */
+  function showAlerts(host, alerts) {
+    host.innerHTML = (alerts && alerts.length)
+      ? alerts.map((a) => `<div class="alert ${
+        a.level === 'critical' ? 'danger' : a.level === 'warn' ? 'warn' : 'info'}">
+        ${a.level === 'critical' ? '🚨' : a.level === 'warn' ? '⚠' : 'ℹ'} ${UI.esc(a.text)}</div>`).join('')
+      : '<div class="alert ok">All readings within normal limits.</div>';
+    if ((alerts || []).some((a) => a.level === 'critical')) {
+      UI.err('Critical reading — inform the doctor immediately.');
+    }
+  }
+
+  /**
+   * Vitals for somebody who is not in a queue: a blood-pressure check at the
+   * counter, a sugar reading, an observation between rounds. It writes to the
+   * patient's own chart, which is where the dated readings live anyway.
+   */
+  async function renderWalkInVitals(el, patientId) {
+    const patient = await API.get(`/api/patients/${patientId}`);
+    APP.setSubtitle(`${patient.first_name} ${patient.last_name || ''} · ${patient.uhid}`);
+    APP.actions([{ id: 'back', label: '← Vitals station', onClick: () => APP.navigate('vitals') }]);
+
+    const chart = patient.vitals || [];
+    const last = chart[0] || null;
+
+    el.innerHTML = `
+      ${patient.allergies ? `<div class="alert danger">⚠ <b>Allergies:</b> ${UI.esc(patient.allergies)}</div>` : ''}
+      <div class="alert info">No visit is open for this patient, so this goes onto their chart
+        as a dated reading. If they are here to see a doctor, book them in at the front desk
+        instead so the reading joins the consultation.</div>
+
+      <div class="grid sidebar-right">
+        <div class="card">
+          <div class="card-head"><h3>Record vitals</h3>
+            <span class="muted small">${UI.esc(patient.first_name)} ${UI.esc(patient.last_name || '')} ·
+              ${UI.esc(patient.age_years || '—')} yrs · ${UI.esc(UI.titleise(patient.gender || '—'))}</span></div>
+          <div class="card-body">
+            <form id="v-form">
+              ${vitalsFields(last)}
+              <div id="bmi-out"></div>
+              <div class="grid c2">
+                ${UI.field({ name: 'purpose', label: 'Why they came',
+                  placeholder: 'BP check, sugar review, dressing — it goes on the chart' })}
+                ${UI.field({ name: 'notes', label: 'Notes' })}
+              </div>
+              <button class="btn block" type="submit">Save to the chart</button>
+            </form>
+            <div id="v-alerts" class="mt"></div>
+          </div>
+        </div>
+
+        <div>
+          ${chart.length ? `<div class="card"><div class="card-head"><h3>Previous readings</h3></div>
+            <div class="card-body tight">${UI.table([
+              { label: 'When', render: (v) => UI.esc(UI.dateShort(v.recorded_at)) },
+              { label: 'BP', render: (v) => `${UI.esc(v.bp_systolic || '—')}/${UI.esc(v.bp_diastolic || '—')}` },
+              { label: 'Pulse', render: (v) => UI.esc(v.pulse || '—') },
+              { label: 'Temp', render: (v) => UI.esc(v.temp_c || '—') },
+              { label: 'SpO₂', render: (v) => UI.esc(v.spo2 || '—') },
+              { label: 'Wt', render: (v) => UI.esc(v.weight_kg || '—') },
+              { label: 'BMI', render: (v) => UI.esc(v.bmi || '—') },
+            ], chart.slice(0, 10))}</div></div>`
+            : `<div class="card"><div class="card-body">${
+              UI.empty('No readings on this chart yet.', '📋')}</div></div>`}
+        </div>
+      </div>`;
+
+    const form = el.querySelector('#v-form');
+    wireBmi(form, el.querySelector('#bmi-out'));
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = form.querySelector('button[type=submit]');
+      btn.disabled = true;
+      try {
+        const res = await API.post(`/api/patients/${patientId}/vitals`, UI.formValues(form));
+        showAlerts(el.querySelector('#v-alerts'), res.alerts);
+        UI.ok('Reading saved to the chart.');
+        setTimeout(() => APP.navigate('vitals', { patientId }), 900);
+      } catch (err) {
+        UI.err(err.message);
+        btn.disabled = false;
+      }
+    });
+  }
 
   async function renderVitalsForm(el, visitId) {
     const visit = await API.get(`/api/visits/${visitId}`);
@@ -51,22 +240,7 @@
           <div class="card-head"><h3>Record vitals</h3></div>
           <div class="card-body">
             <form id="v-form">
-              <div class="grid c4">
-                ${UI.field({ name: 'heightCm', label: 'Height (cm)', type: 'number', step: '0.1', value: last ? last.height_cm || '' : '' })}
-                ${UI.field({ name: 'weightKg', label: 'Weight (kg)', type: 'number', step: '0.1', value: '' })}
-                ${UI.field({ name: 'tempC', label: 'Temperature (°C)', type: 'number', step: '0.1' })}
-                ${UI.field({ name: 'pulse', label: 'Pulse (bpm)', type: 'number' })}
-              </div>
-              <div class="grid c4">
-                ${UI.field({ name: 'bpSystolic', label: 'BP systolic', type: 'number' })}
-                ${UI.field({ name: 'bpDiastolic', label: 'BP diastolic', type: 'number' })}
-                ${UI.field({ name: 'spo2', label: 'SpO₂ (%)', type: 'number', min: 0, max: 100 })}
-                ${UI.field({ name: 'respRate', label: 'Respiratory rate', type: 'number' })}
-              </div>
-              <div class="grid c2">
-                ${UI.field({ name: 'bloodSugar', label: 'Blood sugar (mg/dL)', type: 'number', step: '0.1' })}
-                ${UI.field({ name: 'painScore', label: 'Pain score (0–10)', type: 'number', min: 0, max: 10 })}
-              </div>
+              ${vitalsFields(last)}
               <div id="bmi-out"></div>
               ${UI.field({ name: 'notes', label: 'Notes', type: 'textarea', rows: 2 })}
               <button class="btn block" type="submit">Save vitals</button>
@@ -98,21 +272,8 @@
         </div>
       </div>`;
 
-    // Live BMI as the nurse types.
     const form = el.querySelector('#v-form');
-    const updateBmi = () => {
-      const h = Number(form.heightCm.value);
-      const w = Number(form.weightKg.value);
-      const out = el.querySelector('#bmi-out');
-      if (h > 0 && w > 0) {
-        const bmi = Math.round((w / ((h / 100) ** 2)) * 10) / 10;
-        const cat = bmi < 18.5 ? ['Underweight', 'warn'] : bmi < 25 ? ['Normal', 'ok']
-          : bmi < 30 ? ['Overweight', 'warn'] : ['Obese', 'danger'];
-        out.innerHTML = `<div class="alert ${cat[1]}">BMI <b>${bmi}</b> — ${cat[0]}</div>`;
-      } else out.innerHTML = '';
-    };
-    form.heightCm.addEventListener('input', updateBmi);
-    form.weightKg.addEventListener('input', updateBmi);
+    wireBmi(form, el.querySelector('#bmi-out'));
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -120,12 +281,8 @@
       btn.disabled = true;
       try {
         const res = await API.post(`/api/visits/${visitId}/vitals`, UI.formValues(form));
-        el.querySelector('#v-alerts').innerHTML = res.alerts.length
-          ? res.alerts.map((a) => `<div class="alert ${a.level === 'critical' ? 'danger' : a.level === 'warn' ? 'warn' : 'info'}">
-              ${a.level === 'critical' ? '🚨' : '⚠'} ${UI.esc(a.text)}</div>`).join('')
-          : '<div class="alert ok">All readings within normal limits.</div>';
+        showAlerts(el.querySelector('#v-alerts'), res.alerts);
         UI.ok('Vitals recorded — the patient can go through to the exam room.');
-        if (res.alerts.some((a) => a.level === 'critical')) UI.err('Critical reading — inform the doctor immediately.');
       } catch (err) {
         UI.err(err.message);
       } finally { btn.disabled = false; }
