@@ -36,17 +36,18 @@
   }
 
   /**
-   * Aadhaar, printed the only way it should be: all but the last four hidden.
+   * Aadhaar, in the 4-4-4 grouping it is always written in.
    *
-   * A prescription is carried through a waiting room, left on a counter and
-   * kept in a drawer. The number identifies its holder to a bank and to the
-   * ration shop, and a clinic has no business spelling it out on paper it
-   * hands over. The last four are enough to confirm the right record.
+   * The clinic prints it whole: patients here are asked for it at the counter,
+   * by the insurer and by the scheme desk, and a number they have to read back
+   * off their own prescription is no use with two thirds of it crossed out.
+   * That is the clinic's call to make, so the sheet carries it in the shape it
+   * appears on the card, which is how somebody checks it at a glance.
    */
-  function maskAadhaar(value) {
+  function formatAadhaar(value) {
     const raw = String(value || '').replace(/[\s-]/g, '');
     if (!/^\d{12}$/.test(raw)) return '';
-    return `XXXX XXXX ${raw.slice(8)}`;
+    return `${raw.slice(0, 4)} ${raw.slice(4, 8)} ${raw.slice(8)}`;
   }
 
   function drugLabel(drug) {
@@ -704,7 +705,7 @@
             : '—'}</div></div>
           <div><div class="k">UHID</div><div class="v">${UI.esc(sheet.uhid || '—')}</div></div>
           <div><div class="k">Aadhaar</div><div class="v">${
-            maskAadhaar(sheet.aadhaar_number) || '—'}</div></div>
+            formatAadhaar(sheet.aadhaar_number) || '—'}</div></div>
           <div><div class="k">Date</div><div class="v">${UI.esc(UI.date(sheet.created_at))}</div></div>
           <div><div class="k">Prescription</div><div class="v">${UI.esc(sheet.rx_no)}</div></div>
           <div><div class="k">Doctor code</div><div class="v">${UI.esc(sheet.doctor_code || '—')}</div></div>

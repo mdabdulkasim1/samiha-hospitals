@@ -106,12 +106,12 @@ function aadhaar(value) {
   return raw;
 }
 
-/** All but the last four hidden, which is the only form fit to print. */
-function maskAadhaar(value) {
+/** The 4-4-4 grouping an Aadhaar is written in, for anything that prints it. */
+function formatAadhaar(value) {
   const raw = String(value || '').replace(/[\s-]/g, '');
   if (!/^\d{12}$/.test(raw)) return '';
-  return `XXXX XXXX ${raw.slice(8)}`;
+  return `${raw.slice(0, 4)} ${raw.slice(4, 8)} ${raw.slice(8)}`;
 }
 
 module.exports = {
-  aadhaar, maskAadhaar, verhoeffOk, required, str, num, int, bool, oneOf, phone, money, paging, isBlank };
+  aadhaar, formatAadhaar, verhoeffOk, required, str, num, int, bool, oneOf, phone, money, paging, isBlank };

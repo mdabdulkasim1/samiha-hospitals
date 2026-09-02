@@ -95,9 +95,10 @@ test('an Aadhaar is checked before it is stored', () => {
   assert.ok(!validate.verhoeffOk('2373'));
 });
 
-test('only the last four digits of an Aadhaar are ever printed', () => {
-  assert.strictEqual(validate.maskAadhaar('483670290134'), 'XXXX XXXX 0134');
-  assert.strictEqual(validate.maskAadhaar('not a number'), '');
+test('an Aadhaar prints whole, in the grouping it is written in', () => {
+  assert.strictEqual(validate.formatAadhaar('483670290134'), '4836 7029 0134');
+  assert.strictEqual(validate.formatAadhaar('4836 7029 0134'), '4836 7029 0134');
+  assert.strictEqual(validate.formatAadhaar('not a number'), '');
 });
 
 test('a patient registers with an Aadhaar, and a bad one is refused', async () => {
