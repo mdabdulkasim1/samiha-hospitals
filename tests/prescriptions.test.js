@@ -400,6 +400,44 @@ test('the bill and the discharge summary carry the code, not the doctor', async 
   assert.strictEqual(summary.doctor_code, code);
 });
 
+test('an X-ray or scan is reported in words, and still carries the code', async () => {
+  const tests = (await api('GET', '/api/masters/lab-tests')).body;
+  const xray = tests.find((t) => t.code === 'XR-CHEST');
+  const usg = tests.find((t) => t.code === 'USG-ABD');
+  assert.strictEqual(xray.category, 'radiology');
+  assert.strictEqual(usg.category, 'radiology');
+
+  const order = (await api('POST', '/api/lab/orders', {
+    patientId: ids.patient, doctorId: ids.imran,
+    clinicalNotes: 'Cough with fever',
+    tests: [{ testId: xray.id }, { testId: usg.id }],
+  }, 'imran')).body;
+  await api('POST', `/api/lab/orders/${order.id}/collect`, { sampleType: 'imaging' }, 'admin');
+
+  const items = (await api('GET', `/api/lab/orders/${order.id}`, undefined, 'admin')).body.items;
+  assert.ok(items.every((i) => i.category === 'radiology'),
+    'the screen has to know it is taking findings, not a number');
+
+  // Findings go in the value, the impression in the notes.
+  await api('POST', `/api/lab/orders/${order.id}/results`, {
+    results: [
+      { itemId: items[0].id, value: 'Lung fields clear. Cardiac silhouette normal.',
+        notes: 'Normal chest radiograph.', abnormalFlag: 'normal' },
+      { itemId: items[1].id, value: 'Gall bladder distended with a 6 mm calculus in the neck.',
+        notes: 'Single gall bladder calculus.', abnormalFlag: 'normal' },
+    ],
+  }, 'admin');
+  await api('POST', `/api/lab/orders/${order.id}/verify`, {}, 'admin');
+
+  const report = (await api('GET', `/api/lab/orders/${order.id}/report`, undefined, 'admin')).body;
+  assert.match(report.doctor_code, /^SPC-[A-Z]{3}-\d{3}$/, 'the code reaches the imaging report too');
+  assert.ok(report.items.every((i) => i.category === 'radiology'),
+    'so the printed report knows to render prose rather than a results table');
+  assert.match(report.items[0].result_value, /Lung fields clear/);
+  assert.match(report.items[0].result_notes, /Normal chest radiograph/);
+  assert.match(report.items[1].result_notes, /gall bladder calculus/);
+});
+
 // ------------------------------------------------------ what a doctor may see
 test('a doctor\'s dashboard shows their own clinic and no colleague\'s', async () => {
   const asDoctor = (await api('GET', '/api/reports/dashboard', undefined, 'imran')).body;

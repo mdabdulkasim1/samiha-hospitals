@@ -131,6 +131,7 @@ Everything the patient takes home carries the code and no doctor's name:
 | **Prescription** | The code beside the prescription number, and a blank box for the stamp |
 | **Investigation request** | The ordering doctor's code, the tests and which sample each needs, the sample barcode once collected, and a blank box for whoever draws it |
 | **Diagnostic report** | The referring doctor's code beside the order number, and a blank box |
+| **Imaging report** (X-ray, USG, ECG) | The same, reported as findings and impression in prose rather than a results table |
 | **Bill / tax invoice** | The treating doctor's code, taken from the visit or admission the bill was raised against |
 | **Payment receipt** | The same code as the bill it settles. The cashier who took the money still signs it — they are the clinic's own counter |
 | **Discharge summary** | The consultant's code, and a blank box for their stamp |
@@ -149,3 +150,27 @@ beyond what they already know.
 The doctor stamps and signs the printed sheet by hand. That signature is what
 makes it theirs; the code is how the clinic knows, from the paper alone, whose
 it was.
+
+
+# Imaging: X-ray, ultrasound and ECG
+
+An X-ray or a scan is reported in words, not in numbers, so it never belonged in
+the results table the blood tests use. Anything in the **radiology** or
+**cardiology** category of the test catalogue is handled as imaging.
+
+**Reporting one.** Open the order in Diagnostics. Instead of a value box, each
+study gets a **Findings** area — technique and what is seen — and a one-line
+**Impression**, which is the line the referring doctor reads first.
+
+**The printed report** heads itself by what it holds: *Radiology Report* for
+X-rays only, *Ultrasound Report* for scans only, *Imaging Report* for a mix,
+and *Diagnostic Report* when measured tests are on it too. Each study prints as
+its own section with the findings as prose and the impression in bold. An order
+mixing bloods and imaging prints the table first and the narrative below it.
+
+The footnote changes with it: an imaging report says it is an opinion on the
+images acquired and not a diagnosis on its own.
+
+Everything else is the same as any other report — the polyclinic's name and
+address, the referring doctor's code, and a blank box for the reporting doctor
+to stamp and sign.

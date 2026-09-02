@@ -53,13 +53,20 @@
     },
   });
 
+  /** X-ray, ultrasound, ECG — reported in words rather than in numbers. */
+  const isImaging = (item) => ['radiology', 'cardiology'].includes(String(item.category || '').toLowerCase());
+
   async function openOrder(id) {
     const o = await API.get(`/api/lab/orders/${id}`);
     const canEdit = APP.can(['lab']);
 
-    const rows = o.items.map((i) => `<tr>
+    const open = (i) => canEdit && ['in_process', 'sample_collected', 'result_entered'].includes(i.status);
+
+    // A blood test has a value; an X-ray or a scan has findings and an
+    // impression. The same screen has to take both.
+    const rows = o.items.filter((i) => !isImaging(i)).map((i) => `<tr>
       <td><b>${UI.esc(i.test_name)}</b><div class="muted small">${UI.esc(i.ref_range || '')} ${UI.esc(i.unit || '')}</div></td>
-      <td>${canEdit && ['in_process', 'sample_collected', 'result_entered'].includes(i.status)
+      <td>${open(i)
         ? `<input type="text" data-item="${i.id}" value="${UI.esc(i.result_value || '')}" placeholder="value">`
         : `<b>${UI.esc(i.result_value || '—')}</b>`}</td>
       <td>${UI.esc(i.unit || '')}</td>
@@ -68,6 +75,19 @@
         i.abnormal_flag === 'critical' ? 'danger' : i.abnormal_flag === 'normal' ? 'ok' : 'warn') : '—'}</td>
       <td>${UI.statusBadge(i.status)}</td>
     </tr>`).join('');
+
+    const imaging = o.items.filter(isImaging).map((i) => `
+      <fieldset><legend>${UI.esc(i.test_name)} ${UI.statusBadge(i.status)}</legend>
+        ${open(i) ? `
+          ${UI.field({ name: `find-${i.id}`, label: 'Findings', rows: 5, value: i.result_value || '',
+            placeholder: 'Technique, and what is seen — lung fields, cardiac silhouette, bony cage…' })}
+          ${UI.field({ name: `imp-${i.id}`, label: 'Impression', value: i.result_notes || '',
+            placeholder: 'The one line the referring doctor reads first' })}`
+          : `<div class="muted small">Findings</div>
+             <p style="white-space:pre-wrap">${UI.esc(i.result_value || '—')}</p>
+             <div class="muted small">Impression</div>
+             <p><b>${UI.esc(i.result_notes || '—')}</b></p>`}
+      </fieldset>`).join('');
 
     UI.modal({
       title: `${o.order_no} — ${o.patient_name}`,
@@ -84,9 +104,10 @@
         ${o.samples.length ? `<div class="alert ok"><b>Sample:</b> <code>${UI.esc(o.samples[0].barcode)}</code>
           collected ${UI.esc(UI.dateTime(o.samples[0].collected_at))}</div>` : ''}
 
-        <div class="table-wrap"><table><thead><tr>
+        ${rows ? `<div class="table-wrap"><table><thead><tr>
           <th>Test</th><th>Result</th><th>Unit</th><th>Reference</th><th>Flag</th><th>Status</th>
-        </tr></thead><tbody>${rows}</tbody></table></div>`,
+        </tr></thead><tbody>${rows}</tbody></table></div>` : ''}
+        ${imaging}`,
       footer: `<button class="btn ghost" data-act="__close">Close</button>
         <button class="btn ghost" data-act="requisition">Print the order</button>
         ${['result_entered','verified','reported'].includes(o.status) ? '<button class="btn ghost" data-act="print">Print report</button>' : ''}
@@ -108,6 +129,18 @@
           const results = [...modal.querySelectorAll('[data-item]')]
             .filter((i) => i.value.trim())
             .map((i) => ({ itemId: Number(i.dataset.item), value: i.value.trim() }));
+          // Imaging carries its findings in the value and its impression in the
+          // notes, which is how the report prints them.
+          for (const item of o.items.filter(isImaging)) {
+            const findings = modal.querySelector(`[name="find-${item.id}"]`);
+            if (!findings || !findings.value.trim()) continue;
+            const impression = modal.querySelector(`[name="imp-${item.id}"]`);
+            results.push({
+              itemId: item.id, value: findings.value.trim(),
+              notes: impression ? impression.value.trim() : null,
+              abnormalFlag: 'normal',
+            });
+          }
           if (!results.length) { UI.err('Enter at least one result.'); return 'keep'; }
           await API.post(`/api/lab/orders/${id}/results`, { results });
           UI.ok(`${results.length} result(s) saved.`);
@@ -240,6 +273,15 @@
     const c = APP.clinic || {};
     const age = o.age_years ? `${o.age_years} yrs` : '—';
     const abnormal = o.items.filter((i) => i.abnormal_flag && i.abnormal_flag !== 'normal');
+    // X-ray, ultrasound and ECG are reported in words. A mixed order prints the
+    // measured tests as a table and the imaging as narrative sections below it.
+    const measured = o.items.filter((i) => !isImaging(i));
+    const scans = o.items.filter(isImaging);
+    const title = scans.length && !measured.length
+      ? (scans.every((i) => /ultrasound|usg|doppler/i.test(i.test_name)) ? 'Ultrasound Report'
+        : scans.every((i) => /x-ray|xray|iopa/i.test(i.test_name)) ? 'Radiology Report'
+        : 'Imaging Report')
+      : 'Diagnostic Report';
 
     UI.print(`
       <style>
@@ -263,6 +305,13 @@
         table.lr-res .flag { text-align: right; font-weight: 700; font-size: 9.5px; white-space: nowrap; }
         table.lr-res .high { color: #B03A2E; }
         table.lr-res .low  { color: #B26A00; }
+        .lr-scan { margin-top: 10px; }
+        .lr-scan h3 { margin: 0 0 4px; font-size: 11.5px; letter-spacing: .06em;
+          text-transform: uppercase; color: #176B7C; border-bottom: 1px solid #DFE6EA; padding-bottom: 2px; }
+        .lr-scan .k { color: #74858E; font-size: 8.5px; text-transform: uppercase;
+          letter-spacing: .06em; margin-top: 6px; }
+        .lr-scan p { margin: 2px 0 0; white-space: pre-wrap; font-size: 10.5px; line-height: 1.45; }
+        .lr-scan .imp { font-weight: 700; }
         .lr-note { font-size: 10px; margin-top: 8px; }
         .lr-note .k { color: #74858E; font-size: 8.5px; text-transform: uppercase; letter-spacing: .06em; }
         .lr-sign { margin-top: 16px; display: flex; justify-content: flex-end; }
@@ -280,7 +329,7 @@
           <div class="clinic">${UI.esc(c.name || 'SAMIHA POLYCLINIC & DIAGNOSTICS')}</div>
           <div class="tag">Care • Compassion • Commitment</div>
           <div class="addr">${UI.esc(c.address || '')}${c.phone ? ' · ' + UI.esc(c.phone) : ''}</div>
-          <div class="lr-title">Diagnostic Report</div>
+          <div class="lr-title">${UI.esc(title)}</div>
         </div>
 
         <div class="lr-patient">
@@ -291,10 +340,10 @@
           <span>${UI.esc(o.order_no)}${o.doctor_code ? ' · Ref ' + UI.esc(o.doctor_code) : ''}</span>
         </div>
 
-        <table class="lr-res">
+        ${measured.length ? `<table class="lr-res">
           <thead><tr><th>Investigation</th><th style="text-align:right">Result</th>
             <th>Unit</th><th>Reference range</th><th style="text-align:right">Flag</th></tr></thead>
-          <tbody>${o.items.map((i) => {
+          <tbody>${measured.map((i) => {
             const flag = String(i.abnormal_flag || '').toLowerCase();
             const cls = flag === 'high' || flag === 'critical' ? 'high' : (flag === 'low' ? 'low' : '');
             return `<tr>
@@ -305,11 +354,20 @@
               <td class="flag ${cls}">${flag && flag !== 'normal' ? UI.esc(flag.toUpperCase()) : ''}</td>
             </tr>`;
           }).join('')}</tbody>
-        </table>
+        </table>` : ''}
 
-        ${abnormal.length ? `<div class="lr-note">
+        ${scans.map((i) => `<div class="lr-scan">
+          <h3>${UI.esc(i.test_name)}</h3>
+          <div class="k">Findings</div>
+          <p>${UI.esc(i.result_value || 'Not reported.')}</p>
+          ${i.result_notes ? `<div class="k">Impression</div>
+            <p class="imp">${UI.esc(i.result_notes)}</p>` : ''}
+        </div>`).join('')}
+
+        ${abnormal.some((i) => !isImaging(i)) ? `<div class="lr-note">
           <span class="k">Outside the reference range</span><br>
-          ${abnormal.map((i) => UI.esc(`${i.test_name} — ${i.result_value} ${i.unit || ''}`.trim())).join('; ')}
+          ${abnormal.filter((i) => !isImaging(i))
+            .map((i) => UI.esc(`${i.test_name} — ${i.result_value} ${i.unit || ''}`.trim())).join('; ')}
         </div>` : ''}
         ${o.clinical_notes ? `<div class="lr-note">
           <span class="k">Notes</span><br>${UI.esc(o.clinical_notes)}</div>` : ''}
@@ -322,11 +380,14 @@
         </div>
 
         <div class="lr-foot">
-          Results relate only to the sample received. Please correlate clinically.
+          ${scans.length && !measured.length
+            ? 'This report is an opinion on the images acquired and is not a diagnosis on its own. Please correlate clinically.'
+            : 'Results relate only to the sample received. Please correlate clinically.'}
         </div>
       </div>`, `Report ${o.order_no}`);
   }
   // Exposed so the browser checks can print a report without hunting for a button.
   window.__printReport = printReport;
+  window.__openOrder = openOrder;
   window.__printRequisition = printRequisition;
 })();

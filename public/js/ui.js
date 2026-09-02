@@ -200,7 +200,9 @@
             const sel = !o.disabled && String(val) === String(value) ? ' selected' : '';
             return `<option value="${esc(val)}"${sel}${dis}>${esc(lab)}</option>`;
           }).join('') + '</select>';
-      } else if (type === 'textarea') {
+      } else if (type === 'textarea' || rows) {
+        // `rows` means nothing on an <input>, so asking for rows is asking for a
+        // textarea — a radiologist typing findings should not get one line.
         control = `<textarea name="${esc(name)}" rows="${rows || 3}" placeholder="${esc(placeholder)}"${required ? ' required' : ''}>${esc(value)}</textarea>`;
       } else {
         control = `<input type="${esc(type)}" name="${esc(name)}" value="${esc(value)}" placeholder="${esc(placeholder)}"` +

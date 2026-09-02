@@ -251,7 +251,13 @@ router.get('/orders/:id/report', viewRoles, wrap((req, res) => {
   if (!['result_entered', 'verified', 'reported'].includes(order.status)) {
     throw conflict('Results are not ready for this order yet.');
   }
-  order.items = db.prepare('SELECT * FROM lab_order_items WHERE order_id = ? ORDER BY id').all(id);
+  // An X-ray or a scan is a narrative, not a number, and the printed report has
+  // to know which it is holding.
+  order.items = db.prepare(
+    `SELECT i.*, t.category, t.sample_type
+       FROM lab_order_items i LEFT JOIN lab_tests t ON t.id = i.test_id
+      WHERE i.order_id = ? ORDER BY i.id`
+  ).all(id);
   res.json(order);
 }));
 
