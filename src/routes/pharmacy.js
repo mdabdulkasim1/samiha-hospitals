@@ -137,8 +137,8 @@ router.get('/prescriptions/:visitId', rxRoles, wrap((req, res) => {
 
 /**
  * Dispense against a prescription. Stock is allocated FEFO, a pharmacy bill is
- * raised, and the amount is pushed onto the visit invoice so the patient
- * settles everything at one desk.
+ * raised. An in-patient's medicines join that admission's hospital bill; an
+ * out-patient's are billed and settled at the pharmacy counter itself.
  */
 router.post('/dispense', requireRole('pharmacy'), wrap((req, res) => {
   required(req.body, ['patientId', 'items']);
@@ -212,19 +212,44 @@ router.post('/dispense', requireRole('pharmacy'), wrap((req, res) => {
     return { saleId, net };
   })();
 
-  // Fold the pharmacy amount into the visit invoice, or raise a standalone one.
+  /*
+   * Where the money lands, and it depends entirely on whether the patient is
+   * admitted.
+   *
+   * An in-patient's medicines are part of what the hospital is treating them
+   * with, so they go onto that admission's running bill and are settled once,
+   * at discharge, with the bed and the nursing.
+   *
+   * An out-patient's medicines are a counter sale. The pharmacy prints its own
+   * bill, hands it over with the medicines, and takes the money there — the
+   * medicines leave with the patient whether or not they ever reach the
+   * cashier, so the charge cannot sit on a hospital invoice waiting to be
+   * settled at a desk they have already walked past. This holds even when the
+   * dispense is against a visit: the visit bill carries the consultation and
+   * the diagnostics, the pharmacy bill carries the medicines.
+   */
   let invoice = null;
-  if (visitId) {
-    invoice = db.prepare("SELECT * FROM invoices WHERE visit_id = ? AND status NOT IN ('cancelled') ORDER BY id DESC LIMIT 1").get(visitId);
-  }
-  if (!invoice) {
+  if (admissionId) {
+    invoice = db.prepare(
+      "SELECT * FROM invoices WHERE admission_id = ? AND status NOT IN ('cancelled') ORDER BY id DESC LIMIT 1"
+    ).get(admissionId);
+    if (!invoice) {
+      invoice = billing.createInvoice({ patientId, admissionId, kind: 'ipd', createdBy: req.user.id });
+    }
+    billing.addItem(invoice.id, {
+      refType: 'pharmacy', refId: out.saleId,
+      description: `Pharmacy — bill ${billNo}`, qty: 1, unitPrice: out.net,
+    });
+  } else {
     invoice = billing.createInvoice({
-      patientId, visitId, admissionId, kind: visitId ? 'opd' : 'pharmacy', createdBy: req.user.id,
+      patientId, visitId, kind: 'pharmacy', createdBy: req.user.id,
+      notes: 'Settled at the pharmacy counter',
+    });
+    billing.addItem(invoice.id, {
+      refType: 'pharmacy', refId: out.saleId,
+      description: `Medicines — bill ${billNo}`, qty: 1, unitPrice: out.net,
     });
   }
-  billing.addItem(invoice.id, {
-    refType: 'pharmacy', refId: out.saleId, description: `Pharmacy — bill ${billNo}`, qty: 1, unitPrice: out.net,
-  });
   db.prepare('UPDATE pharmacy_sales SET invoice_id = ? WHERE id = ?').run(invoice.id, out.saleId);
 
   if (visitId) {

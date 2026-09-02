@@ -84,6 +84,61 @@ router.post('/invoices/:id/discount', cashRoles, wrap((req, res) => {
   res.json(billing.fullInvoice(id));
 }));
 
+/**
+ * The discount the cashier gives on the bill as a whole, before it is printed.
+ *
+ * Taken either as rupees off or as a percentage of what is chargeable, and
+ * stored as rupees whichever way it was entered, so the bill records what was
+ * actually given rather than a percentage that would drift if a line were
+ * added afterwards.
+ *
+ * Two things it will not do. It will not take a bill below zero, because a
+ * discount is not a refund and there is a separate way to give money back. And
+ * it will not exceed what is left after the sliding scale, assistance and the
+ * insurer have already been taken off -- those are somebody else's money, and
+ * discounting them again would hand the patient a credit the clinic never had.
+ */
+router.post('/invoices/:id/bill-discount', cashRoles, wrap((req, res) => {
+  const id = int(req.params.id);
+  const inv = db.prepare('SELECT * FROM invoices WHERE id = ?').get(id);
+  if (!inv) throw notFound('Invoice not found');
+  if (['cancelled', 'written_off'].includes(inv.status)) {
+    throw conflict(`Cannot discount a ${inv.status} invoice.`);
+  }
+
+  // What the patient would otherwise be asked for, before this discount.
+  const chargeable = billing.round2(Math.max(
+    inv.gross - inv.discount - inv.sliding_discount - inv.assistance_covered
+      - inv.insurance_covered + inv.tax, 0));
+
+  let amount;
+  if (req.body.pct !== undefined) {
+    const pct = num(req.body.pct);
+    if (pct < 0 || pct > 100) throw badRequest('A discount percentage must be between 0 and 100.');
+    amount = billing.round2(chargeable * (pct / 100));
+  } else {
+    required(req.body, ['amount']);
+    amount = money(req.body.amount);
+  }
+  if (amount < 0) throw badRequest('A discount cannot be negative.');
+  if (amount > chargeable) {
+    throw badRequest(`That is more than the bill. At most ${chargeable.toFixed(2)} can be given here.`);
+  }
+  // Money already taken cannot be discounted away; refund it instead.
+  if (amount > billing.round2(chargeable - inv.paid)) {
+    throw conflict(`${inv.paid.toFixed(2)} has already been paid on this bill. `
+      + `A discount here can be at most ${billing.round2(chargeable - inv.paid).toFixed(2)} — `
+      + 'refund the difference rather than discounting it.');
+  }
+
+  db.prepare('UPDATE invoices SET bill_discount = ?, bill_discount_reason = ? WHERE id = ?')
+    .run(amount, str(req.body.reason) || null, id);
+  const updated = billing.recalc(id);
+  audit.log(req, 'bill_discount', 'invoice', id,
+    { from: inv.bill_discount, to: amount, reason: str(req.body.reason) || null });
+  res.json(billing.fullInvoice(updated.id));
+}));
+
 // ------------------------------------------------------------- 1. Accept payment
 /** "Patient Able To Pay For Labs and Visit?" → Yes → "Accept Payment". */
 router.post('/invoices/:id/payments', cashRoles, wrap((req, res) => {

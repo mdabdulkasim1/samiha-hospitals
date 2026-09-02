@@ -146,55 +146,146 @@ for (const [size, income] of guidelines) {
 }
 
 // ------------------------------------------------------------------ services
+/*
+ * The clinic's billable services, filed under the group a cashier looks in.
+ *
+ * The rates here are starting figures, not the clinic's tariff. They are
+ * deliberately plausible for a Melapalayam polyclinic rather than left at
+ * zero, because a zero rate bills nothing and does it silently; a wrong rate
+ * is visible on the first bill and gets corrected. Set the real ones under
+ * Services & Rates — nothing here is overwritten once it has been edited.
+ */
 const services = [
-  ['CONS-NEW', 'Consultation — new patient', 'consultation', 500, 0],
-  ['CONS-FU', 'Consultation — follow-up', 'consultation', 300, 0],
-  ['CONS-EMG', 'Emergency consultation', 'consultation', 800, 0],
-  ['PROC-DRESS', 'Wound dressing', 'procedure', 250, 0],
-  ['PROC-INJ', 'Injection administration', 'procedure', 100, 0],
-  ['PROC-NEB', 'Nebulisation', 'procedure', 200, 0],
-  ['PROC-SUT', 'Suturing (minor)', 'procedure', 900, 0],
-  ['PROC-ECG', 'ECG', 'cardiology', 300, 0],
-  ['NURS-DAY', 'Nursing charges per day', 'nursing', 400, 0],
-  ['REG-CARD', 'Registration / record card', 'other', 50, 0],
-  ['AMB-LOCAL', 'Ambulance — local', 'other', 1200, 0],
+  // code, name, category, bill group, rate, tax %
+  ['CONS-NEW', 'Consultation — new patient', 'consultation', 'Consultation', 500, 0],
+  ['CONS-FU', 'Consultation — follow-up', 'consultation', 'Consultation', 300, 0],
+  ['CONS-EMG', 'Emergency consultation', 'consultation', 'Consultation', 800, 0],
+  ['CONS-SPEC', 'Specialist consultation', 'consultation', 'Consultation', 700, 0],
+  ['CONS-2OP', 'Second opinion', 'consultation', 'Consultation', 600, 0],
+  ['CONS-TELE', 'Teleconsultation', 'consultation', 'Consultation', 300, 0],
+  ['CONS-REV', 'Review within 7 days', 'consultation', 'Consultation', 0, 0],
+
+  ['PROC-DRESS', 'Wound dressing — small', 'procedure', 'Procedures & treatment', 250, 0],
+  ['PROC-DRESSL', 'Wound dressing — large', 'procedure', 'Procedures & treatment', 450, 0],
+  ['PROC-INJ', 'Injection administration', 'procedure', 'Procedures & treatment', 100, 0],
+  ['PROC-IVCAN', 'IV cannulation', 'procedure', 'Procedures & treatment', 200, 0],
+  ['PROC-IVFL', 'IV fluid administration (per pint)', 'procedure', 'Procedures & treatment', 350, 0],
+  ['PROC-NEB', 'Nebulisation', 'procedure', 'Procedures & treatment', 200, 0],
+  ['PROC-OXY', 'Oxygen — per hour', 'procedure', 'Procedures & treatment', 250, 0],
+  ['PROC-SUT', 'Suturing — minor', 'procedure', 'Procedures & treatment', 900, 0],
+  ['PROC-SUTM', 'Suturing — major', 'procedure', 'Procedures & treatment', 1800, 0],
+  ['PROC-SUTR', 'Suture removal', 'procedure', 'Procedures & treatment', 200, 0],
+  ['PROC-ABS', 'Abscess incision & drainage', 'procedure', 'Procedures & treatment', 1200, 0],
+  ['PROC-CATH', 'Urinary catheterisation', 'procedure', 'Procedures & treatment', 700, 0],
+  ['PROC-EAR', 'Ear syringing / wax removal', 'procedure', 'Procedures & treatment', 400, 0],
+  ['PROC-FB', 'Foreign body removal — minor', 'procedure', 'Procedures & treatment', 800, 0],
+  ['PROC-POP', 'Plaster / POP application', 'procedure', 'Procedures & treatment', 1200, 0],
+  ['PROC-POPR', 'Plaster removal', 'procedure', 'Procedures & treatment', 300, 0],
+  ['PROC-BURN', 'Burn dressing', 'procedure', 'Procedures & treatment', 600, 0],
+  ['PROC-BIOP', 'Biopsy — minor', 'procedure', 'Procedures & treatment', 2500, 0],
+  ['PROC-IUCD', 'IUCD insertion / removal', 'procedure', 'Procedures & treatment', 900, 0],
+  ['PROC-CIRC', 'Circumcision', 'procedure', 'Procedures & treatment', 5000, 0],
+  ['PROC-PHYSIO', 'Physiotherapy — per session', 'procedure', 'Procedures & treatment', 400, 0],
+  ['PROC-IMMUN', 'Immunisation — administration', 'procedure', 'Procedures & treatment', 150, 0],
+  ['PROC-BP', 'Blood pressure & vitals check', 'procedure', 'Procedures & treatment', 50, 0],
+  ['PROC-TRANSF', 'Blood transfusion — administration', 'procedure', 'Procedures & treatment', 1500, 0],
+
+  ['NURS-DAY', 'Nursing charges — per day', 'nursing', 'Nursing & ward', 400, 0],
+  ['NURS-RMO', 'RMO / duty doctor — per day', 'nursing', 'Nursing & ward', 500, 0],
+  ['WARD-GEN', 'Ward — general, per day', 'room', 'Nursing & ward', 700, 0],
+  ['WARD-SEMI', 'Ward — semi-private, per day', 'room', 'Nursing & ward', 1200, 0],
+  ['WARD-PVT', 'Room — private, per day', 'room', 'Nursing & ward', 2000, 0],
+  ['WARD-DAY', 'Day-care bed — per day', 'room', 'Nursing & ward', 700, 0],
+  ['WARD-OBS', 'Observation — per hour', 'room', 'Nursing & ward', 200, 0],
+
+  ['REG-CARD', 'Registration / record card', 'other', 'Ambulance & other', 50, 0],
+  ['REG-DUP', 'Duplicate report or record', 'other', 'Ambulance & other', 100, 0],
+  ['CERT-MED', 'Medical certificate', 'other', 'Ambulance & other', 200, 0],
+  ['CERT-FIT', 'Fitness certificate', 'other', 'Ambulance & other', 300, 0],
+  ['AMB-LOCAL', 'Ambulance — within town', 'other', 'Ambulance & other', 1200, 0],
+  ['AMB-OUT', 'Ambulance — outstation, per km', 'other', 'Ambulance & other', 30, 0],
 ];
-for (const [code, name, category, price, tax] of services) {
-  upsert('services', 'code', { code, name, category: category === 'cardiology' ? 'procedure' : category, price, tax_pct: tax });
+for (const [code, name, category, bill_group, price, tax] of services) {
+  upsert('services', 'code', { code, name, category, bill_group, price, tax_pct: tax });
 }
 
 // ---------------------------------------------------------------- lab tests
+/*
+ * Diagnostics carry two labels and they are not the same thing. `category`
+ * decides how the report reads — a scan is findings and an impression, a blood
+ * test is numbers against a reference range — and `bill_group` decides where
+ * the cashier finds it. Rates here are starting figures, as above.
+ */
 const tests = [
-  ['CBC', 'Complete Blood Count', 'lab', 'EDTA blood', null, null, null, 'See individual parameters', 350, 6],
-  ['HB', 'Haemoglobin', 'lab', 'EDTA blood', 'g/dL', 12, 16, null, 120, 2],
-  ['FBS', 'Fasting Blood Sugar', 'lab', 'Fluoride plasma', 'mg/dL', 70, 100, null, 120, 4],
-  ['PPBS', 'Post-Prandial Blood Sugar', 'lab', 'Fluoride plasma', 'mg/dL', 70, 140, null, 120, 4],
-  ['HBA1C', 'Glycated Haemoglobin (HbA1c)', 'lab', 'EDTA blood', '%', 4, 5.7, null, 650, 24],
-  ['LIPID', 'Lipid Profile', 'lab', 'Serum', 'mg/dL', null, null, 'Total cholesterol < 200', 700, 12],
-  ['LFT', 'Liver Function Test', 'lab', 'Serum', null, null, null, 'See individual parameters', 850, 12],
-  ['RFT', 'Renal Function Test', 'lab', 'Serum', null, null, null, 'See individual parameters', 800, 12],
-  ['TSH', 'Thyroid Stimulating Hormone', 'lab', 'Serum', 'µIU/mL', 0.4, 4.0, null, 450, 24],
-  ['URINE', 'Urine Routine', 'lab', 'Urine', null, null, null, 'See report', 200, 4],
-  ['VITD', 'Vitamin D (25-OH)', 'lab', 'Serum', 'ng/mL', 30, 100, null, 1600, 48],
-  ['VITB12', 'Vitamin B12', 'lab', 'Serum', 'pg/mL', 200, 900, null, 1200, 48],
-  ['CRP', 'C-Reactive Protein', 'lab', 'Serum', 'mg/L', 0, 5, null, 550, 8],
-  ['DENGUE', 'Dengue NS1 / IgM / IgG', 'lab', 'Serum', null, null, null, 'Non-reactive', 900, 6],
-  ['WIDAL', 'Widal Test', 'lab', 'Serum', null, null, null, 'Non-reactive', 300, 12],
-  ['XR-CHEST', 'X-Ray Chest PA', 'radiology', null, null, null, null, 'Radiologist report', 400, 4],
-  ['XR-KNEE', 'X-Ray Knee AP/Lateral', 'radiology', null, null, null, null, 'Radiologist report', 500, 4],
-  ['USG-ABD', 'Ultrasound — Abdomen & Pelvis', 'radiology', null, null, null, null, 'Radiologist report', 1200, 6],
-  ['USG-OBS', 'Ultrasound — Obstetric', 'radiology', null, null, null, null, 'Radiologist report', 1400, 6],
-  ['USG-KUB', 'Ultrasound — KUB', 'radiology', null, null, null, null, 'Radiologist report', 1100, 6],
-  ['USG-THY', 'Ultrasound — Thyroid / Neck', 'radiology', null, null, null, null, 'Radiologist report', 1200, 6],
-  ['USG-DOP', 'Doppler — Peripheral vascular', 'radiology', null, null, null, null, 'Radiologist report', 2400, 12],
-  ['XR-SPINE', 'X-Ray Lumbar Spine AP/Lateral', 'radiology', null, null, null, null, 'Radiologist report', 600, 4],
-  ['XR-ABD', 'X-Ray Abdomen erect', 'radiology', null, null, null, null, 'Radiologist report', 450, 4],
-  ['XR-DENT', 'Dental X-Ray (IOPA)', 'radiology', null, null, null, null, 'Dental surgeon report', 250, 1],
-  ['ECHO', '2D Echocardiogram', 'cardiology', null, null, null, null, 'Cardiologist report', 2200, 24],
-  ['ECG12', 'ECG — 12 lead', 'cardiology', null, null, null, null, 'Cardiologist report', 300, 1],
+  // code, name, category, bill group, sample, unit, low, high, ref text, rate, TAT hrs
+  ['CBC', 'Complete Blood Count', 'lab', 'Blood tests', 'EDTA blood', null, null, null, 'See individual parameters', 350, 6],
+  ['HB', 'Haemoglobin', 'lab', 'Blood tests', 'EDTA blood', 'g/dL', 12, 16, null, 120, 2],
+  ['ESR', 'ESR', 'lab', 'Blood tests', 'EDTA blood', 'mm/hr', 0, 20, null, 150, 4],
+  ['PLT', 'Platelet count', 'lab', 'Blood tests', 'EDTA blood', '/µL', 150000, 450000, null, 200, 4],
+  ['BLGRP', 'Blood group & Rh typing', 'lab', 'Blood tests', 'EDTA blood', null, null, null, 'ABO / Rh', 150, 2],
+  ['FBS', 'Fasting Blood Sugar', 'lab', 'Blood tests', 'Fluoride plasma', 'mg/dL', 70, 100, null, 120, 4],
+  ['PPBS', 'Post-Prandial Blood Sugar', 'lab', 'Blood tests', 'Fluoride plasma', 'mg/dL', 70, 140, null, 120, 4],
+  ['RBS', 'Random Blood Sugar', 'lab', 'Blood tests', 'Fluoride plasma', 'mg/dL', 70, 140, null, 100, 2],
+  ['HBA1C', 'Glycated Haemoglobin (HbA1c)', 'lab', 'Blood tests', 'EDTA blood', '%', 4, 5.7, null, 650, 24],
+  ['LIPID', 'Lipid Profile', 'lab', 'Blood tests', 'Serum', 'mg/dL', null, null, 'Total cholesterol < 200', 700, 12],
+  ['LFT', 'Liver Function Test', 'lab', 'Blood tests', 'Serum', null, null, null, 'See individual parameters', 850, 12],
+  ['RFT', 'Renal Function Test', 'lab', 'Blood tests', 'Serum', null, null, null, 'See individual parameters', 800, 12],
+  ['UREA', 'Blood urea', 'lab', 'Blood tests', 'Serum', 'mg/dL', 15, 40, null, 200, 6],
+  ['CREAT', 'Serum creatinine', 'lab', 'Blood tests', 'Serum', 'mg/dL', 0.6, 1.3, null, 220, 6],
+  ['URIC', 'Serum uric acid', 'lab', 'Blood tests', 'Serum', 'mg/dL', 3.5, 7.2, null, 250, 6],
+  ['ELEC', 'Serum electrolytes', 'lab', 'Blood tests', 'Serum', null, null, null, 'Na / K / Cl', 450, 6],
+  ['CALC', 'Serum calcium', 'lab', 'Blood tests', 'Serum', 'mg/dL', 8.5, 10.5, null, 250, 6],
+  ['TSH', 'Thyroid Stimulating Hormone', 'lab', 'Blood tests', 'Serum', 'µIU/mL', 0.4, 4.0, null, 450, 24],
+  ['THYP', 'Thyroid profile (T3 T4 TSH)', 'lab', 'Blood tests', 'Serum', null, null, null, 'See individual parameters', 900, 24],
+  ['VITD', 'Vitamin D (25-OH)', 'lab', 'Blood tests', 'Serum', 'ng/mL', 30, 100, null, 1600, 48],
+  ['VITB12', 'Vitamin B12', 'lab', 'Blood tests', 'Serum', 'pg/mL', 200, 900, null, 1200, 48],
+  ['CRP', 'C-Reactive Protein', 'lab', 'Blood tests', 'Serum', 'mg/L', 0, 5, null, 550, 8],
+  ['DENGUE', 'Dengue NS1 / IgM / IgG', 'lab', 'Blood tests', 'Serum', null, null, null, 'Non-reactive', 900, 6],
+  ['WIDAL', 'Widal Test', 'lab', 'Blood tests', 'Serum', null, null, null, 'Non-reactive', 300, 12],
+  ['MP', 'Malaria parasite / antigen', 'lab', 'Blood tests', 'EDTA blood', null, null, null, 'Not detected', 300, 4],
+  ['HIV', 'HIV I & II (screening)', 'lab', 'Blood tests', 'Serum', null, null, null, 'Non-reactive', 500, 12],
+  ['HBSAG', 'HBsAg (screening)', 'lab', 'Blood tests', 'Serum', null, null, null, 'Non-reactive', 400, 12],
+  ['HCV', 'Anti-HCV (screening)', 'lab', 'Blood tests', 'Serum', null, null, null, 'Non-reactive', 600, 12],
+  ['PREG', 'Pregnancy test (beta hCG)', 'lab', 'Blood tests', 'Serum', null, null, null, 'Negative', 350, 6],
+  ['PT', 'Prothrombin time / INR', 'lab', 'Blood tests', 'Citrate plasma', 'sec', null, null, 'INR 0.9 – 1.2', 450, 6],
+
+  ['URINE', 'Urine Routine', 'lab', 'Urine & stool', 'Urine', null, null, null, 'See report', 200, 4],
+  ['URCULT', 'Urine culture & sensitivity', 'lab', 'Urine & stool', 'Urine', null, null, null, 'No growth', 700, 72],
+  ['UPREG', 'Urine pregnancy test', 'lab', 'Urine & stool', 'Urine', null, null, null, 'Negative', 150, 1],
+  ['STOOL', 'Stool routine', 'lab', 'Urine & stool', 'Stool', null, null, null, 'See report', 250, 6],
+  ['STOCC', 'Stool occult blood', 'lab', 'Urine & stool', 'Stool', null, null, null, 'Negative', 300, 6],
+  ['SPUTUM', 'Sputum AFB', 'lab', 'Urine & stool', 'Sputum', null, null, null, 'Not detected', 300, 24],
+
+  ['XR-CHEST', 'X-Ray Chest PA', 'radiology', 'X-ray', null, null, null, null, 'Radiologist report', 400, 4],
+  ['XR-KNEE', 'X-Ray Knee AP/Lateral', 'radiology', 'X-ray', null, null, null, null, 'Radiologist report', 500, 4],
+  ['XR-SPINE', 'X-Ray Lumbar Spine AP/Lateral', 'radiology', 'X-ray', null, null, null, null, 'Radiologist report', 600, 4],
+  ['XR-CSPINE', 'X-Ray Cervical Spine', 'radiology', 'X-ray', null, null, null, null, 'Radiologist report', 550, 4],
+  ['XR-ABD', 'X-Ray Abdomen erect', 'radiology', 'X-ray', null, null, null, null, 'Radiologist report', 450, 4],
+  ['XR-SHOUL', 'X-Ray Shoulder', 'radiology', 'X-ray', null, null, null, null, 'Radiologist report', 500, 4],
+  ['XR-PELV', 'X-Ray Pelvis', 'radiology', 'X-ray', null, null, null, null, 'Radiologist report', 550, 4],
+  ['XR-SKULL', 'X-Ray Skull', 'radiology', 'X-ray', null, null, null, null, 'Radiologist report', 500, 4],
+  ['XR-LIMB', 'X-Ray Limb (per part)', 'radiology', 'X-ray', null, null, null, null, 'Radiologist report', 450, 4],
+  ['XR-DENT', 'Dental X-Ray (IOPA)', 'radiology', 'X-ray', null, null, null, null, 'Dental surgeon report', 250, 1],
+
+  ['USG-ABD', 'Ultrasound — Abdomen & Pelvis', 'radiology', 'Ultrasound & Doppler', null, null, null, null, 'Radiologist report', 1200, 6],
+  ['USG-OBS', 'Ultrasound — Obstetric', 'radiology', 'Ultrasound & Doppler', null, null, null, null, 'Radiologist report', 1400, 6],
+  ['USG-KUB', 'Ultrasound — KUB', 'radiology', 'Ultrasound & Doppler', null, null, null, null, 'Radiologist report', 1100, 6],
+  ['USG-THY', 'Ultrasound — Thyroid / Neck', 'radiology', 'Ultrasound & Doppler', null, null, null, null, 'Radiologist report', 1200, 6],
+  ['USG-BRE', 'Ultrasound — Breast', 'radiology', 'Ultrasound & Doppler', null, null, null, null, 'Radiologist report', 1200, 6],
+  ['USG-SCR', 'Ultrasound — Scrotum', 'radiology', 'Ultrasound & Doppler', null, null, null, null, 'Radiologist report', 1100, 6],
+  ['USG-SOFT', 'Ultrasound — Soft tissue', 'radiology', 'Ultrasound & Doppler', null, null, null, null, 'Radiologist report', 1000, 6],
+  ['USG-DOP', 'Doppler — Peripheral vascular', 'radiology', 'Ultrasound & Doppler', null, null, null, null, 'Radiologist report', 2400, 12],
+  ['USG-DOPO', 'Doppler — Obstetric', 'radiology', 'Ultrasound & Doppler', null, null, null, null, 'Radiologist report', 2200, 12],
+
+  ['ECG12', 'ECG — 12 lead', 'cardiology', 'ECG & heart', null, null, null, null, 'Cardiologist report', 300, 1],
+  ['ECHO', '2D Echocardiogram', 'cardiology', 'ECG & heart', null, null, null, null, 'Cardiologist report', 2200, 24],
+  ['TMT', 'Treadmill test (TMT)', 'cardiology', 'ECG & heart', null, null, null, null, 'Cardiologist report', 2500, 24],
+  ['HOLTER', 'Holter monitoring — 24 hour', 'cardiology', 'ECG & heart', null, null, null, null, 'Cardiologist report', 3500, 48],
 ];
-for (const [code, name, category, sample_type, unit, ref_low, ref_high, ref_text, price, tat_hours] of tests) {
-  upsert('lab_tests', 'code', { code, name, category, sample_type, unit, ref_low, ref_high, ref_text, price, tat_hours });
+for (const [code, name, category, bill_group, sample_type, unit, ref_low, ref_high, ref_text, price, tat_hours] of tests) {
+  upsert('lab_tests', 'code', {
+    code, name, category, bill_group, sample_type, unit, ref_low, ref_high, ref_text, price, tat_hours,
+  });
 }
 
 // -------------------------------------------------------------- drug master

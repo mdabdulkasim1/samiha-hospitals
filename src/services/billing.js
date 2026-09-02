@@ -25,10 +25,12 @@ function recalc(invoiceId) {
   tax = round2(tax);
 
   // sliding_discount / assistance_covered / insurance_covered are stored as
-  // absolute amounts set by the cashier or the assistance workflow.
+  // absolute amounts set by the cashier or the assistance workflow, and
+  // bill_discount is the one the cashier gives on the bill as a whole.
   const discount = round2(lineDiscount);
   const net = round2(Math.max(
-    gross - discount - inv.sliding_discount - inv.assistance_covered - inv.insurance_covered + tax,
+    gross - discount - (inv.bill_discount || 0) - inv.sliding_discount
+      - inv.assistance_covered - inv.insurance_covered + tax,
     0
   ));
 

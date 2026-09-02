@@ -341,6 +341,77 @@ router.get('/services', wrap((_req, res) => {
   res.json(db.prepare('SELECT * FROM services WHERE active = 1 ORDER BY category, name').all());
 }));
 
+/**
+ * Everything the clinic can charge for, filed the way a cashier looks for it.
+ *
+ * Services and diagnostics live in different tables because they are different
+ * things — one is done to a patient, the other is reported on — but at the
+ * counter they are one list of chargeable items, so this is where they meet.
+ * Each carries the kind it came from, because adding a diagnostic to a bill
+ * has to raise the order as well as the charge.
+ */
+router.get('/catalogue', wrap((_req, res) => {
+  const items = [
+    ...db.prepare(
+      `SELECT id, code, name, bill_group, price, tax_pct, 'service' AS kind, category
+         FROM services WHERE active = 1`
+    ).all(),
+    ...db.prepare(
+      `SELECT id, code, name, bill_group, price, 0 AS tax_pct, 'test' AS kind, category
+         FROM lab_tests WHERE active = 1`
+    ).all(),
+  ];
+
+  // Group order is the order of a visit, not the alphabet: what a patient is
+  // charged for first comes first.
+  const ORDER = ['Consultation', 'Procedures & treatment', 'Blood tests', 'Urine & stool',
+    'X-ray', 'Ultrasound & Doppler', 'ECG & heart', 'Nursing & ward', 'Ambulance & other'];
+  const rank = (g) => { const i = ORDER.indexOf(g); return i === -1 ? ORDER.length : i; };
+
+  const byGroup = new Map();
+  for (const it of items) {
+    const g = it.bill_group || 'Other';
+    if (!byGroup.has(g)) byGroup.set(g, []);
+    byGroup.get(g).push(it);
+  }
+  res.json([...byGroup.entries()]
+    .map(([group, rows]) => ({ group, items: rows.sort((a, b) => a.name.localeCompare(b.name)) }))
+    .sort((a, b) => rank(a.group) - rank(b.group) || a.group.localeCompare(b.group)));
+}));
+
+/**
+ * Set what an item costs. The clinic sets its own tariff, so this exists for
+ * the rates screen; the code an item is known by is never editable, because
+ * bills already printed refer to it.
+ */
+router.patch('/services/:id', adminOnly, wrap((req, res) => {
+  const id = int(req.params.id);
+  const row = db.prepare('SELECT * FROM services WHERE id = ?').get(id);
+  if (!row) throw notFound('Service not found');
+  const price = req.body.price === undefined ? row.price : num(req.body.price);
+  if (price < 0) throw badRequest('A rate cannot be negative.');
+  db.prepare('UPDATE services SET name = ?, price = ?, tax_pct = ?, bill_group = ?, active = ? WHERE id = ?')
+    .run(str(req.body.name, row.name), price,
+         req.body.taxPct === undefined ? row.tax_pct : num(req.body.taxPct),
+         str(req.body.billGroup, row.bill_group),
+         req.body.active === undefined ? row.active : (req.body.active ? 1 : 0), id);
+  audit.log(req, 'update', 'service', id, { from: row.price, to: price });
+  res.json(db.prepare('SELECT * FROM services WHERE id = ?').get(id));
+}));
+
+router.patch('/lab-tests/:id', requireRole('admin', 'lab'), wrap((req, res) => {
+  const id = int(req.params.id);
+  const row = db.prepare('SELECT * FROM lab_tests WHERE id = ?').get(id);
+  if (!row) throw notFound('Test not found');
+  const price = req.body.price === undefined ? row.price : num(req.body.price);
+  if (price < 0) throw badRequest('A rate cannot be negative.');
+  db.prepare('UPDATE lab_tests SET name = ?, price = ?, bill_group = ?, active = ? WHERE id = ?')
+    .run(str(req.body.name, row.name), price, str(req.body.billGroup, row.bill_group),
+         req.body.active === undefined ? row.active : (req.body.active ? 1 : 0), id);
+  audit.log(req, 'update', 'lab_test', id, { from: row.price, to: price });
+  res.json(db.prepare('SELECT * FROM lab_tests WHERE id = ?').get(id));
+}));
+
 router.post('/services', adminOnly, wrap((req, res) => {
   required(req.body, ['code', 'name', 'price']);
   const info = db.prepare('INSERT INTO services (code, name, category, price, tax_pct) VALUES (?, ?, ?, ?, ?)')

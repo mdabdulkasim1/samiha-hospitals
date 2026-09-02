@@ -26,6 +26,9 @@
       // Insurance is its own desk: plenty of patients pay for themselves, and
       // chasing a TPA is not a doctor's or a nurse's job.
       { id: 'insurance',   label: 'Insurance & TPA',    icon: '⛨', roles: ['admin','cashier','reception','counselor'] },
+      // What the clinic charges for what. Management's to set, everyone
+      // else's to bill against, so it is read-only unless you are an admin.
+      { id: 'rates',       label: 'Services & Rates',   icon: '₨', roles: ['admin','cashier','reception'] },
     ]},
     { group: 'Channels & insight', items: [
       { id: 'whatsapp',    label: 'WhatsApp',         icon: '✆', roles: '*' },

@@ -153,12 +153,61 @@ function migrate() {
     + 'WHERE doctor_code IS NOT NULL');
   backfillDoctorCodes();
 
+  /*
+   * How a billable item is filed on the cashier's screen.
+   *
+   * This is not the clinical category. A test's category says how its report
+   * is laid out — an ultrasound reads as findings and an impression, a blood
+   * test as numbers against a reference range — and that must not change to
+   * suit a billing screen. The bill group says where the cashier looks for it:
+   * "X-ray", "Blood tests", "Procedures & treatment". The two answer different
+   * questions and are allowed to disagree.
+   */
+  /*
+   * A discount the cashier gives on the whole bill, as against the per-line
+   * discounts that `discount` already totals up. It needs its own column
+   * because recalc derives `discount` from the lines every time it runs, and
+   * would wipe out anything written there by hand.
+   */
+  ensureColumn('invoices', 'bill_discount', 'REAL NOT NULL DEFAULT 0');
+  ensureColumn('invoices', 'bill_discount_reason', 'TEXT');
+
+  ensureColumn('services', 'bill_group', 'TEXT');
+  ensureColumn('lab_tests', 'bill_group', 'TEXT');
+  backfillBillGroups();
+
   // Medicaments sit under HSN 3004 unless the formulary says otherwise; a GST
   // invoice must show a code, so nothing is left without one.
   db.exec("UPDATE drugs SET hsn = '3004' WHERE hsn IS NULL OR hsn = ''");
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_drugs_barcode ON drugs(barcode) WHERE barcode IS NOT NULL');
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_batches_barcode ON drug_batches(barcode) WHERE barcode IS NOT NULL');
   return db;
+}
+
+/**
+ * Give every catalogue item a bill group, without ever overwriting one that
+ * has been set. An item added before this existed is filed from what we can
+ * tell about it: its clinical category, and for imaging the name, because
+ * "radiology" covers both the X-ray room and the ultrasound room and a cashier
+ * looking for one does not want to wade through the other.
+ */
+function backfillBillGroups() {
+  const set = (table, group, where, params = []) =>
+    db.prepare(`UPDATE ${table} SET bill_group = ? WHERE (bill_group IS NULL OR bill_group = '') AND ${where}`)
+      .run(group, ...params);
+
+  set('services', 'Consultation', "category = 'consultation'");
+  set('services', 'Procedures & treatment', "category IN ('procedure','treatment')");
+  set('services', 'Nursing & ward', "category IN ('nursing','ward','room')");
+  set('services', 'Ambulance & other', '1 = 1');
+
+  set('lab_tests', 'ECG & heart', "category = 'cardiology'");
+  set('lab_tests', 'Ultrasound & Doppler',
+    "category = 'radiology' AND (name LIKE '%ltrasound%' OR name LIKE '%USG%' OR name LIKE '%oppler%')");
+  set('lab_tests', 'X-ray', "category = 'radiology'");
+  set('lab_tests', 'Urine & stool',
+    "category = 'lab' AND (name LIKE '%Urine%' OR name LIKE '%Stool%' OR sample_type LIKE '%Urine%' OR sample_type LIKE '%Stool%')");
+  set('lab_tests', 'Blood tests', '1 = 1');
 }
 
 /** Wrap a function in a transaction. */
@@ -170,4 +219,4 @@ function tx(fn) {
 // idempotent and removes any module-ordering hazard around prepared statements.
 migrate();
 
-module.exports = { db, migrate, tx, ensureColumn, backfillDoctorCodes };
+module.exports = { db, migrate, tx, ensureColumn, backfillDoctorCodes, backfillBillGroups };

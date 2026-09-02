@@ -241,6 +241,54 @@ code, .mono { font-family: var(--mono); font-size: .92em; }
 .linknum:focus-visible { outline: 2px solid var(--teal); outline-offset: 1px; }
 @media print { .linknum { border-bottom: 0; background: none; } }
 
+/* A rate, edited in place on the tariff. It flashes green on save rather than
+   raising a dialog: setting a hundred rates is one sitting, and a hundred
+   confirmations would make it an afternoon. */
+.rate-input {
+  width: 110px; text-align: right; padding: 5px 8px; font: inherit;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--surface);
+  font-variant-numeric: lining-nums tabular-nums;
+}
+.rate-input:focus { outline: 2px solid var(--teal); outline-offset: 1px; border-color: var(--teal); }
+.rate-input.saved { border-color: var(--ok); background: var(--ok-soft); }
+.rate-input::placeholder { color: var(--orange-dark); font-style: italic; }
+
+/* Adding a charge: the groups as chips, then that group's items as buttons
+   with the rate on them. A desk keys in the same half-dozen charges all day,
+   and finding them in a dropdown of a hundred was the slow part. */
+.chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  font: inherit; font-size: 12.5px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink-2);
+  padding: 6px 11px; border-radius: 999px; display: inline-flex; align-items: center; gap: 6px;
+  transition: background-color .12s ease, color .12s ease, border-color .12s ease;
+}
+.chip:hover { border-color: var(--teal); color: var(--teal); }
+.chip.on { background: var(--teal); border-color: var(--teal); color: #fff; }
+.chip-n { font-size: 10.5px; opacity: .7; font-variant-numeric: lining-nums tabular-nums; }
+.chip.on .chip-n { opacity: .85; }
+.chip:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+
+.item-grid {
+  display: grid; gap: 7px;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+}
+.item-btn {
+  font: inherit; cursor: pointer; text-align: left;
+  border: 1px solid var(--line); border-radius: 9px; background: var(--surface);
+  padding: 9px 11px; display: flex; flex-direction: column; gap: 3px;
+  transition: border-color .12s ease, box-shadow .12s ease, transform .12s ease;
+}
+.item-btn:hover { border-color: var(--teal); box-shadow: 0 3px 10px rgba(12,32,38,.10); transform: translateY(-1px); }
+.item-btn:active { transform: none; }
+.item-btn:disabled { opacity: .5; cursor: progress; }
+.item-btn:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+.item-name { font-weight: 600; font-size: 12.5px; line-height: 1.3; color: var(--ink); }
+.item-rate {
+  font-size: 12px; color: var(--teal); font-weight: 700;
+  font-variant-numeric: lining-nums tabular-nums;
+}
+
 /* Card headings carry a small mark in the house teal, so a screenful of cards
    still reads as one system. */
 .card-head > h3 { position: relative; padding-left: 11px; }
