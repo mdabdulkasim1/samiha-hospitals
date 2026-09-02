@@ -54,6 +54,45 @@
   });
 
   /** X-ray, ultrasound, ECG — reported in words rather than in numbers. */
+  /**
+   * Aadhaar in the 4-4-4 grouping it is written in, so it can be checked at a
+   * glance against the card.
+   */
+  function formatAadhaar(value) {
+    const raw = String(value || '').replace(/[\s-]/g, '');
+    if (!/^\d{12}$/.test(raw)) return '';
+    return `${raw.slice(0, 4)} ${raw.slice(4, 8)} ${raw.slice(8)}`;
+  }
+
+  /**
+   * Weight and height on a lab sheet, and the BMI they come to.
+   *
+   * Not decoration: creatinine clearance is read against weight, a paediatric
+   * dose is weight-based, and a radiographer sets an exposure by build. The
+   * BMI band follows the Indian cut-offs — overweight at 23, obesity at 25 —
+   * because those are the thresholds this population is screened against.
+   */
+  function bmiBand(bmi) {
+    const n = Number(bmi) || 0;
+    if (!n) return '';
+    if (n < 18.5) return 'underweight';
+    if (n < 23) return 'normal';
+    if (n < 25) return 'overweight';
+    return 'obese';
+  }
+
+  function measurements(v) {
+    const vt = v || {};
+    return `
+      <div><div class="k">Weight</div><div class="v">${vt.weight_kg
+        ? `${UI.esc(UI.num(vt.weight_kg, 1))} kg` : '—'}</div></div>
+      <div><div class="k">Height</div><div class="v">${vt.height_cm
+        ? `${UI.esc(UI.num(vt.height_cm, 0))} cm` : '—'}</div></div>
+      <div><div class="k">BMI</div><div class="v">${vt.bmi
+        ? `${UI.esc(UI.num(vt.bmi, 1))}<span class="bmi-band"> ${UI.esc(bmiBand(vt.bmi))}</span>`
+        : '—'}</div></div>`;
+  }
+
   const isImaging = (item) => ['radiology', 'cardiology'].includes(String(item.category || '').toLowerCase());
 
   async function openOrder(id) {
@@ -188,7 +227,10 @@
           </div>
           <div><div class="k">Age / Sex</div>
             <div class="v">${UI.esc(age)} · ${UI.esc(UI.titleise(o.gender || '—'))}</div></div>
+          ${measurements(o.vitals)}
           <div><div class="k">UHID</div><div class="v">${UI.esc(o.uhid)}</div></div>
+          <div><div class="k">Aadhaar</div><div class="v">${
+            formatAadhaar(o.aadhaar_number) || '—'}</div></div>
           <div><div class="k">Ordered</div><div class="v">${UI.esc(UI.dateTime(o.ordered_at))}</div></div>
           <div><div class="k">Order</div><div class="v">${UI.esc(o.order_no)}</div></div>
           <div><div class="k">Ordered by</div><div class="v">${UI.esc(o.doctor_code || '—')}</div></div>
@@ -283,7 +325,10 @@
           </div>
           <div><div class="k">Age / Sex</div>
             <div class="v">${UI.esc(age)} · ${UI.esc(UI.titleise(o.gender || '—'))}</div></div>
+          ${measurements(o.vitals)}
           <div><div class="k">UHID</div><div class="v">${UI.esc(o.uhid)}</div></div>
+          <div><div class="k">Aadhaar</div><div class="v">${
+            formatAadhaar(o.aadhaar_number) || '—'}</div></div>
           <div><div class="k">Reported</div>
             <div class="v">${UI.esc(UI.dateTime(o.reported_at || o.ordered_at))}</div></div>
           <div><div class="k">Order</div><div class="v">${UI.esc(o.order_no)}</div></div>

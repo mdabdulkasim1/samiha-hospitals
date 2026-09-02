@@ -683,7 +683,6 @@
         .dx-code { width: 58px; font-weight: 700; font-variant-numeric: lining-nums tabular-nums; }
         .dx-term { font-weight: 600; }
         .dx-note { margin-top: 4px; color: #5A6B74; font-size: 9.5px; }
-        .bmi-band { color: #8B9AA2; font-weight: 500; font-size: 9px; }
         .rx-qty { font-weight: 600; }
       </style>
       <div class="sheet">

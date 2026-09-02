@@ -60,6 +60,7 @@ test.before(async () => {
   for (const [as, email] of [
     ['admin', 'admin@samiha.local'], ['reception', 'reception@samiha.local'],
     ['imran', 'imran@samiha.local'], ['pharmacy', 'pharmacy@samiha.local'],
+    ['lab', 'lab@samiha.local'],
   ]) {
     const r = await api('POST', '/api/auth/login', { username: email, password: 'samiha@123' }, null);
     assert.strictEqual(r.status, 200, `login failed for ${email}`);
@@ -287,4 +288,62 @@ test('a medicine that already names its strength does not say it twice', async (
     const strengths = n.match(/\d+\s*(mg|ml|mcg)/gi) || [];
     assert.ok(strengths.length <= 1, `"${n}" says its strength more than once`);
   }
+});
+
+// ------------------------------------------------------------ the lab sheets
+test('a lab order and its report carry the Aadhaar and the measurements', async () => {
+  const tests = (await api('GET', '/api/masters/lab-tests', undefined, 'imran')).body;
+  const chosen = tests.filter((t) => String(t.category) === 'lab').slice(0, 2);
+  assert.ok(chosen.length === 2, 'two measurable tests are needed');
+
+  const order = await api('POST', '/api/lab/orders', {
+    patientId: ids.patient, doctorId: ids.imran, priority: 'routine',
+    clinicalNotes: 'Fever for three days',
+    tests: chosen.map((t) => ({ testId: t.id })),
+  }, 'imran');
+  assert.strictEqual(order.status, 201, JSON.stringify(order.body));
+  const orderId = order.body.id;
+
+  // The requisition, which the collection counter works from.
+  const slip = (await api('GET', `/api/lab/orders/${orderId}`, undefined, 'lab')).body;
+  assert.ok(slip.aadhaar_number, 'the slip can print the Aadhaar');
+  assert.ok(slip.vitals, 'and the measurements');
+  assert.strictEqual(slip.vitals.height_cm, 172);
+  assert.strictEqual(slip.vitals.weight_kg, 78);
+
+  // Then results, and the report the patient takes home.
+  await api('POST', `/api/lab/orders/${orderId}/collect`, { sampleType: 'blood' }, 'lab');
+  const full = (await api('GET', `/api/lab/orders/${orderId}`, undefined, 'lab')).body;
+  await api('POST', `/api/lab/orders/${orderId}/results`, {
+    results: full.items.map((i) => ({ itemId: i.id, value: '12' })),
+  }, 'lab');
+
+  const report = (await api('GET', `/api/lab/orders/${orderId}/report`, undefined, 'lab')).body;
+  assert.ok(report.aadhaar_number, 'the report carries it too');
+  assert.strictEqual(report.vitals.weight_kg, 78);
+  assert.strictEqual(report.vitals.height_cm, 172);
+  assert.strictEqual(report.vitals.bmi, 26.4, 'worked out, as on the prescription');
+});
+
+test('a document keeps the measurements it was written against', async () => {
+  const vitals = require('../src/services/vitals');
+
+  // A later reading must not creep onto a document already issued.
+  const sheet = db.prepare(
+    'SELECT id, patient_id, created_at FROM prescription_sheets WHERE patient_id = ? ORDER BY id LIMIT 1'
+  ).get(ids.patient);
+  db.prepare(
+    `INSERT INTO vitals (patient_id, height_cm, weight_kg, recorded_at)
+     VALUES (?, 172, 91, datetime(?, '+40 days'))`
+  ).run(ids.patient, sheet.created_at);
+
+  const then = vitals.asOf(ids.patient, sheet.created_at);
+  assert.strictEqual(then.weight_kg, 78, 'the sheet keeps the weight it was written against');
+
+  const now = vitals.asOf(ids.patient);
+  assert.strictEqual(now.weight_kg, 91, 'a screen wants the latest');
+
+  const reprinted = (await api('GET', `/api/prescriptions/${sheet.id}`, undefined, 'imran')).body;
+  assert.strictEqual(reprinted.vitals.weight_kg, 78,
+    'reprinting an old prescription does not give it a new weight');
 });

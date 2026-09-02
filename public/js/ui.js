@@ -543,6 +543,9 @@
           margin-top: 4px; font-size: 7.5px; color: #8B9AA2;
           letter-spacing: .9px; text-transform: uppercase; font-weight: 600;
         }
+        /* The word after a BMI — "normal", "overweight" — reads as a note on
+           the figure, not as part of it. */
+        .sheet .bmi-band { color: #8B9AA2; font-weight: 500; font-size: 9px; }
         .sheet .note {
           margin-top: 12px; border-top: 1px solid #E4EAED; padding-top: 6px;
           font-size: 8px; color: #8B9AA2; text-align: center; line-height: 1.5;

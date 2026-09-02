@@ -8,6 +8,8 @@ const { generate } = require('../lib/ids');
 const whatsapp = require('../services/whatsapp');
 const audit = require('../lib/audit');
 
+const vitals = require('../services/vitals');
+
 const router = express.Router();
 const viewRoles = requireRole('lab', 'doctor', 'nurse', 'reception', 'cashier');
 
@@ -67,7 +69,7 @@ router.get('/orders/:id', viewRoles, wrap((req, res) => {
   const id = int(req.params.id);
   const order = db.prepare(
     `SELECT o.*, p.uhid, (p.first_name || ' ' || COALESCE(p.last_name,'')) AS patient_name,
-            p.age_years, p.gender, p.whatsapp, p.phone, p.allergies,
+            p.age_years, p.gender, p.whatsapp, p.phone, p.allergies, p.aadhaar_number,
             u.name AS doctor_name, dp.doctor_code, v.visit_no, a.ip_no
        FROM lab_orders o JOIN patients p ON p.id = o.patient_id
        LEFT JOIN users u ON u.id = o.doctor_id
@@ -77,6 +79,7 @@ router.get('/orders/:id', viewRoles, wrap((req, res) => {
       WHERE o.id = ?`
   ).get(id);
   if (!order) throw notFound('Order not found');
+  order.vitals = vitals.asOf(order.patient_id, order.ordered_at);
   // `sample_type` lives on the test, and the collection counter needs it on the
   // requisition to know which tube to draw.
   order.items = db.prepare(
@@ -240,6 +243,7 @@ router.get('/orders/:id/report', viewRoles, wrap((req, res) => {
    */
   const order = db.prepare(
     `SELECT o.*, p.uhid, p.first_name, p.last_name, p.age_years, p.gender, p.phone,
+            p.aadhaar_number,
             u.name AS doctor_name, dp.doctor_code
        FROM lab_orders o
        JOIN patients p ON p.id = o.patient_id
@@ -251,6 +255,8 @@ router.get('/orders/:id/report', viewRoles, wrap((req, res) => {
   if (!['result_entered', 'verified', 'reported'].includes(order.status)) {
     throw conflict('Results are not ready for this order yet.');
   }
+  // A report is dated when it was reported, so that is the reading it carries.
+  order.vitals = vitals.asOf(order.patient_id, order.reported_at || order.ordered_at);
   // An X-ray or a scan is a narrative, not a number, and the printed report has
   // to know which it is holding.
   order.items = db.prepare(

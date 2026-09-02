@@ -18,6 +18,8 @@ const { generate } = require('../lib/ids');
 const pharmacy = require('../services/pharmacy');
 const audit = require('../lib/audit');
 
+const vitals = require('../services/vitals');
+
 const router = express.Router();
 
 /**
@@ -98,29 +100,8 @@ function sheetOr404(id) {
   ).get(id);
   if (!sheet) throw notFound('Prescription not found');
 
-  /*
-   * The measurements as they stood when the prescription was written, not as
-   * they stand now. A dose worked out against a 12 kg child must still read
-   * against 12 kg when the sheet is reprinted a year later, so the reading
-   * taken nearest the sheet's own date is the one it carries.
-   */
-  const vitals = db.prepare(
-    `SELECT height_cm, weight_kg, bmi, bp_systolic, bp_diastolic, recorded_at
-       FROM vitals
-      WHERE patient_id = ? AND (height_cm IS NOT NULL OR weight_kg IS NOT NULL)
-        AND datetime(recorded_at) <= datetime(?, '+1 day')
-      ORDER BY datetime(recorded_at) DESC LIMIT 1`
-  ).get(sheet.patient_id, sheet.created_at) || null;
-
-  if (vitals) {
-    // A BMI recorded at the time is kept; otherwise it is worked out from the
-    // height and weight that were, rather than left blank.
-    if (!vitals.bmi && vitals.height_cm > 0 && vitals.weight_kg > 0) {
-      const m = vitals.height_cm / 100;
-      vitals.bmi = Math.round((vitals.weight_kg / (m * m)) * 10) / 10;
-    }
-  }
-  sheet.vitals = vitals;
+  // The measurements as they stood when the prescription was written.
+  sheet.vitals = vitals.asOf(sheet.patient_id, sheet.created_at);
 
   // The coded diagnosis list. Older sheets have only the free-text line, which
   // still prints — a prescription already issued is not rewritten.
