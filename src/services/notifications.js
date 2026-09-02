@@ -26,7 +26,7 @@ const templates = {
 
   checked_in: (d) =>
     `🏥 You are checked in.\n\nVisit: ${d.visitNo}\nToken: ${d.token}\n` +
-    `Doctor: ${d.doctorName}\n\nPlease wait in the waiting area — the vitals station will call your token.`,
+    `Doctor: ${d.doctorName}\n\nPlease wait in the waiting area — the nurse station will call your token.`,
 
   lab_ready: (d) =>
     `🧪 Your diagnostic report is ready.\n\nOrder: ${d.orderNo}\nTests: ${d.tests}\n` +

@@ -462,7 +462,7 @@ router.post('/:id/vitals', requireRole('reception', 'nurse', 'doctor'), wrap((re
 
   audit.log(req, 'record_vitals', 'patient', id, { vitalsId: info.lastInsertRowid });
   const recorded = db.prepare('SELECT * FROM vitals WHERE id = ?').get(info.lastInsertRowid);
-  // The same flags the vitals station raises on a queued patient. A reading
+  // The same flags the nurse station raises on a queued patient. A reading
   // that needs a doctor now needs one whether or not there is a visit open.
   res.status(201).json({ ...recorded, alerts: vitalsService.alerts(recorded) });
 }));

@@ -54,7 +54,7 @@ function screeningDue(patient) {
 // ------------------------------------------------------------------ live board
 /**
  * The waiting-room / queue board. This is the screen the front desk and the
- * vitals station live on, mirroring the workflow lanes left to right.
+ * nurse station live on, mirroring the workflow lanes left to right.
  */
 router.get('/board', clinicalRoles, wrap((req, res) => {
   const date = str(req.query.date) || scheduling.dateKey(new Date());
@@ -204,7 +204,7 @@ router.post('/:id/check-in', requireRole('reception'), wrap((req, res) => {
 }));
 
 // ---------------------------------------------------------------- 3. vitals
-/** "Take Patient to Vitals Station" → "Check Vitals". */
+/** "Take Patient to the Nurse Station" → "Check Vitals". */
 router.post('/:id/vitals', requireRole('nurse', 'doctor'), wrap((req, res) => {
   const id = int(req.params.id);
   const visit = db.prepare('SELECT * FROM visits WHERE id = ?').get(id);

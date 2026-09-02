@@ -185,6 +185,83 @@ test('the pharmacy bills and collects on its own', async () => {
   // And the queue is clear.
   const queue = (await api('GET', '/api/pharmacy/queue', undefined, 'pharmacy')).body;
   assert.ok(!queue.some((q) => q.sheet_id === ids.sheet));
+
+  // The money was taken at the counter, so nothing is left owing. A bill the
+  // patient has already paid must not sit in the ledger as a debt.
+  assert.strictEqual(sale.body.invoice.balance, 0, 'settled where it was raised');
+  assert.strictEqual(sale.body.invoice.status, 'paid');
+  assert.ok(sale.body.receiptNo, 'and the patient gets a receipt for it');
+  assert.strictEqual(sale.body.sale.payment_mode, 'cash');
+});
+
+test('a part payment at the pharmacy leaves exactly what is still owed', async () => {
+  const rx = (await api('POST', '/api/prescriptions', {
+    patientId: ids.patient,
+    items: [{ drugId: ids.para, doseMorning: 1, durationDays: 5 }],
+  }, 'imran')).body;
+  const sheet = (await api('GET', `/api/pharmacy/sheet/${rx.id}`, undefined, 'pharmacy')).body;
+
+  const sale = await api('POST', '/api/pharmacy/dispense', {
+    patientId: ids.patient,
+    items: [{ prescriptionId: sheet.prescriptions[0].id, drugId: ids.para, qty: 5 }],
+    paidAmount: 1, paymentMode: 'upi', paymentReference: 'UPI-1',
+  }, 'pharmacy');
+  assert.strictEqual(sale.status, 201, JSON.stringify(sale.body));
+  const net = sale.body.invoice.net;
+  assert.ok(net > 1, 'the bill is more than what was handed over');
+  assert.strictEqual(sale.body.invoice.paid, 1);
+  assert.strictEqual(sale.body.invoice.balance, Math.round((net - 1) * 100) / 100);
+  assert.strictEqual(sale.body.invoice.status, 'partial');
+
+  const over = await api('POST', '/api/pharmacy/dispense', {
+    patientId: ids.patient,
+    items: [{ prescriptionId: sheet.prescriptions[0].id, drugId: ids.para, qty: 1 }],
+    paidAmount: 9999,
+  }, 'pharmacy');
+  assert.strictEqual(over.status, 400, 'more money than the bill is a mistake, not a tip');
+});
+
+test('a bill can be built from the tariff for a patient with no visit at all', async () => {
+  // The counter bill: somebody walks in for a dressing and pays for it.
+  const opened = await api('POST', '/api/billing/invoices',
+    { patientId: ids.patient, kind: 'opd' }, 'cashier');
+  assert.strictEqual(opened.status, 201, JSON.stringify(opened.body));
+  const id = opened.body.id;
+  assert.strictEqual(opened.body.visit_id, null);
+
+  // Priced off the catalogue the rates screen sets, not typed in by hand.
+  const catalogue = (await api('GET', '/api/masters/catalogue', undefined, 'cashier')).body;
+  const item = catalogue.flatMap((g) => g.items).find((i) => i.price > 0);
+  const added = await api('POST', `/api/billing/invoices/${id}/items`, {
+    refType: item.kind === 'test' ? 'lab' : 'service', refId: item.id,
+    description: item.name, qty: 1, unitPrice: item.price, taxPct: item.tax_pct || 0,
+  }, 'cashier');
+  assert.strictEqual(added.status, 201, JSON.stringify(added.body));
+  assert.strictEqual(added.body.items.length, 1);
+
+  // Taken off again, because a cashier presses the wrong button sometimes.
+  const line = added.body.items[0];
+  const removed = (await api('DELETE', `/api/billing/invoices/${id}/items/${line.id}`,
+    undefined, 'cashier')).body;
+  assert.strictEqual(removed.items.length, 0);
+  assert.strictEqual(removed.gross, 0);
+
+  // Back on, discounted, and settled.
+  const back = await api('POST', `/api/billing/invoices/${id}/items`, {
+    refType: 'service', description: item.name, qty: 1, unitPrice: item.price,
+  }, 'cashier');
+  assert.strictEqual(back.status, 201, 'an emptied bill is still open to add to');
+  const cut = (await api('POST', `/api/billing/invoices/${id}/bill-discount`,
+    { pct: 10, reason: 'Staff concession' }, 'cashier')).body;
+  assert.ok(cut.bill_discount > 0);
+  assert.strictEqual(cut.net, Math.round((item.price * 0.9) * 100) / 100);
+
+  const paid = await api('POST', `/api/billing/invoices/${id}/payments`,
+    { amount: cut.net, mode: 'cash' }, 'cashier');
+  assert.strictEqual(paid.status, 201, JSON.stringify(paid.body));
+  const done = (await api('GET', `/api/billing/invoices/${id}`, undefined, 'cashier')).body;
+  assert.strictEqual(done.balance, 0);
+  assert.strictEqual(done.status, 'paid');
 });
 
 test('a prescription written with no visit still reaches our counter', async () => {

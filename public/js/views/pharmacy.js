@@ -543,13 +543,17 @@
           </tbody></table></div>
         </div>
         <div class="card-body">
-          <div class="grid c3">
+          <div class="grid c4">
             ${UI.field({ name: 'discount', label: 'Discount on this bill', type: 'number', min: 0, value: 0 })}
-            <div></div>
+            ${UI.field({ name: 'paymentMode', label: 'Paid by', value: 'cash',
+              options: ['cash','upi','card','netbanking','wallet'].map((m) => ({ value: m, label: UI.titleise(m) })) })}
+            ${UI.field({ name: 'paymentReference', label: 'Reference', placeholder: 'UPI / card reference' })}
             <div style="display:flex;align-items:flex-end">
-              <button class="btn block" id="do-dispense">Dispense &amp; bill</button>
+              <button class="btn block" id="do-dispense">Dispense, bill &amp; collect</button>
             </div>
           </div>
+          <div class="muted small">The money is taken here. The patient has already left the cash
+            counter, so this bill is settled at the pharmacy and the receipt is printed with it.</div>
           <div id="disp-out"></div>
         </div>
       </div>`;
@@ -572,6 +576,8 @@
         // billed and paid for at this counter either way.
         patientId: visit.patient_id, visitId: visitId || undefined,
         discount: Number(el.querySelector('[name=discount]').value || 0),
+        paymentMode: el.querySelector('[name=paymentMode]').value,
+        paymentReference: el.querySelector('[name=paymentReference]').value || undefined,
         items, acknowledgeWarnings: acknowledge,
       });
 
@@ -586,11 +592,15 @@
           } else throw err;
         }
         el.querySelector('#disp-out').innerHTML = `<div class="alert ok mt">
-          <b>Dispensed.</b> Bill ${UI.esc(res.sale.bill_no)} for ${UI.money(res.sale.net)} added to invoice
-          ${UI.esc(res.invoice.invoice_no)} (balance ${UI.money(res.invoice.balance)}).
+          <b>Dispensed.</b> Bill ${UI.esc(res.sale.bill_no)} for ${UI.money(res.sale.net)}
+          ${res.receiptNo
+            ? `— collected here, receipt ${UI.esc(res.receiptNo)}.`
+            : `added to the hospital bill ${UI.esc(res.invoice.invoice_no)}, settled at discharge.`}
+          ${res.invoice.balance > 0.009
+            ? `<div class="mt"><b style="color:var(--danger)">${UI.money(res.invoice.balance)} still to collect.</b></div>` : ''}
           <div class="mt"><button class="btn sm" id="disp-print">Print the tax invoice</button>
             <button class="btn ghost sm" id="disp-back">Back to the queue</button></div></div>`;
-        UI.ok('Medicines dispensed and added to the bill.');
+        UI.ok(res.receiptNo ? 'Medicines dispensed and paid for.' : 'Medicines dispensed and billed.');
         el.querySelector('#disp-print').addEventListener('click', () => printGstBill(res.sale.id));
         el.querySelector('#disp-back').addEventListener('click', () => APP.navigate('pharmacy'));
       } catch (err) {

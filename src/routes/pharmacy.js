@@ -380,6 +380,34 @@ router.post('/dispense', requireRole('pharmacy'), wrap((req, res) => {
   }
   db.prepare('UPDATE pharmacy_sales SET invoice_id = ? WHERE id = ?').run(invoice.id, out.saleId);
 
+  /*
+   * The money, taken here and now.
+   *
+   * An out-patient pays the pharmacist as the medicines are handed over, so the
+   * bill is settled at this counter and the payment is written against it. Left
+   * unrecorded it would sit in the ledger as money the clinic is still owed by
+   * a patient who has already paid and gone home.
+   *
+   * An in-patient pays nothing here: the charge has just been added to the
+   * admission's running bill and is settled once, at discharge.
+   */
+  let receipt = null;
+  if (!admissionId) {
+    const due = billing.fullInvoice(invoice.id).balance;
+    const paid = req.body.paidAmount === undefined ? due : money(req.body.paidAmount);
+    if (paid > due + 0.009) throw badRequest('Amount received is more than the bill.');
+    if (paid > 0) {
+      const done = billing.addPayment(invoice.id, {
+        patientId, amount: paid, mode: str(req.body.paymentMode, 'cash'),
+        reference: str(req.body.paymentReference) || null,
+        notes: `Pharmacy bill ${billNo}`, receivedBy: req.user.id,
+      });
+      receipt = done.receiptNo;
+    }
+    db.prepare('UPDATE pharmacy_sales SET paid_amount = ?, payment_mode = ?, payment_reference = ? WHERE id = ?')
+      .run(paid, str(req.body.paymentMode, 'cash'), str(req.body.paymentReference), out.saleId);
+  }
+
   if (visitId) {
     db.prepare("INSERT INTO visit_events (visit_id, stage, detail, actor_id) VALUES (?, 'medicines_dispensed', ?, ?)")
       .run(visitId, `${billNo} — ${items.length} item(s)`, req.user.id);
@@ -407,11 +435,12 @@ router.post('/dispense', requireRole('pharmacy'), wrap((req, res) => {
       data: { billNo, items: items.length } });
   }
 
-  audit.log(req, 'dispense', 'pharmacy_sale', out.saleId, { billNo, net: out.net });
+  audit.log(req, 'dispense', 'pharmacy_sale', out.saleId, { billNo, net: out.net, receipt });
   res.status(201).json({
     sale: db.prepare('SELECT * FROM pharmacy_sales WHERE id = ?').get(out.saleId),
     items: db.prepare('SELECT * FROM pharmacy_sale_items WHERE sale_id = ?').all(out.saleId),
     invoice: billing.fullInvoice(invoice.id),
+    receiptNo: receipt,
     warnings,
   });
 }));

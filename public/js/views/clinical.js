@@ -1,4 +1,4 @@
-/* Vitals station and the doctor's consultation desk. */
+/* Nurse station and the doctor's consultation desk. */
 (function () {
   'use strict';
 
@@ -24,9 +24,9 @@
     UI.bindRows(host, rows, (r) => onPick(r.id));
   };
 
-  // -------------------------------------------------------- vitals station
+  // -------------------------------------------------------- nurse station
   APP.register('vitals', {
-    title: 'Vitals Station',
+    title: 'Nurse Station',
     subtitle: 'Check vitals before the patient sees the provider',
 
     async render(el, params) {
@@ -159,7 +159,7 @@
   async function renderWalkInVitals(el, patientId) {
     const patient = await API.get(`/api/patients/${patientId}`);
     APP.setSubtitle(`${patient.first_name} ${patient.last_name || ''} · ${patient.uhid}`);
-    APP.actions([{ id: 'back', label: '← Vitals station', onClick: () => APP.navigate('vitals') }]);
+    APP.actions([{ id: 'back', label: '← Nurse station', onClick: () => APP.navigate('vitals') }]);
 
     const chart = patient.vitals || [];
     const last = chart[0] || null;

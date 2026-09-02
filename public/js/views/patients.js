@@ -281,7 +281,7 @@
           ${UI.field({ name: 'vitalsSpo2', label: 'SpO₂ (%)', type: 'number', min: 0, max: 100 })}
           ${UI.field({ name: 'vitalsRespRate', label: 'Respiratory rate', type: 'number' })}
         </div>
-        <div class="muted small">Leave blank if the vitals station will take these. BMI is worked out for you.</div>
+        <div class="muted small">Leave blank if the nurse station will take these. BMI is worked out for you.</div>
       </fieldset>
 
       <fieldset><legend>Preferred pharmacy</legend>

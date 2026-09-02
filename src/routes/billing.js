@@ -93,9 +93,12 @@ router.get('/pending', deskRoles, wrap((req, res) => {
        LEFT JOIN users u ON u.id = day.doctor_id
        LEFT JOIN doctor_profiles dp ON dp.user_id = u.id
        LEFT JOIN visits v ON v.id = day.visit_id
+       -- The hospital bill, never the pharmacy's: the pharmacy collects at its
+       -- own counter, so its bill is not what this desk is waiting on.
        LEFT JOIN invoices i ON i.id = (
          SELECT i2.id FROM invoices i2
           WHERE i2.visit_id = day.visit_id AND i2.status != 'cancelled'
+            AND i2.kind != 'pharmacy'
           ORDER BY i2.id DESC LIMIT 1)
       ORDER BY day.at`
   ).all(date, date, date, date);

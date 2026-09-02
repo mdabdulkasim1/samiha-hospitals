@@ -317,7 +317,7 @@
     UI.modal({
       title: 'Check in — ' + visit.patient_name,
       size: 'narrow',
-      body: `<div class="alert info">Confirm the reason for the visit before sending the patient to the vitals station.</div>
+      body: `<div class="alert info">Confirm the reason for the visit before sending the patient to the nurse station.</div>
         <form id="ci-form">
           ${UI.field({ name: 'reasonForVisit', label: 'Reason for visit', required: true, value: visit.reason_for_visit || '' })}
         </form>`,
@@ -328,7 +328,7 @@
         const values = UI.formValues(modal.querySelector('#ci-form'));
         if (!values.reasonForVisit) { UI.err('Reason for visit is required.'); return 'keep'; }
         await API.post(`/api/visits/${visit.id}/check-in`, values);
-        UI.ok('Checked in — the patient can move to the vitals station.');
+        UI.ok('Checked in — the patient can move to the nurse station.');
         UI.closeAllModals();
         APP.reload();
       },

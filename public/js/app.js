@@ -11,7 +11,7 @@
       { id: 'patients',    label: 'Patients',         icon: '☺', roles: '*' },
     ]},
     { group: 'Clinical', items: [
-      { id: 'vitals',      label: 'Vitals Station',   icon: '♥', roles: ['admin','nurse','doctor'] },
+      { id: 'vitals',      label: 'Nurse Station',   icon: '♥', roles: ['admin','nurse','doctor'] },
       { id: 'myclinic',    label: 'My Clinic',        icon: '⌚', roles: ['admin','doctor'] },
       { id: 'consult',     label: 'Consultation',     icon: '✚', roles: ['admin','doctor'] },
       { id: 'financial',   label: 'Financial Screening', icon: '⚖', roles: ['admin','counselor','reception','cashier'] },

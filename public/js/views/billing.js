@@ -8,8 +8,12 @@
 
     async render(el, params) {
       if (params.visitId) return renderCheckout(el, Number(params.visitId));
+      if (params.invoiceId) return renderBill(el, Number(params.invoiceId));
 
-      APP.actions([{ id: 'daybook', label: 'Day book', onClick: openDaybook }]);
+      APP.actions([
+        { id: 'new-bill', label: '+ New bill', onClick: openNewBill },
+        { id: 'daybook', label: 'Day book', onClick: openDaybook },
+      ]);
 
       const [invoices, plans, pending] = await Promise.all([
         API.get('/api/billing/invoices' + API.qs({ status: params.status })),
@@ -87,12 +91,17 @@
             { label: 'Stage', render: (r) => UI.badge(LABEL[r.state][0], LABEL[r.state][1]) },
             { label: '', render: (r) => (r.visit_id
               ? `<button class="btn sm" data-visit="${r.visit_id}">${
-                  r.state === 'to_collect' ? 'Collect' : 'Open'}</button>` : '') },
+                  r.state === 'to_collect' ? 'Collect' : 'Open'}</button>`
+              : (r.patient_id
+                ? `<button class="btn ghost sm" data-bill-for="${r.patient_id}">Raise bill</button>`
+                : '')) },
           ], pending.rows, {
             emptyText: 'Nobody is booked and nobody has walked in today.',
           });
           host.querySelectorAll('[data-visit]').forEach((b) => b.addEventListener('click', () =>
             APP.navigate('billing', { visitId: b.dataset.visit })));
+          host.querySelectorAll('[data-bill-for]').forEach((b) => b.addEventListener('click', () =>
+            startBill(Number(b.dataset.billFor))));
         },
 
         invoices() {
@@ -119,7 +128,7 @@
               ? `<b style="color:var(--danger)">${UI.money(i.balance)}</b>` : UI.money(0) },
             { label: 'Status', render: (i) => UI.statusBadge(i.status) },
           ], invoices.rows, { emptyText: 'No invoices yet.' });
-          UI.bindRows(host, invoices.rows, (i) => openInvoice(i.id));
+          UI.bindRows(host, invoices.rows, (i) => APP.navigate('billing', { invoiceId: i.id }));
         },
         plans() {
           body.innerHTML = `<div class="card"><div class="card-head"><h3>Active payment-plan agreements</h3></div>
@@ -281,6 +290,169 @@
     await draw();
   }
 
+  // ------------------------------------------------------------ counter bill
+  /**
+   * A bill made up by hand, service by service, off the clinic's own tariff.
+   *
+   * The cashier's usual bill comes off a visit and assembles itself. Plenty of
+   * money is taken without one, though — a dressing, an injection, an ECG
+   * somebody walked in for, a test paid for and taken away — and until now
+   * there was nowhere to take it. This is that bill: pick the patient, press
+   * what they had, take the money, print it.
+   *
+   * Every rate on the board is the one management set under Services & Rates.
+   * Nothing is typed in at the counter, so two people billing the same dressing
+   * on the same morning charge the same for it.
+   */
+  async function renderBill(el, invoiceId) {
+    let inv = await API.get(`/api/billing/invoices/${invoiceId}`);
+    const who = `${inv.first_name} ${inv.last_name || ''}`.trim();
+    APP.setSubtitle(`${inv.invoice_no} · ${who} · ${inv.uhid}`);
+    APP.actions([
+      { id: 'back', label: '← Billing', onClick: () => APP.navigate('billing') },
+      { id: 'print', label: 'Print invoice', onClick: () => printInvoice(inv) },
+    ]);
+
+    const draw = async () => {
+      inv = await API.get(`/api/billing/invoices/${invoiceId}`);
+      // A bill that is paid, cancelled or written off is a record, not a
+      // working document: it can be read and reprinted, not added to.
+      const open = !['paid', 'cancelled', 'written_off'].includes(inv.status);
+
+      el.innerHTML = `
+        <div class="grid sidebar-right">
+          <div>
+            <div class="card">
+              <div class="card-head"><h3>Bill</h3>
+                ${open ? '<button class="btn ghost sm" id="b-discount">Give a discount</button>' : ''}
+                <button class="btn ghost sm" id="b-print">Print invoice</button>
+              </div>
+              <div class="card-body" id="b-inv">${invoiceBody(inv, { removable: open })}</div>
+            </div>
+
+            ${open ? `<div class="card">
+              <div class="card-head"><h3>Add a service</h3>
+                <span class="muted small">Pick the group, then the item</span></div>
+              <div class="card-body" id="b-add">${UI.loading()}</div>
+            </div>` : ''}
+          </div>
+
+          <div>
+            <div class="card"><div class="card-head"><h3>To collect</h3></div>
+              <div class="card-body">
+                <div class="stat ${inv.balance > 0.009 ? 'crimson' : 'ok'}">
+                  <div class="label">Balance</div>
+                  <div class="value">${UI.money(inv.balance)}</div>
+                  <div class="foot">${UI.money(inv.net)} billed · ${UI.money(inv.paid)} paid</div>
+                </div>
+                ${inv.balance > 0.009
+                  ? `<button class="btn block mt" id="b-pay">Accept payment</button>`
+                  : '<div class="alert ok mt">Settled in full. Print the invoice for the patient.</div>'}
+                <button class="btn ghost block mt" id="b-print2">Print invoice</button>
+              </div></div>
+
+            <div class="card"><div class="card-head"><h3>Patient</h3></div>
+              <div class="card-body"><dl class="kv">
+                <dt>Name</dt><dd><b>${UI.esc(who)}</b></dd>
+                <dt>UHID</dt><dd>${UI.esc(inv.uhid)}</dd>
+                <dt>Phone</dt><dd>${UI.esc(inv.phone || '—')}</dd>
+                <dt>Bill type</dt><dd>${UI.esc(UI.titleise(inv.kind))}</dd>
+                ${inv.visit_no ? `<dt>Visit</dt><dd>${UI.esc(inv.visit_no)}</dd>` : ''}
+              </dl>
+              ${inv.visit_id ? `<button class="btn ghost block mt" id="b-visit">Open the visit</button>` : ''}
+              </div></div>
+
+            <div class="card"><div class="card-body">
+              <div class="muted small">Medicines are not billed here. An out-patient pays the
+                pharmacy at its own counter, on the pharmacy's own bill.</div>
+            </div></div>
+          </div>
+        </div>`;
+
+      wireInvoiceActions(inv, draw);
+
+      const add = el.querySelector('#b-add');
+      if (add) {
+        BillingTools.quickAdd(add, {
+          note: 'Rates are the ones set under Services &amp; Rates. To change one, change it there.',
+          async onAdd(item) {
+            await API.post(`/api/billing/invoices/${inv.id}/items`, {
+              refType: item.kind === 'test' ? 'lab' : 'service',
+              refId: item.id, description: item.name, qty: 1,
+              unitPrice: item.price, taxPct: item.taxPct,
+            });
+            UI.ok(`${item.name} added — ${UI.money(item.price)}.`);
+            draw();
+          },
+        });
+      }
+
+      const disc = el.querySelector('#b-discount');
+      if (disc) disc.addEventListener('click', () => BillingTools.discount(inv, draw));
+      el.querySelectorAll('#b-print, #b-print2').forEach((b) =>
+        b.addEventListener('click', () => printInvoice(inv)));
+      const pay = el.querySelector('#b-pay');
+      if (pay) pay.addEventListener('click', () => openPayment(inv, draw));
+      const visit = el.querySelector('#b-visit');
+      if (visit) visit.addEventListener('click', () =>
+        APP.navigate('billing', { visitId: inv.visit_id }));
+    };
+
+    await draw();
+  }
+
+  /**
+   * Open a bill for a patient who has not got one. Deliberately the only way
+   * in: a bill needs a patient on it, because a receipt with no name on it is
+   * money the clinic cannot account for later.
+   */
+  function openNewBill() {
+    UI.modal({
+      title: 'New bill', size: 'narrow',
+      body: `<div class="muted small mb">Who is this bill for? Search by name, UHID or mobile.</div>
+        <div class="search-row">
+          <input type="search" id="nb-q" placeholder="Name, UHID or mobile number…" autocomplete="off">
+        </div>
+        <div id="nb-results" class="mt"></div>`,
+      footer: `<button class="btn ghost" data-act="__close">Cancel</button>`,
+      onMount(modal) {
+        const input = modal.querySelector('#nb-q');
+        const results = modal.querySelector('#nb-results');
+        let t;
+        input.addEventListener('input', () => {
+          clearTimeout(t);
+          t = setTimeout(async () => {
+            const q = input.value.trim();
+            if (q.length < 2) return void (results.innerHTML = '');
+            let rows = [];
+            try { rows = (await API.get('/api/patients' + API.qs({ q, limit: 8 }))).rows; }
+            catch (err) { return void (results.innerHTML = `<div class="alert warn">${UI.esc(err.message)}</div>`); }
+            results.innerHTML = rows.length ? rows.map((p) => `
+              <button type="button" class="btn ghost sm block mb" data-pt="${p.id}"
+                style="justify-content:space-between">
+                <span><b>${UI.esc(p.first_name)} ${UI.esc(p.last_name || '')}</b>
+                  <span class="muted small"> ${UI.esc(p.uhid)}</span></span>
+                <span class="muted small">${UI.esc(p.phone || '')}</span>
+              </button>`).join('')
+              : `<div class="muted small">Nobody matched. Register them at the front desk first.</div>`;
+            results.querySelectorAll('[data-pt]').forEach((b) =>
+              b.addEventListener('click', () => startBill(Number(b.dataset.pt))));
+          }, 220);
+        });
+        setTimeout(() => input.focus(), 60);
+      },
+    });
+  }
+
+  async function startBill(patientId) {
+    try {
+      const inv = await API.post('/api/billing/invoices', { patientId, kind: 'opd' });
+      UI.closeAllModals();
+      UI.ok(`Bill ${inv.invoice_no} opened — add what the patient had.`);
+      APP.navigate('billing', { invoiceId: inv.id });
+    } catch (err) { UI.err(err.message); }
+  }
+
   /** The charge board, posting straight onto this out-patient invoice. */
   function drawQuickAdd(host, inv, refresh) {
     return BillingTools.quickAdd(host, {
@@ -299,7 +471,8 @@
   const openBillDiscount = (inv, refresh) => BillingTools.discount(inv, refresh);
 
   // ---------------------------------------------------------------- invoice
-  function invoiceBody(inv) {
+  function invoiceBody(inv, opts) {
+    const removable = !!(opts && opts.removable);
     return `
       <div class="row-between mb">
         <div><code>${UI.esc(inv.invoice_no)}</code> ${UI.statusBadge(inv.status)}</div>
@@ -308,11 +481,15 @@
 
       <div class="table-wrap"><table><thead><tr>
         <th>Description</th><th class="num">Qty</th><th class="num">Rate</th><th class="num">Amount</th>
+        ${removable ? '<th></th>' : ''}
       </tr></thead><tbody>
         ${inv.items.map((i) => `<tr><td>${UI.esc(i.description)}</td>
           <td class="num">${UI.esc(i.qty)}</td><td class="num">${UI.money(i.unit_price)}</td>
-          <td class="num">${UI.money(i.amount)}</td></tr>`).join('')
-          || '<tr><td colspan="4" class="muted">No charges on this bill.</td></tr>'}
+          <td class="num">${UI.money(i.amount)}</td>
+          ${removable ? `<td class="num"><button class="btn ghost sm" data-del-item="${i.id}"
+            title="Take this off the bill">Remove</button></td>` : ''}</tr>`).join('')
+          || `<tr><td colspan="${removable ? 5 : 4}" class="muted">Nothing on this bill yet —
+               press a service below to put it on.</td></tr>`}
       </tbody></table></div>
 
       <div class="totals" style="margin-left:auto;width:320px;margin-top:14px">
@@ -371,6 +548,14 @@
       if (act === 'assistance') openAssistance(inv, refresh);
       if (act === 'item') openAddItem(inv, refresh);
       if (act === 'claim') openClaimFromInvoice(inv, refresh);
+    }));
+    document.querySelectorAll('[data-del-item]').forEach((b) => b.addEventListener('click', async () => {
+      b.disabled = true;
+      try {
+        await API.del(`/api/billing/invoices/${inv.id}/items/${b.dataset.delItem}`);
+        UI.ok('Charge taken off the bill.');
+        refresh();
+      } catch (err) { UI.err(err.message); b.disabled = false; }
     }));
     document.querySelectorAll('[data-pay-inst]').forEach((b) => b.addEventListener('click', async () => {
       const amount = prompt('Amount to collect for this instalment?');

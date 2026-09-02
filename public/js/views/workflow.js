@@ -32,9 +32,9 @@
       key: 'exam', title: 'Examination', colour: 'var(--crimson)',
       steps: [
         { n: 'Waiting room · M.A. calls patient', where: 'Queue board lane', route: 'queue' },
-        { n: 'Take patient to vitals station · check vitals', where: 'Vitals Station', route: 'vitals' },
+        { n: 'Take patient to the nurse station · check vitals', where: 'Nurse Station', route: 'vitals' },
         { n: 'M.A. logs into the record system', where: 'Nurse signs in — every action is audited', route: 'vitals' },
-        { n: 'Update patient pharmacy information', where: 'Vitals Station → pharmacy panel', route: 'vitals' },
+        { n: 'Update patient pharmacy information', where: 'Nurse Station → pharmacy panel', route: 'vitals' },
         { n: 'M.A. prints medication list', where: 'Queue → visit card → Results page', route: 'queue' },
         { n: 'Patient to exam room · provider paged', where: 'Consultation queue', route: 'consult' },
         { n: 'Provider gives clinical care', where: 'Consultation → SOAP note, diagnoses, prescription', route: 'consult' },

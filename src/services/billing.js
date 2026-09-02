@@ -41,7 +41,11 @@ function recalc(invoiceId) {
 
   let status = inv.status;
   if (status !== 'cancelled' && status !== 'written_off') {
-    if (net <= 0) status = 'paid';
+    // A bill with nothing on it is one being made up, not one that has been
+    // paid. Calling it paid would close it, and the next charge the cashier
+    // pressed would be refused on a bill they are still writing.
+    if (!items.length && paid <= 0) status = 'unpaid';
+    else if (net <= 0) status = 'paid';
     else if (paid <= 0) status = 'unpaid';
     else if (balance > 0.009) status = 'partial';
     else status = 'paid';
@@ -50,7 +54,7 @@ function recalc(invoiceId) {
   db.prepare(
     `UPDATE invoices
         SET gross = ?, discount = ?, tax = ?, net = ?, paid = ?, balance = ?, status = ?,
-            closed_at = CASE WHEN ? = 'paid' AND closed_at IS NULL THEN datetime('now') ELSE closed_at END
+            closed_at = CASE WHEN ? = 'paid' THEN COALESCE(closed_at, datetime('now')) ELSE NULL END
       WHERE id = ?`
   ).run(gross, discount, tax, net, paid, balance, status, status, invoiceId);
 
