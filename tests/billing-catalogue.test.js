@@ -293,3 +293,85 @@ test('a walk-in with no visit at all still gets a pharmacy bill', async () => {
   assert.strictEqual(inv.kind, 'pharmacy');
   assert.strictEqual(inv.visit_id, null);
 });
+
+// ------------------------------------------------------- the in-patient bill
+test('an in-patient charge reaches the bill as it is made, not at discharge', async () => {
+  const patientId = await newPatient('Running');
+  const wards = (await api('GET', '/api/ipd/wards', undefined, 'ward')).body;
+  const bed = wards.wards.flatMap((w) => w.beds).find((b) => b.status === 'vacant');
+  const adm = (await api('POST', '/api/ipd/admissions', {
+    patientId, doctorId: ids.imran, bedId: bed.id, admissionType: 'planned',
+    reason: 'Observation', attendantName: 'Devi', attendantPhone: '9000000444',
+  }, 'ward')).body;
+
+  const charge = await api('POST', `/api/ipd/admissions/${adm.id}/charges`,
+    { description: 'Nursing charges — per day', qty: 1, unitPrice: 400 }, 'ward');
+  assert.strictEqual(charge.status, 201, JSON.stringify(charge.body));
+  assert.strictEqual(charge.body.billed, 1, 'it goes on the bill straight away');
+
+  const full = (await api('GET', `/api/ipd/admissions/${adm.id}`, undefined, 'cashier')).body;
+  assert.ok(full.invoice, 'the stay has a running bill');
+  assert.strictEqual(full.invoice.gross, 400);
+  const line = full.invoice.items.find((i) => i.ref_type === 'ip_charge');
+  assert.ok(line, 'the charge is a line on it');
+  assert.strictEqual(line.amount, 400);
+
+  ids.runningAdmission = adm.id;
+  ids.runningInvoice = full.invoice.id;
+  ids.runningBed = bed.id;
+});
+
+test('a discount can be given on a stay, against what is on the bill', async () => {
+  const id = ids.runningAdmission;
+  await api('POST', `/api/ipd/admissions/${id}/charges`,
+    { description: 'IV cannulation', qty: 1, unitPrice: 200 }, 'ward');
+
+  const before = (await api('GET', `/api/billing/invoices/${ids.runningInvoice}`, undefined, 'cashier')).body;
+  assert.strictEqual(before.gross, 600);
+
+  const disc = await api('POST', `/api/billing/invoices/${ids.runningInvoice}/bill-discount`,
+    { amount: 100, reason: 'Goodwill' }, 'cashier');
+  assert.strictEqual(disc.status, 200, JSON.stringify(disc.body));
+  assert.strictEqual(disc.body.net, 500);
+
+  // A ward nurse may add charges but does not give money away.
+  assert.strictEqual((await api('POST', `/api/billing/invoices/${ids.runningInvoice}/bill-discount`,
+    { amount: 10 }, 'ward')).status, 403);
+});
+
+test('discharge posts the bed and does not bill a charge twice', async () => {
+  const id = ids.runningAdmission;
+  const before = (await api('GET', `/api/billing/invoices/${ids.runningInvoice}`, undefined, 'cashier')).body;
+  const chargeLines = before.items.filter((i) => i.ref_type === 'ip_charge').length;
+  assert.strictEqual(chargeLines, 2);
+
+  /*
+   * Discharging posts the bed first and only then looks at the balance, so the
+   * first attempt is expected to be refused: the bed charge it just added is
+   * itself the outstanding amount. The desk settles and discharges again,
+   * which is what makes this a real test of the double-post guard — the second
+   * run walks the same posting loop over charges already on the bill.
+   */
+  const body = {
+    dischargeType: 'recovered', finalDiagnosis: 'Resolved',
+    courseInHospital: 'Uneventful', dischargeAdvice: 'Rest',
+  };
+  const firstTry = await api('POST', `/api/ipd/admissions/${id}/discharge`, body, 'cashier');
+  assert.strictEqual(firstTry.status, 409, 'the bed charge is now outstanding');
+
+  const owed = (await api('GET', `/api/billing/invoices/${ids.runningInvoice}`, undefined, 'cashier')).body;
+  await api('POST', `/api/billing/invoices/${ids.runningInvoice}/payments`,
+    { amount: owed.balance, mode: 'cash' }, 'cashier');
+
+  const out = await api('POST', `/api/ipd/admissions/${id}/discharge`, body, 'cashier');
+  assert.strictEqual(out.status, 200, JSON.stringify(out.body));
+
+  const after = (await api('GET', `/api/billing/invoices/${ids.runningInvoice}`, undefined, 'cashier')).body;
+  assert.strictEqual(after.items.filter((i) => i.ref_type === 'ip_charge').length, chargeLines,
+    'the charges already posted must not be posted again');
+  assert.strictEqual(after.items.filter((i) => i.ref_type === 'room').length, 1,
+    'the bed is posted at discharge, and only once across both attempts');
+
+  // The discount survives discharge as the rupee figure it was.
+  assert.strictEqual(after.bill_discount, 100);
+});

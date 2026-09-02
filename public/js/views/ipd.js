@@ -161,7 +161,7 @@
   }
 
   // ------------------------------------------------------------- admission
-  async function renderAdmission(el, id) {
+  async function renderAdmission(el, id, startOn = 'overview') {
     const a = await API.get(`/api/ipd/admissions/${id}`);
     APP.setSubtitle(`${a.ip_no} · ${a.patient_name} · ${a.ward_name} / ${a.bed_no}`);
     APP.actions([
@@ -200,6 +200,9 @@
 
     const body = el.querySelector('#ad-body');
     const canWrite = a.status === 'admitted';
+
+    /** Re-read the admission and land back on the charges tab. */
+    const reload = () => renderAdmission(el, id, 'charges');
 
     const tabs = {
       overview() {
@@ -300,9 +303,21 @@
       },
 
       charges() {
+        const mayCharge = canWrite && APP.can(['ward', 'nurse', 'cashier']);
+        // Only the money desk gives a discount, and only while the stay is
+        // open — a discharged bill is settled and is not reopened here.
+        const mayDiscount = canWrite && APP.can(['cashier', 'reception']) && a.invoice;
+        const inv = a.invoice;
+        // Charges accrue on the sheet and reach the invoice at discharge, so
+        // mid-stay the invoice is not yet the whole bill. Saying so is the
+        // difference between a running total and a misleading one.
+        const pending = (a.charges || []).filter((c) => !c.billed)
+          .reduce((t, c) => t + Number(c.amount || 0), 0);
+
         body.innerHTML = `<div class="card">
           <div class="card-head"><h3>Charges</h3>
-            ${canWrite && APP.can(['ward','nurse','cashier']) ? '<button class="btn ghost sm" id="add-charge">+ Add charge</button>' : ''}</div>
+            ${mayCharge ? '<button class="btn ghost sm" id="add-charge">Something else…</button>' : ''}
+            ${mayDiscount ? '<button class="btn ghost sm" id="ip-discount">Give a discount</button>' : ''}</div>
           <div class="card-body tight">${UI.table([
             { label: 'Date', render: (c) => UI.esc(UI.date(c.charge_date)) },
             { label: 'Description', key: 'description' },
@@ -311,14 +326,65 @@
             { label: 'Amount', num: true, render: (c) => UI.money(c.amount) },
             { label: 'Billed', render: (c) => c.billed ? UI.badge('On invoice', 'ok') : UI.badge('Pending', 'warn') },
           ], a.charges, { emptyText: 'No additional charges.' })}</div>
-          ${a.invoice ? `<div class="card-body">
-            <div class="row-between"><span>Bed charges accrue at ${UI.money(a.tariff_per_day)}/day and are posted at discharge.</span>
-            <button class="btn ghost sm" id="open-inv">Open invoice ${UI.esc(a.invoice.invoice_no)}</button></div></div>` : ''}
-        </div>`;
+          ${inv ? `<div class="card-body">
+            <div class="totals" style="margin-left:auto;width:320px">
+              <div class="row-between"><span>On the invoice</span><b>${UI.money(inv.gross)}</b></div>
+              ${pending ? `<div class="row-between" style="color:var(--orange-dark)">
+                <span>On the sheet, not yet posted</span><span>+ ${UI.money(pending)}</span></div>` : ''}
+              ${BillingTools.concessionLines(inv)}
+              ${inv.sliding_discount ? `<div class="row-between" style="color:var(--teal)">
+                <span>Sliding-scale discount</span><span>− ${UI.money(inv.sliding_discount)}</span></div>` : ''}
+              ${inv.insurance_covered ? `<div class="row-between">
+                <span>Insurance</span><span>− ${UI.money(inv.insurance_covered)}</span></div>` : ''}
+              <div class="row-between" style="border-top:1px solid var(--line);margin-top:6px;padding-top:8px;font-size:16px">
+                <b>Bill so far</b><b>${UI.money(inv.net + pending)}</b></div>
+              ${pending ? `<div class="row-between muted small"><span>Of which invoiced</span>
+                <span>${UI.money(inv.net)}</span></div>` : ''}
+              <div class="row-between"><span>Paid</span><span>${UI.money(inv.paid)}</span></div>
+              <div class="row-between" style="color:${inv.balance > 0 ? 'var(--danger)' : 'var(--ok)'}">
+                <b>Balance</b><b>${UI.money(inv.balance)}</b></div>
+            </div>
+            <div class="row-between mt"><span class="muted small">Bed charges accrue at
+              ${UI.money(a.tariff_per_day)}/day and are posted at discharge.</span>
+            <button class="btn ghost sm" id="open-inv">Open invoice ${UI.esc(inv.invoice_no)}</button></div></div>` : ''}
+        </div>
+
+        ${mayCharge ? `<div class="card">
+          <div class="card-head"><h3>Add a charge</h3>
+            <span class="muted small">Pick the group, then the item</span></div>
+          <div class="card-body" id="ip-quick-add">${UI.loading()}</div>
+        </div>` : ''}`;
+
         const ac = body.querySelector('#add-charge');
         if (ac) ac.addEventListener('click', () => openCharge(a.id));
         const oi = body.querySelector('#open-inv');
         if (oi) oi.addEventListener('click', () => APP.openInvoice(a.invoice.id));
+
+        const dc = body.querySelector('#ip-discount');
+        if (dc) dc.addEventListener('click', () => BillingTools.discount(inv, () => reload(), {
+          note: pending
+            ? `${UI.money(pending)} of charges is still on the sheet and reaches the invoice at
+               discharge, along with ${UI.num(a.days)} day(s) of bed. A discount given now is a
+               rupee amount against the ${UI.money(BillingTools.chargeable(inv))} invoiced so far —
+               revise it at discharge if you meant a share of the whole bill.`
+            : '',
+        }));
+
+        const quick = body.querySelector('#ip-quick-add');
+        if (quick) {
+          BillingTools.quickAdd(quick, {
+            note: 'These go on the charge sheet and are posted to the bill at discharge, '
+              + 'along with the bed. Medicines come across from the pharmacy on their own.',
+            async onAdd(item) {
+              await API.post(`/api/ipd/admissions/${a.id}/charges`, {
+                serviceId: item.kind === 'service' ? item.id : null,
+                description: item.name, qty: 1, unitPrice: item.price,
+              });
+              UI.ok(`${item.name} added — ${UI.money(item.price)}.`);
+              reload();
+            },
+          });
+        }
       },
 
       async insurance() {
@@ -379,7 +445,11 @@
       el.querySelectorAll('#ad-tabs button').forEach((x) => x.classList.toggle('active', x === b));
       tabs[b.dataset.tab]();
     }));
-    tabs.overview();
+
+    const opening = tabs[startOn] ? startOn : 'overview';
+    el.querySelectorAll('#ad-tabs button').forEach((x) =>
+      x.classList.toggle('active', x.dataset.tab === opening));
+    tabs[opening]();
   }
 
   const simpleForm = (title, fields, submit) => UI.modal({

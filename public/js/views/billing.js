@@ -216,136 +216,22 @@
     await draw();
   }
 
-  /* ------------------------------------------------------------- quick add
-   * The charges a desk actually keys in are a short list — a dressing, an
-   * injection, a nebulisation, an X-ray — and hunting for each one through a
-   * dropdown of a hundred is what made this screen slow. So: the groups as
-   * buttons, then the items in that group as buttons with their rate on them.
-   * One press adds the charge at the tariff rate.
-   */
-  let catalogue = null;
-
-  async function drawQuickAdd(host, inv, refresh) {
-    if (!catalogue) {
-      try { catalogue = await API.get('/api/masters/catalogue'); }
-      catch (err) { host.innerHTML = `<div class="alert warn">${UI.esc(err.message)}</div>`; return; }
-    }
-    if (!catalogue.length) {
-      host.innerHTML = UI.empty('No services are set up yet. Add them under Services & Rates.', '₨');
-      return;
-    }
-
-    let open = catalogue[0].group;
-
-    const paint = () => {
-      const group = catalogue.find((g) => g.group === open) || catalogue[0];
-      host.innerHTML = `
-        <div class="chip-row mb">
-          ${catalogue.map((g) => `<button type="button" class="chip${g.group === open ? ' on' : ''}"
-            data-group="${UI.esc(g.group)}">${UI.esc(g.group)}
-            <span class="chip-n">${UI.num(g.items.length)}</span></button>`).join('')}
-        </div>
-        <div class="item-grid">
-          ${group.items.map((i) => `<button type="button" class="item-btn"
-              data-kind="${i.kind}" data-id="${i.id}"
-              data-name="${UI.esc(i.name)}" data-price="${i.price || 0}" data-tax="${i.tax_pct || 0}">
-            <span class="item-name">${UI.esc(i.name)}</span>
-            <span class="item-rate">${i.price ? UI.money(i.price) : 'no rate set'}</span>
-          </button>`).join('')}
-        </div>`;
-
-      host.querySelectorAll('[data-group]').forEach((b) => b.addEventListener('click', () => {
-        open = b.dataset.group;
-        paint();
-      }));
-
-      host.querySelectorAll('.item-btn').forEach((b) => b.addEventListener('click', async () => {
-        if (!Number(b.dataset.price)) {
-          return UI.warn(`${b.dataset.name} has no rate set. Set one under Services & Rates first.`);
-        }
-        b.disabled = true;
-        try {
-          await API.post(`/api/billing/invoices/${inv.id}/items`, {
-            refType: b.dataset.kind === 'test' ? 'lab' : 'service',
-            refId: Number(b.dataset.id),
-            description: b.dataset.name,
-            qty: 1,
-            unitPrice: Number(b.dataset.price),
-            taxPct: Number(b.dataset.tax),
-          });
-          UI.ok(`${b.dataset.name} added — ${UI.money(Number(b.dataset.price))}.`);
-          refresh();
-        } catch (err) { UI.err(err.message); b.disabled = false; }
-      }));
-    };
-
-    paint();
-  }
-
-  /**
-   * The discount the cashier gives before printing. Offered both ways because
-   * a desk thinks in both — "give him fifty rupees off" and "ten percent for
-   * staff" — and the bill records the rupees either way.
-   */
-  function openBillDiscount(inv, refresh) {
-    const chargeable = UI.round2
-      ? UI.round2(inv.gross - inv.discount - inv.sliding_discount - inv.assistance_covered
-        - inv.insurance_covered + inv.tax)
-      : Math.round((inv.gross - inv.discount - inv.sliding_discount - inv.assistance_covered
-        - inv.insurance_covered + inv.tax) * 100) / 100;
-
-    UI.modal({
-      title: 'Give a discount', size: 'narrow',
-      body: `<div class="alert info">Bill before any discount: <b>${UI.money(chargeable)}</b>
-          ${inv.paid ? `<div class="small mt">${UI.money(inv.paid)} has already been paid, so at most
-            <b>${UI.money(Math.max(chargeable - inv.paid, 0))}</b> can be taken off here.</div>` : ''}</div>
-        <form id="disc-form">
-          ${UI.field({ name: 'mode', label: 'Give it as', value: 'amount',
-            options: [{ value: 'amount', label: 'Rupees off' }, { value: 'pct', label: 'A percentage' }] })}
-          ${UI.field({ name: 'value', label: 'Amount', type: 'number', step: '0.01', min: '0',
-            value: inv.bill_discount || 0, required: true })}
-          ${UI.field({ name: 'reason', label: 'Why', rows: 2,
-            placeholder: 'Staff concession, goodwill, rounding — it goes on the record, not the bill' })}
-        </form>
-        <div class="muted small mt" id="disc-preview"></div>`,
-      footer: `<button class="btn ghost" data-act="__close">Cancel</button>
-               <button class="btn" data-act="save">Apply discount</button>`,
-      onMount(modal) {
-        const mode = modal.querySelector('[name=mode]');
-        const value = modal.querySelector('[name=value]');
-        const preview = modal.querySelector('#disc-preview');
-        const show = () => {
-          const v = Number(value.value) || 0;
-          const off = mode.value === 'pct' ? chargeable * (v / 100) : v;
-          preview.innerHTML = off > chargeable
-            ? '<b style="color:var(--danger)">That is more than the bill.</b>'
-            : `Patient pays <b>${UI.money(Math.max(chargeable - off, 0))}</b> after a discount of
-               ${UI.money(off)}.`;
-        };
-        mode.addEventListener('change', () => {
-          value.step = mode.value === 'pct' ? '0.5' : '0.01';
-          value.max = mode.value === 'pct' ? '100' : '';
-          show();
+  /** The charge board, posting straight onto this out-patient invoice. */
+  function drawQuickAdd(host, inv, refresh) {
+    return BillingTools.quickAdd(host, {
+      async onAdd(item) {
+        await API.post(`/api/billing/invoices/${inv.id}/items`, {
+          refType: item.kind === 'test' ? 'lab' : 'service',
+          refId: item.id, description: item.name, qty: 1,
+          unitPrice: item.price, taxPct: item.taxPct,
         });
-        value.addEventListener('input', show);
-        show();
-      },
-      async onAction(act, modal) {
-        if (act !== 'save') return;
-        const form = modal.querySelector('#disc-form');
-        if (!form.reportValidity()) return 'keep';
-        const v = UI.formValues(form);
-        const payload = { reason: v.reason };
-        if (v.mode === 'pct') payload.pct = Number(v.value);
-        else payload.amount = Number(v.value);
-        const updated = await API.post(`/api/billing/invoices/${inv.id}/bill-discount`, payload);
-        UI.ok(Number(updated.bill_discount)
-          ? `Discount of ${UI.money(updated.bill_discount)} applied — ${UI.money(updated.net)} to pay.`
-          : 'Discount removed.');
+        UI.ok(`${item.name} added — ${UI.money(item.price)}.`);
         refresh();
       },
     });
   }
+
+  const openBillDiscount = (inv, refresh) => BillingTools.discount(inv, refresh);
 
   // ---------------------------------------------------------------- invoice
   function invoiceBody(inv) {
@@ -366,10 +252,7 @@
 
       <div class="totals" style="margin-left:auto;width:320px;margin-top:14px">
         <div class="row-between"><span>Gross</span><b>${UI.money(inv.gross)}</b></div>
-        ${inv.discount ? `<div class="row-between"><span>Line discounts</span><span>− ${UI.money(inv.discount)}</span></div>` : ''}
-        ${inv.bill_discount ? `<div class="row-between" style="color:var(--orange-dark)">
-          <span>Discount${inv.bill_discount_reason ? ` — ${UI.esc(inv.bill_discount_reason)}` : ''}</span>
-          <span>− ${UI.money(inv.bill_discount)}</span></div>` : ''}
+        ${BillingTools.concessionLines(inv)}
         ${inv.sliding_discount ? `<div class="row-between" style="color:var(--teal)"><span>Sliding-scale discount</span><span>− ${UI.money(inv.sliding_discount)}</span></div>` : ''}
         ${inv.assistance_covered ? `<div class="row-between" style="color:var(--ok)"><span>Assistance / exception</span><span>− ${UI.money(inv.assistance_covered)}</span></div>` : ''}
         ${inv.insurance_covered ? `<div class="row-between"><span>Insurance</span><span>− ${UI.money(inv.insurance_covered)}</span></div>` : ''}

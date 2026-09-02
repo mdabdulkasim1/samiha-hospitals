@@ -286,13 +286,43 @@ router.post('/admissions/:id/charges', requireRole('ward', 'nurse', 'cashier'), 
   const id = int(req.params.id);
   const qty = num(req.body.qty, 1) || 1;
   const unitPrice = money(req.body.unitPrice);
+  const a = db.prepare('SELECT * FROM admissions WHERE id = ?').get(id);
+  if (!a) throw notFound('Admission not found');
+
   const info = db.prepare(
     `INSERT INTO ip_charges (admission_id, service_id, description, qty, unit_price, amount, charge_date, created_by)
      VALUES (?, ?, ?, ?, ?, ?, COALESCE(?, date('now')), ?)`
   ).run(id, int(req.body.serviceId) || null, str(req.body.description), qty, unitPrice,
         billing.round2(qty * unitPrice), str(req.body.chargeDate), req.user.id);
-  audit.log(req, 'create', 'ip_charge', info.lastInsertRowid);
-  res.status(201).json(db.prepare('SELECT * FROM ip_charges WHERE id = ?').get(info.lastInsertRowid));
+  const chargeId = info.lastInsertRowid;
+
+  /*
+   * Onto the bill straight away, rather than waiting for discharge.
+   *
+   * A bed charge has to wait, because nobody knows how many nights it will be
+   * until the patient goes home. A dressing does not: it happened, it costs
+   * what it costs, and holding it back only means the family asking what the
+   * bill stands at gets an answer that is missing half of it — and the cashier
+   * cannot give a discount against a bill that is still empty. The discharge
+   * run only picks up charges still marked unbilled, so it will not post this
+   * one twice.
+   */
+  const invoiceId = a.invoice_id || db.prepare(
+    "SELECT id FROM invoices WHERE admission_id = ? AND status NOT IN ('cancelled') ORDER BY id DESC LIMIT 1"
+  ).get(id)?.id || billing.createInvoice({
+    patientId: a.patient_id, admissionId: id, kind: 'ipd', createdBy: req.user.id,
+  }).id;
+
+  if (!billing.hasItem(invoiceId, 'ip_charge', chargeId)) {
+    billing.addItem(invoiceId, {
+      refType: 'ip_charge', refId: chargeId,
+      description: str(req.body.description), qty, unitPrice,
+    });
+    db.prepare('UPDATE ip_charges SET billed = 1 WHERE id = ?').run(chargeId);
+  }
+
+  audit.log(req, 'create', 'ip_charge', chargeId, { invoiceId });
+  res.status(201).json(db.prepare('SELECT * FROM ip_charges WHERE id = ?').get(chargeId));
 }));
 
 /** Bed transfer — frees the old bed and occupies the new one atomically. */
