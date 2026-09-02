@@ -374,7 +374,13 @@ router.post('/preauths/:id/decision', deskRoles, wrap((req, res) => {
   const invoiceRow = pa.admission_id
     ? db.prepare("SELECT * FROM invoices WHERE admission_id = ? AND status != 'cancelled' ORDER BY id DESC LIMIT 1").get(pa.admission_id)
     : pa.visit_id
-      ? db.prepare("SELECT * FROM invoices WHERE visit_id = ? AND status != 'cancelled' ORDER BY id DESC LIMIT 1").get(pa.visit_id)
+      // The hospital bill, not the pharmacy's: an insurer is claimed against
+      // what the clinic charged, and the medicines were settled at the counter.
+      ? db.prepare(
+        `SELECT * FROM invoices
+          WHERE visit_id = ? AND status != 'cancelled' AND kind != 'pharmacy'
+          ORDER BY id DESC LIMIT 1`
+      ).get(pa.visit_id)
       : null;
   if (invoiceRow && decision !== 'rejected') {
     // The root approval plus every approved enhancement, each net of co-pay.

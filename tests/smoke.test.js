@@ -270,7 +270,10 @@ test('full OPD journey: arrive → screen → check-in → vitals → consult �
     const bill = await api('POST', `/api/visits/${visitId}/prepare-bill`, {}, 'cashier');
     assert.strictEqual(bill.status, 200, JSON.stringify(bill.body));
     const invoiceId = bill.body.id;
-    assert.ok(bill.body.items.length >= 3, 'consultation + labs + pharmacy expected');
+    assert.strictEqual(bill.body.kind, 'opd', 'the cashier assembles the hospital bill');
+    assert.ok(bill.body.items.length >= 3, 'consultation and the diagnostics expected');
+    assert.ok(!bill.body.items.some((i) => i.ref_type === 'pharmacy'),
+      'medicines are billed and paid at the pharmacy counter');
     assert.ok(bill.body.sliding_discount > 0, 'band B discount should be applied');
     console.log(`      billing: gross ${bill.body.gross}, sliding-scale discount ${bill.body.sliding_discount}, net ${bill.body.net}`);
 

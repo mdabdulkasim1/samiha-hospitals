@@ -156,7 +156,10 @@
     APP.setSubtitle(`${visit.patient_name} · ${visit.uhid} · ${visit.visit_no}`);
     APP.actions([{ id: 'back', label: '← Billing', onClick: () => APP.navigate('billing') }]);
 
-    let invoice = visit.invoices.find((i) => i.status !== 'cancelled') || null;
+    // The hospital bill for this visit. The pharmacy raises its own against
+    // the same visit and collects at its own counter, so it is not the
+    // cashier's to assemble, print or take money for.
+    let invoice = visit.invoices.find((i) => i.status !== 'cancelled' && i.kind !== 'pharmacy') || null;
 
     const draw = async () => {
       el.innerHTML = `

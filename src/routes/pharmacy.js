@@ -125,21 +125,107 @@ router.get('/stock/ledger', requireRole('pharmacy'), wrap((req, res) => {
 
 // -------------------------------------------------------------- dispensing
 /** The pharmacy work queue: prescriptions written but not yet handed over. */
+/*
+ * The pharmacy work queue.
+ *
+ * Grouped by the prescription sheet rather than by the visit, because not
+ * every prescription has one: a doctor writes for a patient who was never
+ * booked in, and that paper should still reach our own counter rather than
+ * only somebody else's. And it does not empty when the clinic closes — a
+ * patient may take the prescription and come back for it on Friday, so a sheet
+ * stays here until it is dispensed or somebody says it was filled elsewhere.
+ */
 router.get('/queue', rxRoles, wrap((_req, res) => {
   const rows = db.prepare(
-    `SELECT v.id AS visit_id, v.visit_no, v.status, v.token_no, p.id AS patient_id, p.uhid,
+    `SELECT s.id AS sheet_id, s.rx_no, s.created_at,
+            v.id AS visit_id, v.visit_no, v.status AS visit_status, v.token_no,
+            p.id AS patient_id, p.uhid, p.phone,
             (p.first_name || ' ' || COALESCE(p.last_name,'')) AS patient_name, p.allergies,
-            p.pharmacy_name, u.name AS doctor_name,
-            COUNT(rx.id) AS pending_items
+            p.pharmacy_name, u.name AS doctor_name, dp.doctor_code,
+            COUNT(rx.id) AS pending_items,
+            CAST(julianday('now') - julianday(s.created_at) AS INTEGER) AS days_waiting
        FROM prescriptions rx
-       JOIN visits v ON v.id = rx.visit_id
+       JOIN prescription_sheets s ON s.id = rx.sheet_id
        JOIN patients p ON p.id = rx.patient_id
-       LEFT JOIN users u ON u.id = v.doctor_id
-      WHERE rx.status IN ('pending','partially_dispensed')
-      GROUP BY v.id
-      ORDER BY v.token_no, v.id`
+       LEFT JOIN visits v ON v.id = rx.visit_id
+       LEFT JOIN users u ON u.id = s.doctor_id
+       LEFT JOIN doctor_profiles dp ON dp.user_id = s.doctor_id
+      WHERE rx.status IN ('pending','partially_dispensed') AND s.status != 'cancelled'
+      GROUP BY s.id
+      ORDER BY (v.token_no IS NULL), v.token_no, s.id`
   ).all();
   res.json(rows);
+}));
+
+/**
+ * The patient is not buying here.
+ *
+ * They took the paper to a shop outside, or decided against it, or the
+ * medicine is one we do not stock. Either way the pharmacist says so and the
+ * sheet leaves the queue — recorded as filled elsewhere, with the reason,
+ * rather than deleted or left to sit there for ever pretending to be work.
+ */
+router.post('/prescriptions/:sheetId/decline', requireRole('pharmacy'), wrap((req, res) => {
+  const sheetId = int(req.params.sheetId);
+  const sheet = db.prepare('SELECT * FROM prescription_sheets WHERE id = ?').get(sheetId);
+  if (!sheet) throw notFound('Prescription not found');
+
+  const reason = str(req.body.reason);
+  if (!reason) throw badRequest('Say why it is not being dispensed here — it goes on the record.');
+
+  const out = db.prepare(
+    `UPDATE prescriptions SET status = 'external'
+      WHERE sheet_id = ? AND status IN ('pending','partially_dispensed')`
+  ).run(sheetId);
+  if (!out.changes) throw conflict('Nothing on this prescription is still waiting.');
+
+  db.prepare(
+    `INSERT INTO visit_events (visit_id, stage, detail, actor_id)
+     SELECT visit_id, 'prescription_not_dispensed', ?, ?
+       FROM prescription_sheets WHERE id = ? AND visit_id IS NOT NULL`
+  ).run(`${sheet.rx_no} — ${reason}`, req.user.id, sheetId);
+
+  audit.log(req, 'decline_prescription', 'prescription_sheet', sheetId,
+    { reason, items: out.changes });
+  res.json({ ok: true, rxNo: sheet.rx_no, items: out.changes, reason });
+}));
+
+/**
+ * The same dispensing view, for a prescription written without a visit.
+ *
+ * A doctor writes for somebody who was never booked in, or the patient comes
+ * back a week later when the visit is long closed. Either way the counter
+ * needs the lines, the stock against each, and who it is for.
+ */
+router.get('/sheet/:sheetId', rxRoles, wrap((req, res) => {
+  const sheetId = int(req.params.sheetId);
+  const sheet = db.prepare(
+    `SELECT s.*, p.uhid, (p.first_name || ' ' || COALESCE(p.last_name,'')) AS patient_name,
+            p.allergies, p.phone, u.name AS doctor_name, dp.doctor_code
+       FROM prescription_sheets s
+       JOIN patients p ON p.id = s.patient_id
+       LEFT JOIN users u ON u.id = s.doctor_id
+       LEFT JOIN doctor_profiles dp ON dp.user_id = s.doctor_id
+      WHERE s.id = ?`
+  ).get(sheetId);
+  if (!sheet) throw notFound('Prescription not found');
+
+  const rows = db.prepare(
+    `SELECT rx.*, d.name AS master_name, d.form, d.strength, d.mrp, d.tax_pct, d.schedule_type,
+            COALESCE((SELECT SUM(b.qty_available) FROM drug_batches b
+                       WHERE b.drug_id = rx.drug_id AND date(b.expiry_date) >= date('now')), 0) AS on_hand
+       FROM prescriptions rx LEFT JOIN drugs d ON d.id = rx.drug_id
+      WHERE rx.sheet_id = ? ORDER BY rx.id`
+  ).all(sheetId);
+
+  res.json({
+    visit: {
+      id: sheet.visit_id, patient_id: sheet.patient_id, patient_name: sheet.patient_name,
+      uhid: sheet.uhid, allergies: sheet.allergies, visit_no: sheet.rx_no,
+    },
+    sheet,
+    prescriptions: rows,
+  });
 }));
 
 router.get('/prescriptions/:visitId', rxRoles, wrap((req, res) => {
@@ -297,9 +383,20 @@ router.post('/dispense', requireRole('pharmacy'), wrap((req, res) => {
   if (visitId) {
     db.prepare("INSERT INTO visit_events (visit_id, stage, detail, actor_id) VALUES (?, 'medicines_dispensed', ?, ?)")
       .run(visitId, `${billNo} — ${items.length} item(s)`, req.user.id);
+    /*
+     * The pharmacy is the last lane. Once every prescription on the visit has
+     * been handed over there is nothing else the patient is waiting for, so
+     * the visit closes here rather than being sent back to a desk they have
+     * already been through.
+     */
     const stillPending = db.prepare("SELECT COUNT(*) AS c FROM prescriptions WHERE visit_id = ? AND status = 'pending'").get(visitId).c;
     if (!stillPending) {
-      db.prepare("UPDATE visits SET status = 'billing_pending' WHERE id = ? AND status = 'pharmacy_pending'").run(visitId);
+      db.prepare(
+        `UPDATE visits
+            SET status = 'checked_out',
+                checked_out_at = COALESCE(checked_out_at, datetime('now'))
+          WHERE id = ? AND status = 'pharmacy_pending'`
+      ).run(visitId);
     }
   }
 

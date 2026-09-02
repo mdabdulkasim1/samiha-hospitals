@@ -16,8 +16,21 @@ const router = express.Router();
 const clinicalRoles = requireRole('reception', 'nurse', 'doctor', 'counselor', 'cashier', 'lab', 'pharmacy');
 
 // The workflow stages, in the order a patient moves through them.
+/*
+ * The lanes a patient passes through, in the order the clinic works them:
+ *
+ *   front desk -> vitals (nurse) -> doctor -> lab, if anything was ordered
+ *              -> cashier -> pharmacy -> out
+ *
+ * The pharmacy is last and takes its own money. That is why it sits after the
+ * cashier rather than before: the cashier settles the consultation, the bed
+ * and the diagnostics, and the patient then collects their medicines and pays
+ * for those at the counter that hands them over. A visit is not finished until
+ * the pharmacy has dispensed, which is what keeps a prescription from being
+ * left behind on a desk.
+ */
 const STAGES = ['waiting_room', 'financial_screening', 'checked_in', 'vitals_done', 'with_provider',
-  'labs_pending', 'pharmacy_pending', 'billing_pending', 'checked_out'];
+  'labs_pending', 'billing_pending', 'pharmacy_pending', 'checked_out'];
 
 function recordEvent(visitId, stage, detail, actorId) {
   db.prepare('INSERT INTO visit_events (visit_id, stage, detail, actor_id) VALUES (?, ?, ?, ?)')
@@ -328,11 +341,13 @@ router.post('/:id/consultation/sign', requireRole('doctor'), wrap((req, res) => 
   ).get(id).c;
   const rxPending = db.prepare("SELECT COUNT(*) AS c FROM prescriptions WHERE visit_id = ? AND status = 'pending'").get(id).c;
 
-  advance(id, labsOpen ? 'labs_pending' : rxPending ? 'pharmacy_pending' : 'billing_pending');
+  // Diagnostics first if any were ordered, then the cashier. The pharmacy
+  // comes after the money desk, not before it.
+  advance(id, labsOpen ? 'labs_pending' : 'billing_pending');
   recordEvent(id, 'consultation_signed', `Labs open: ${labsOpen}, prescriptions pending: ${rxPending}`, req.user.id);
   audit.log(req, 'sign', 'consultation', c.id);
 
-  res.json({ ok: true, labsOpen, rxPending, nextStep: labsOpen ? 'lab' : rxPending ? 'pharmacy' : 'billing' });
+  res.json({ ok: true, labsOpen, rxPending, nextStep: labsOpen ? 'lab' : 'billing' });
 }));
 
 // ---------------------------------------------------------- 5. results page
@@ -363,7 +378,10 @@ router.get('/:id/results-page', clinicalRoles, wrap((req, res) => {
     ).all(id),
     // "M.A. Prints Medication List"
     medicationList: db.prepare('SELECT * FROM prescriptions WHERE visit_id = ? ORDER BY id').all(id),
-    invoice: db.prepare('SELECT * FROM invoices WHERE visit_id = ? ORDER BY id DESC LIMIT 1').get(id) || null,
+    // The hospital bill; the pharmacy's is settled at its own counter.
+    invoice: db.prepare(
+      "SELECT * FROM invoices WHERE visit_id = ? AND kind != 'pharmacy' ORDER BY id DESC LIMIT 1"
+    ).get(id) || null,
     screening: db.prepare('SELECT * FROM financial_screenings WHERE visit_id = ? ORDER BY id DESC LIMIT 1').get(id) || null,
     timeline: db.prepare('SELECT ve.*, u.name AS actor_name FROM visit_events ve LEFT JOIN users u ON u.id = ve.actor_id WHERE ve.visit_id = ? ORDER BY ve.id').all(id),
   });
@@ -409,7 +427,18 @@ router.post('/:id/prepare-bill', requireRole('cashier', 'reception'), wrap((req,
   const visit = db.prepare('SELECT * FROM visits WHERE id = ?').get(id);
   if (!visit) throw notFound('Visit not found');
 
-  let invoice = db.prepare("SELECT * FROM invoices WHERE visit_id = ? AND status NOT IN ('cancelled') ORDER BY id DESC LIMIT 1").get(id);
+  /*
+   * The hospital bill for this visit, which is not simply the latest one
+   * raised against it: the pharmacy issues its own bill on the same visit and
+   * takes its own money, so picking the most recent invoice would pile the
+   * consultation and the diagnostics onto the medicine bill the patient has
+   * already paid at another counter.
+   */
+  let invoice = db.prepare(
+    `SELECT * FROM invoices
+      WHERE visit_id = ? AND status NOT IN ('cancelled') AND kind != 'pharmacy'
+      ORDER BY id DESC LIMIT 1`
+  ).get(id);
   if (!invoice) {
     invoice = billing.createInvoice({ patientId: visit.patient_id, visitId: id, kind: 'opd', createdBy: req.user.id });
   }
@@ -486,8 +515,21 @@ router.post('/:id/check-out', requireRole('cashier', 'reception'), wrap((req, re
   if (!visit) throw notFound('Visit not found');
   if (visit.status === 'checked_out') throw conflict('This visit is already checked out.');
 
-  const invoice = db.prepare("SELECT * FROM invoices WHERE visit_id = ? AND status NOT IN ('cancelled') ORDER BY id DESC LIMIT 1").get(id);
-  if (invoice && invoice.balance > 0.009) {
+  /*
+   * Every hospital bill on this visit has to be settled, not merely the last
+   * one raised — and a pharmacy bill is not the cashier's to hold anybody for.
+   * The patient pays for their medicines at the counter that hands them over,
+   * so blocking check-out on that bill would stop them at a desk they have
+   * already finished with and make them pay twice over in queueing.
+   */
+  const unsettled = db.prepare(
+    `SELECT * FROM invoices
+      WHERE visit_id = ? AND status NOT IN ('cancelled') AND kind != 'pharmacy'
+        AND balance > 0.009
+      ORDER BY id`
+  ).all(id);
+
+  for (const invoice of unsettled) {
     const hasPlan = db.prepare('SELECT 1 FROM payment_plans WHERE invoice_id = ? AND status = ?').get(invoice.id, 'active');
     const hasException = db.prepare('SELECT 1 FROM payment_exceptions WHERE invoice_id = ?').get(invoice.id);
     if (!hasPlan && !hasException && !bool(req.body.force)) {
@@ -500,6 +542,21 @@ router.post('/:id/check-out', requireRole('cashier', 'reception'), wrap((req, re
 
   const openLabs = db.prepare(
     "SELECT COUNT(*) AS c FROM lab_orders WHERE visit_id = ? AND status IN ('ordered','sample_collected')"
+  ).get(id).c;
+
+  /*
+   * The visit closes here even when medicines are still to be collected.
+   *
+   * The pharmacy is the last lane but it is not a gate: a patient may take
+   * their prescription and come back for it on Friday, or fill it somewhere
+   * else entirely. Holding the visit open for that would leave the queue board
+   * showing people who went home days ago, and would make the clinic's own
+   * day-end depend on a purchase the patient has not decided to make. The
+   * prescription stays on the pharmacy's queue for as long as it goes
+   * undispensed, which is where that waiting belongs.
+   */
+  const rxWaiting = db.prepare(
+    "SELECT COUNT(*) AS c FROM prescriptions WHERE visit_id = ? AND status = 'pending'"
   ).get(id).c;
 
   const exitPass = generate('exitPass');
@@ -550,7 +607,11 @@ router.post('/:id/check-out', requireRole('cashier', 'reception'), wrap((req, re
     visit: db.prepare('SELECT * FROM visits WHERE id = ?').get(id),
     followUp,
     pendingReports: openLabs,
-    note: openLabs ? `${openLabs} diagnostic order(s) still pending — the report will be messaged when ready.` : null,
+    note: [
+      openLabs ? `${openLabs} diagnostic order(s) still pending — the report will be messaged when ready.` : '',
+      rxWaiting ? `${rxWaiting} medicine(s) to collect at the pharmacy, paid for there. `
+        + 'The prescription stays on their queue if the patient comes back another day.' : '',
+    ].filter(Boolean).join(' ') || null,
   });
 }));
 

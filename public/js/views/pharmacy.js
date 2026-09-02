@@ -58,6 +58,9 @@
 
     async render(el, params) {
       if (params.visitId) return renderDispense(el, Number(params.visitId));
+      // A prescription with no visit behind it — written for somebody who was
+      // never booked in, or collected long after the visit closed.
+      if (params.sheetId) return renderDispense(el, null, Number(params.sheetId));
 
       const [queue, alerts] = await Promise.all([
         API.get('/api/pharmacy/queue'),
@@ -387,21 +390,52 @@
             b.addEventListener('click', () => printGstBill(Number(b.dataset.bill))));
         },
 
+        /*
+         * Everything this clinic has prescribed and not yet handed over —
+         * today's patients at the top, then anyone who took their prescription
+         * away and has not come back for it. A sheet stays here until it is
+         * dispensed or the pharmacist says it is being filled somewhere else,
+         * because a patient deciding to buy on Friday is not a reason for the
+         * record to lose sight of it.
+         */
         queue() {
-          body.innerHTML = `<div class="card"><div class="card-head"><h3>Prescriptions to dispense</h3></div>
+          const waiting = queue.filter((r) => r.days_waiting >= 1).length;
+          body.innerHTML = `<div class="card">
+            <div class="card-head"><h3>Prescriptions to dispense</h3>
+              <span class="muted small">${UI.num(queue.length)} open${
+                waiting ? ` · ${UI.num(waiting)} from an earlier day` : ''}</span></div>
             <div class="card-body tight" id="q-list"></div></div>`;
           const host = body.querySelector('#q-list');
           host.innerHTML = UI.table([
-            { label: 'Token', render: (r) => `<span class="badge crimson">#${UI.esc(r.token_no || '—')}</span>` },
-            { label: 'Patient', render: (r) => `<b>${UI.esc(r.patient_name)}</b><div class="muted small">${UI.esc(r.uhid)}</div>` },
-            { label: 'Visit', key: 'visit_no' },
-            { label: 'Doctor', render: (r) => UI.esc(r.doctor_name || '—') },
+            { label: 'Token', render: (r) => (r.token_no
+              ? `<span class="badge crimson">#${UI.esc(r.token_no)}</span>`
+              : '<span class="muted small">walk-in</span>') },
+            { label: 'Patient', render: (r) => `<b>${UI.esc(r.patient_name)}</b>` +
+              `<div class="muted small">${UI.esc(r.uhid)}${r.phone ? ' · ' + UI.esc(r.phone) : ''}</div>` },
+            { label: 'Prescription', render: (r) => `<code>${UI.esc(r.rx_no)}</code>` +
+              (r.visit_no ? `<div class="muted small">${UI.esc(r.visit_no)}</div>` : '') },
+            { label: 'Doctor', render: (r) => UI.esc(r.doctor_code || r.doctor_name || '—') },
             { label: 'Items', num: true, render: (r) => UI.esc(r.pending_items) },
+            { label: 'Written', render: (r) => (r.days_waiting >= 1
+              ? `<b style="color:var(--orange-dark)">${UI.esc(UI.ago(r.created_at))}</b>`
+              : UI.esc(UI.ago(r.created_at))) },
             { label: 'Flags', render: (r) => r.allergies ? UI.badge('⚠ Allergy', 'danger') : '' },
-            { label: '', render: (r) => `<button class="btn sm" data-open="${r.visit_id}">Dispense</button>` },
+            { label: '', render: (r) => `<button class="btn sm" data-open="${r.sheet_id}"
+                data-visit="${r.visit_id || ''}">Dispense</button>` +
+              (APP.can(['pharmacy'])
+                ? ` <button class="btn ghost sm" data-skip="${r.sheet_id}"
+                     title="Not being filled here">Not here</button>` : '') },
           ], queue, { emptyText: 'Nothing waiting at the pharmacy counter.' });
-          host.querySelectorAll('[data-open]').forEach((b) =>
-            b.addEventListener('click', () => APP.navigate('pharmacy', { visitId: b.dataset.open })));
+
+          host.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', () => {
+            // A prescription raised during a visit dispenses against that
+            // visit; one written without a visit dispenses on its own.
+            if (b.dataset.visit) APP.navigate('pharmacy', { visitId: b.dataset.visit });
+            else APP.navigate('pharmacy', { sheetId: b.dataset.open });
+          }));
+          host.querySelectorAll('[data-skip]').forEach((b) =>
+            b.addEventListener('click', () => declinePrescription(
+              queue.find((r) => String(r.sheet_id) === b.dataset.skip))));
         },
 
         stock() {
@@ -473,8 +507,10 @@
   });
 
   // ------------------------------------------------------------- dispensing
-  async function renderDispense(el, visitId) {
-    const data = await API.get(`/api/pharmacy/prescriptions/${visitId}`);
+  async function renderDispense(el, visitId, sheetId = null) {
+    const data = await API.get(visitId
+      ? `/api/pharmacy/prescriptions/${visitId}`
+      : `/api/pharmacy/sheet/${sheetId}`);
     const visit = data.visit;
     APP.setSubtitle(`${visit.patient_name} · ${visit.uhid} · ${visit.visit_no}`);
     APP.actions([{ id: 'back', label: '← Pharmacy queue', onClick: () => APP.navigate('pharmacy') }]);
@@ -532,7 +568,9 @@
 
       e.target.disabled = true;
       const send = async (acknowledge) => API.post('/api/pharmacy/dispense', {
-        patientId: visit.patient_id, visitId,
+        // Without a visit the sale stands on its own; the medicines are still
+        // billed and paid for at this counter either way.
+        patientId: visit.patient_id, visitId: visitId || undefined,
         discount: Number(el.querySelector('[name=discount]').value || 0),
         items, acknowledgeWarnings: acknowledge,
       });
@@ -711,6 +749,36 @@
    * colour and no greyscale worth the name, so everything is pure black on
    * white with a monospace body — which also keeps the money columns aligned.
    */
+  /**
+   * The patient is not buying here — they took the paper elsewhere, or thought
+   * better of it, or we do not stock what was written. The reason is required
+   * because it is the only record of what happened to the prescription.
+   */
+  function declinePrescription(row) {
+    if (!row) return;
+    UI.modal({
+      title: `Not dispensing ${row.rx_no}`, size: 'narrow',
+      body: `<div class="alert info">${UI.esc(row.patient_name)} ·
+          ${UI.num(row.pending_items)} item(s) still waiting.</div>
+        <form id="dc-form">
+          ${UI.field({ name: 'reason', label: 'Why not', rows: 2, required: true,
+            placeholder: 'Buying near home, changed their mind, we do not stock it…' })}
+        </form>
+        <div class="muted small mt">It comes off the queue and is recorded as filled
+          elsewhere. The prescription itself is untouched.</div>`,
+      footer: `<button class="btn ghost" data-act="__close">Cancel</button>
+               <button class="btn" data-act="save">Take it off the queue</button>`,
+      async onAction(act, modal) {
+        if (act !== 'save') return;
+        const form = modal.querySelector('#dc-form');
+        if (!form.reportValidity()) return 'keep';
+        await API.post(`/api/pharmacy/prescriptions/${row.sheet_id}/decline`, UI.formValues(form));
+        UI.ok(`${row.rx_no} taken off the queue.`);
+        APP.reload();
+      },
+    });
+  }
+
   function receiptStyles() {
     return `<style>
       @page { size: 80mm auto; margin: 0; }

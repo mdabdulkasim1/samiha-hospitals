@@ -259,9 +259,16 @@ router.post('/', prescriberRoles, wrap((req, res) => {
             dose, frequency, str(it.route, 'oral'), days || null, qty,
             str(it.instructions),
             slots.morning, slots.afternoon, slots.night, unit, food,
-            // Without a visit there is no pharmacy queue to join: the patient
-            // carries the paper to a counter, ours or anyone's.
-            visitId ? 'pending' : 'external');
+            /*
+             * Pending, with or without a visit behind it.
+             *
+             * Our own pharmacy should see everything this clinic prescribes:
+             * the patient may walk straight to the counter, or come back for
+             * it on Friday, or fill it somewhere else — and the pharmacist
+             * deciding which of those happened is the point of the queue. It
+             * is marked filled-elsewhere only when somebody says so.
+             */
+            'pending');
     }
     return sheetId;
   })();

@@ -227,10 +227,16 @@ test('the printed sheet carries the clinic and a doctor code, never the doctor',
   assert.ok(sheet.items.every((i) => i.drug_name));
 });
 
-test('lines join the pharmacy queue only when there is a visit to dispense against', async () => {
+test('every prescription reaches the pharmacy, visit or no visit', async () => {
+  // A sheet written without a visit is still ours to dispense: the patient may
+  // walk straight to the counter, or come back for it another day.
   const standalone = (await api('GET', `/api/prescriptions/${ids.sheet}`, undefined, 'imran')).body;
-  assert.ok(standalone.items.every((i) => i.status === 'external'),
-    'a paper prescription is not a dispensing job');
+  assert.ok(standalone.items.every((i) => i.status === 'pending'),
+    'a prescription with no visit still waits at our own counter');
+
+  const beforeQueue = (await api('GET', '/api/pharmacy/queue', undefined, 'pharmacy')).body;
+  assert.ok(beforeQueue.some((q) => q.sheet_id === ids.sheet && !q.visit_id),
+    'and the pharmacist can see it');
 
   const visit = (await api('POST', '/api/visits/arrive', {
     patientId: ids.patient, reasonForVisit: 'Fever', doctorId: ids.imran,
@@ -244,6 +250,19 @@ test('lines join the pharmacy queue only when there is a visit to dispense again
 
   const queue = (await api('GET', '/api/pharmacy/queue', undefined, 'pharmacy')).body;
   assert.ok(queue.some((q) => q.visit_id === visit.id), 'the pharmacy sees it without re-typing');
+
+  // The pharmacist can say a sheet is not being filled here, and it leaves.
+  const declined = await api('POST', `/api/pharmacy/prescriptions/${ids.sheet}/decline`,
+    { reason: 'Patient buying it near home' }, 'pharmacy');
+  assert.strictEqual(declined.status, 200, JSON.stringify(declined.body));
+  const after = (await api('GET', '/api/pharmacy/queue', undefined, 'pharmacy')).body;
+  assert.ok(!after.some((q) => q.sheet_id === ids.sheet), 'it is off the queue');
+  const gone = (await api('GET', `/api/prescriptions/${ids.sheet}`, undefined, 'imran')).body;
+  assert.ok(gone.items.every((i) => i.status === 'external'), 'recorded as filled elsewhere');
+
+  // And a reason is not optional — it is the whole record of what happened.
+  assert.strictEqual((await api('POST', `/api/pharmacy/prescriptions/${ids.sheet}/decline`,
+    {}, 'pharmacy')).status, 400);
 });
 
 // --------------------------------------------------------- the dated chart

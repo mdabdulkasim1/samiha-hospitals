@@ -216,6 +216,23 @@ router.post('/orders/:id/verify', requireRole('lab', 'doctor'), wrap((req, res) 
   if (order.visit_id) {
     db.prepare("INSERT INTO visit_events (visit_id, stage, detail, actor_id) VALUES (?, 'lab_reported', ?, ?)")
       .run(order.visit_id, `${order.order_no} verified and released`, req.user.id);
+
+    /*
+     * With the last report out, the patient is done at the lab and the cashier
+     * is who they see next. Without this the visit sat in the diagnostics lane
+     * until somebody happened to open its bill, and the queue board showed a
+     * patient waiting at a counter that had already finished with them.
+     */
+    const stillOpen = db.prepare(
+      `SELECT COUNT(*) AS c FROM lab_orders
+        WHERE visit_id = ? AND status NOT IN ('reported','cancelled')`
+    ).get(order.visit_id).c;
+    if (!stillOpen) {
+      db.prepare(
+        `UPDATE visits SET status = 'billing_pending'
+          WHERE id = ? AND status = 'labs_pending'`
+      ).run(order.visit_id);
+    }
   }
   const critical = db.prepare(
     "SELECT test_name, result_value FROM lab_order_items WHERE order_id = ? AND abnormal_flag = 'critical'"
