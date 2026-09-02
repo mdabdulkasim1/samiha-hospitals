@@ -640,6 +640,261 @@ router.get('/dashboard/detail', requireAuth, wrap((req, res) => {
   });
 }));
 
+/* ------------------------------------------------------ the reports drill-in
+ * The same bargain as the dashboard's: each metric repeats the predicate of
+ * the figure it sits under, so the list always adds up to the number that was
+ * clicked. The difference is the window. A report is always "over some period"
+ * and the tabs do not agree on it -- the footfall trend counts the last thirty
+ * days inclusive of today, revenue and turnaround count back thirty days from
+ * now -- so rather than guess, the screen sends the exact window it drew, and
+ * these queries answer for that window and no other.
+ */
+const MGMT_ROLES = ['admin', 'reception', 'cashier'];
+
+const REPORT_DETAILS = Object.assign(Object.create(null), {
+  trend_visits: {
+    title: 'Visits', caption: 'Every visit in the window',
+    roles: null, route: 'queue', routeLabel: 'Open the queue board',
+    rows: ({ from, to }) => db.prepare(
+      `SELECT v.id, v.visit_no, v.token_no, ${PATIENT_NAME} AS name, p.uhid,
+              u.name AS doctor, v.status, v.arrived_at AS at
+         FROM visits v
+         JOIN patients p ON p.id = v.patient_id
+         LEFT JOIN users u ON u.id = v.doctor_id
+        WHERE date(v.arrived_at) BETWEEN ? AND ?
+        ORDER BY v.arrived_at DESC`
+    ).all(from, to),
+  },
+
+  trend_appointments: {
+    title: 'Appointments', caption: 'Every appointment in the window',
+    roles: null, route: 'appointments', routeLabel: 'Open the diary',
+    rows: ({ from, to }) => db.prepare(
+      `SELECT a.id, a.appt_no, a.token_no, a.scheduled_at AS at,
+              COALESCE(${PATIENT_NAME}, a.guest_name) AS name,
+              COALESCE(p.phone, a.guest_phone) AS phone,
+              u.name AS doctor, a.status, a.source
+         FROM appointments a
+         LEFT JOIN patients p ON p.id = a.patient_id
+         LEFT JOIN users u ON u.id = a.doctor_id
+        WHERE date(a.scheduled_at) BETWEEN ? AND ?
+        ORDER BY a.scheduled_at DESC`
+    ).all(from, to),
+  },
+
+  trend_collected: {
+    title: 'Collected', caption: 'Every receipt in the window',
+    roles: MGMT_ROLES, route: 'billing', routeLabel: 'Open billing',
+    rows: ({ from, to }) => db.prepare(
+      `SELECT pay.id, pay.receipt_no, ${PATIENT_NAME} AS name, p.uhid,
+              i.invoice_no, pay.mode, pay.amount, u.name AS taken_by, pay.paid_at AS at
+         FROM payments pay
+         LEFT JOIN patients p ON p.id = pay.patient_id
+         LEFT JOIN invoices i ON i.id = pay.invoice_id
+         LEFT JOIN users u ON u.id = pay.received_by
+        WHERE date(pay.paid_at) BETWEEN ? AND ?
+        ORDER BY pay.paid_at DESC`
+    ).all(from, to),
+  },
+
+  trend_admissions: {
+    title: 'Admissions', caption: 'Every admission in the window',
+    roles: null, route: 'ipd', routeLabel: 'Open wards & beds',
+    rows: ({ from, to }) => db.prepare(
+      `SELECT adm.id, adm.ip_no, ${PATIENT_NAME} AS name, p.uhid, u.name AS doctor,
+              w.name AS ward, b.bed_no, adm.status, adm.admitted_at AS at, adm.discharged_at
+         FROM admissions adm
+         JOIN patients p ON p.id = adm.patient_id
+         LEFT JOIN users u ON u.id = adm.doctor_id
+         LEFT JOIN wards w ON w.id = adm.ward_id
+         LEFT JOIN beds b ON b.id = adm.bed_id
+        WHERE date(adm.admitted_at) BETWEEN ? AND ?
+        ORDER BY adm.admitted_at DESC`
+    ).all(from, to),
+  },
+
+  /* Both turnaround figures are averages over the same completed visits, so
+     they open the same list — with every stage timed, the averages are simply
+     the columns added up and divided. */
+  turnaround_visits: {
+    title: 'Completed visits', caption: 'The visits these averages are taken over',
+    roles: null, route: 'queue', routeLabel: 'Open the queue board',
+    rows: ({ from, to }) => db.prepare(
+      `SELECT v.id, v.visit_no, ${PATIENT_NAME} AS name, p.uhid, u.name AS doctor,
+              v.arrived_at AS at,
+              (julianday(v.consult_end_at) - julianday(v.consult_start_at)) * 1440 AS consult_minutes,
+              (julianday(v.checked_out_at) - julianday(v.arrived_at)) * 1440 AS door_to_door_minutes
+         FROM visits v
+         JOIN patients p ON p.id = v.patient_id
+         LEFT JOIN users u ON u.id = v.doctor_id
+        WHERE v.status = 'checked_out' AND date(v.arrived_at) BETWEEN ? AND ?
+        ORDER BY v.arrived_at DESC`
+    ).all(from, to),
+  },
+
+  revenue_sliding: {
+    title: 'Sliding-scale given', caption: 'Invoices carrying a sliding-scale concession',
+    roles: MGMT_ROLES, route: 'billing', routeLabel: 'Open billing',
+    rows: ({ from, to }) => db.prepare(
+      `SELECT i.id, i.invoice_no, ${PATIENT_NAME} AS name, p.uhid, i.kind, i.status,
+              i.net, i.sliding_discount AS amount, i.created_at AS at
+         FROM invoices i
+         LEFT JOIN patients p ON p.id = i.patient_id
+        WHERE date(i.created_at) BETWEEN ? AND ? AND i.status != 'cancelled'
+          AND i.sliding_discount > 0
+        ORDER BY i.sliding_discount DESC`
+    ).all(from, to),
+  },
+
+  revenue_assistance: {
+    title: 'Assistance & write-offs', caption: 'Invoices where the clinic carried part of the cost',
+    roles: MGMT_ROLES, route: 'billing', routeLabel: 'Open billing',
+    rows: ({ from, to }) => db.prepare(
+      `SELECT i.id, i.invoice_no, ${PATIENT_NAME} AS name, p.uhid, i.kind, i.status,
+              i.net, i.assistance_covered AS amount, i.created_at AS at
+         FROM invoices i
+         LEFT JOIN patients p ON p.id = i.patient_id
+        WHERE date(i.created_at) BETWEEN ? AND ? AND i.status != 'cancelled'
+          AND i.assistance_covered > 0
+        ORDER BY i.assistance_covered DESC`
+    ).all(from, to),
+  },
+
+  /* Outstanding is deliberately not windowed: an unpaid invoice is unpaid
+     whenever it was raised, which is exactly how the revenue tab counts it. */
+  revenue_outstanding: {
+    title: 'Outstanding', caption: 'Open invoices, whenever they were raised',
+    roles: MGMT_ROLES, route: 'billing', routeParams: { status: 'unpaid' }, routeLabel: 'Open billing',
+    rows: () => db.prepare(
+      `SELECT i.id, i.invoice_no, ${PATIENT_NAME} AS name, p.uhid, i.kind, i.status,
+              i.net, i.paid, i.balance, i.created_at AS at
+         FROM invoices i
+         LEFT JOIN patients p ON p.id = i.patient_id
+        WHERE i.status IN ('unpaid','partial')
+        ORDER BY i.balance DESC, i.created_at DESC`
+    ).all(),
+  },
+
+  /* One doctor's row on the productivity table. */
+  doctor_visits: {
+    title: 'Visits', caption: 'This doctor’s visits in the window',
+    roles: MGMT_ROLES, needsDoctor: true, route: 'queue', routeLabel: 'Open the queue board',
+    rows: ({ from, to, doctorId }) => db.prepare(
+      `SELECT v.id, v.visit_no, ${PATIENT_NAME} AS name, p.uhid, v.status,
+              v.arrived_at AS at,
+              (julianday(v.consult_end_at) - julianday(v.consult_start_at)) * 1440 AS consult_minutes
+         FROM visits v
+         JOIN patients p ON p.id = v.patient_id
+        WHERE v.doctor_id = ? AND date(v.arrived_at) BETWEEN ? AND ?
+        ORDER BY v.arrived_at DESC`
+    ).all(doctorId, from, to),
+  },
+
+  /* One cell of the month-by-month matrix. */
+  doctor_month_booked: {
+    title: 'Patients booked', caption: 'Appointments kept on the books that month',
+    roles: MGMT_ROLES, needsDoctor: true, route: 'appointments', routeLabel: 'Open the diary',
+    rows: ({ from, to, doctorId }) => db.prepare(
+      `SELECT a.id, a.appt_no, a.scheduled_at AS at,
+              COALESCE(${PATIENT_NAME}, a.guest_name) AS name,
+              COALESCE(p.phone, a.guest_phone) AS phone, a.status, a.source, a.visit_kind
+         FROM appointments a
+         LEFT JOIN patients p ON p.id = a.patient_id
+        WHERE a.doctor_id = ? AND date(a.scheduled_at) BETWEEN ? AND ?
+          AND a.status NOT IN ('cancelled','no_show')
+        ORDER BY a.scheduled_at`
+    ).all(doctorId, from, to),
+  },
+
+  doctor_month_visits: {
+    title: 'Visits attended', caption: 'Patients who came through the door that month',
+    roles: MGMT_ROLES, needsDoctor: true, route: 'queue', routeLabel: 'Open the queue board',
+    rows: ({ from, to, doctorId }) => db.prepare(
+      `SELECT v.id, v.visit_no, ${PATIENT_NAME} AS name, p.uhid, v.status, v.arrived_at AS at
+         FROM visits v
+         JOIN patients p ON p.id = v.patient_id
+        WHERE v.doctor_id = ? AND date(v.arrived_at) BETWEEN ? AND ?
+        ORDER BY v.arrived_at DESC`
+    ).all(doctorId, from, to),
+  },
+
+  /* Billed and collected follow the invoice to the visit or admission it was
+     raised against — the same attribution the monthly table uses, so a
+     pharmacy line on an OPD bill counts to the doctor who caused it. */
+  doctor_month_billed: {
+    title: 'Billed', caption: 'Invoices raised against this doctor’s patients that month',
+    roles: MGMT_ROLES, needsDoctor: true, route: 'billing', routeLabel: 'Open billing',
+    rows: ({ from, to, doctorId }) => db.prepare(
+      `SELECT i.id, i.invoice_no, ${PATIENT_NAME} AS name, p.uhid, i.kind, i.status,
+              i.net AS amount, i.paid, i.balance, i.created_at AS at
+         FROM invoices i
+         LEFT JOIN patients p ON p.id = i.patient_id
+         LEFT JOIN visits v ON v.id = i.visit_id
+         LEFT JOIN admissions adm ON adm.id = i.admission_id
+        WHERE COALESCE(v.doctor_id, adm.doctor_id) = ?
+          AND i.status != 'cancelled' AND date(i.created_at) BETWEEN ? AND ?
+        ORDER BY i.created_at DESC`
+    ).all(doctorId, from, to),
+  },
+
+  doctor_month_collected: {
+    title: 'Collected', caption: 'Received against this doctor’s invoices that month',
+    roles: MGMT_ROLES, needsDoctor: true, route: 'billing', routeLabel: 'Open billing',
+    rows: ({ from, to, doctorId }) => db.prepare(
+      `SELECT i.id, i.invoice_no, ${PATIENT_NAME} AS name, p.uhid, i.kind, i.status,
+              i.net, i.paid AS amount, i.balance, i.created_at AS at
+         FROM invoices i
+         LEFT JOIN patients p ON p.id = i.patient_id
+         LEFT JOIN visits v ON v.id = i.visit_id
+         LEFT JOIN admissions adm ON adm.id = i.admission_id
+        WHERE COALESCE(v.doctor_id, adm.doctor_id) = ?
+          AND i.status != 'cancelled' AND date(i.created_at) BETWEEN ? AND ?
+        ORDER BY i.created_at DESC`
+    ).all(doctorId, from, to),
+  },
+});
+
+/** A plain YYYY-MM-DD, or nothing. Anything else is not a date. */
+const isDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v);
+
+router.get('/detail', requireAuth, wrap((req, res) => {
+  const metric = str(req.query.metric, '');
+  const spec = Object.prototype.hasOwnProperty.call(REPORT_DETAILS, metric)
+    ? REPORT_DETAILS[metric] : null;
+  if (!spec) throw badRequest(`Unknown report metric: ${metric || '(none)'}`);
+
+  if (spec.roles && req.user.role !== 'admin' && !spec.roles.includes(req.user.role)) {
+    throw forbidden(`This report is restricted to: ${spec.roles.join(', ')}`);
+  }
+
+  const from = str(req.query.from, '');
+  const to = str(req.query.to, '');
+  if (!isDate(from) || !isDate(to)) throw badRequest('A from and to date are required, as YYYY-MM-DD.');
+  if (from > to) throw badRequest('The window starts after it ends.');
+
+  const doctorId = int(req.query.doctorId) || null;
+  if (spec.needsDoctor && !doctorId) throw badRequest('This detail is for one doctor — say which.');
+  if (doctorId && !db.prepare("SELECT 1 FROM users WHERE id = ? AND role = 'doctor'").get(doctorId)) {
+    throw badRequest('No such doctor.');
+  }
+
+  const rows = spec.rows({ from, to, doctorId });
+  const LIMIT = 300;
+  const doctor = doctorId
+    ? db.prepare('SELECT name FROM users WHERE id = ?').get(doctorId).name : null;
+
+  res.json({
+    metric,
+    title: doctor ? `${doctor} — ${spec.title}` : spec.title,
+    caption: spec.caption,
+    from, to,
+    route: spec.route, routeParams: spec.routeParams || null, routeLabel: spec.routeLabel,
+    total: rows.length,
+    rows: rows.slice(0, LIMIT),
+    truncated: rows.length > LIMIT,
+  });
+}));
+
 router.get('/audit', requireRole('admin'), wrap((req, res) => {
   res.json(db.prepare(
     `SELECT * FROM audit_logs

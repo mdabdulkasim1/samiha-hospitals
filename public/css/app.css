@@ -227,6 +227,20 @@ code, .mono { font-family: var(--mono); font-size: .92em; }
    suggest the paper can be clicked. */
 @media print { .stat.drillable::before { display: none; } }
 
+/* A number inside a table that opens what it counts. It stays a number —
+   same weight, same alignment, no blue underline shouting "link" down a
+   column of figures — and only announces itself under the cursor, where the
+   dotted rule and the tint say it can be pressed. */
+.linknum {
+  font: inherit; color: inherit; background: none; border: 0; padding: 0;
+  cursor: pointer; border-bottom: 1px dotted transparent;
+  transition: border-color .12s ease, background-color .12s ease;
+  border-radius: 3px;
+}
+.linknum:hover { border-bottom-color: currentColor; background: rgba(23,107,124,.10); }
+.linknum:focus-visible { outline: 2px solid var(--teal); outline-offset: 1px; }
+@media print { .linknum { border-bottom: 0; background: none; } }
+
 /* Card headings carry a small mark in the house teal, so a screenful of cards
    still reads as one system. */
 .card-head > h3 { position: relative; padding-left: 11px; }

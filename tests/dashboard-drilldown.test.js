@@ -219,3 +219,142 @@ test('signing out closes the detail too', async () => {
   const res = await api('GET', '/api/reports/dashboard/detail?metric=beds', undefined, null);
   assert.strictEqual(res.status, 401);
 });
+
+// ------------------------------------------------------- the reports screen
+const rdetail = (metric, params, as = 'admin') =>
+  api('GET', '/api/reports/detail?' + new URLSearchParams({ metric, ...params }), undefined, as);
+
+const WINDOW = () => ({
+  from: new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10),
+  to: new Date().toISOString().slice(0, 10),
+});
+
+test('the footfall figures open exactly what they counted', async () => {
+  const w = WINDOW();
+  const trend = (await api('GET', '/api/reports/trend?days=31')).body;
+  const win = { from: trend[0].day, to: trend[trend.length - 1].day };
+  const sum = (k) => trend.reduce((a, r) => a + Number(r[k] || 0), 0);
+
+  for (const [metric, key] of [
+    ['trend_visits', 'visits'],
+    ['trend_appointments', 'appointments'],
+    ['trend_admissions', 'admissions'],
+  ]) {
+    const res = await rdetail(metric, win);
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    assert.strictEqual(res.body.total, sum(key), `${metric} does not match the trend total`);
+  }
+
+  const receipts = await rdetail('trend_collected', win);
+  assert.strictEqual(round2(receipts.body.rows.reduce((a, r) => a + Number(r.amount), 0)),
+    round2(sum('collected')), 'the receipts must add up to the collected figure');
+  void w;
+});
+
+test('a report answers for the window it was asked about, and no other', async () => {
+  const today = new Date().toISOString().slice(0, 10);
+  const wide = await rdetail('trend_visits', WINDOW());
+  const oneDay = await rdetail('trend_visits', { from: today, to: today });
+  assert.ok(oneDay.body.total <= wide.body.total,
+    'a single day cannot hold more visits than the month around it');
+  for (const r of oneDay.body.rows) assert.ok(String(r.at).startsWith(today));
+});
+
+test('the turnaround list is the sample the averages were taken over', async () => {
+  const w = WINDOW();
+  const t = (await api('GET', `/api/reports/turnaround?from=${w.from}&to=${w.to}`)).body;
+  const res = await rdetail('turnaround_visits', { from: t.from, to: t.to });
+  assert.strictEqual(res.body.total, t.sample);
+  for (const r of res.body.rows) {
+    assert.ok(r.door_to_door_minutes !== null, 'a completed visit has a door-to-door time');
+  }
+});
+
+test('the concession and outstanding figures open the invoices behind them', async () => {
+  const w = WINDOW();
+  const r = (await api('GET', `/api/reports/revenue?from=${w.from}&to=${w.to}`, undefined, 'cashier')).body;
+
+  const sliding = await rdetail('revenue_sliding', w, 'cashier');
+  assert.strictEqual(round2(sliding.body.rows.reduce((a, x) => a + Number(x.amount), 0)),
+    round2(r.concessions.sliding_scale));
+  for (const x of sliding.body.rows) assert.ok(Number(x.amount) > 0, 'a zero concession is not a concession');
+
+  const assist = await rdetail('revenue_assistance', w, 'cashier');
+  assert.strictEqual(round2(assist.body.rows.reduce((a, x) => a + Number(x.amount), 0)),
+    round2(r.concessions.assistance));
+
+  const out = await rdetail('revenue_outstanding', w, 'cashier');
+  assert.strictEqual(out.body.total, r.outstanding.invoices);
+  assert.strictEqual(round2(out.body.rows.reduce((a, x) => a + Number(x.balance), 0)),
+    round2(r.outstanding.amount));
+});
+
+test('a doctor-monthly cell opens that doctor\'s month, clamped to the report window', async () => {
+  const data = (await api('GET', '/api/reports/doctor-monthly?months=6')).body;
+  assert.ok(data.rows.length, 'expected at least one doctor with activity');
+  const doc = data.rows[0];
+
+  for (const m of data.months) {
+    const last = new Date(Number(m.key.slice(0, 4)), Number(m.key.slice(5, 7)), 0)
+      .toISOString().slice(0, 10);
+    const win = {
+      doctorId: doc.id,
+      from: `${m.key}-01` < data.from ? data.from : `${m.key}-01`,
+      to: last > data.to ? data.to : last,
+    };
+    for (const [metric, key] of [
+      ['doctor_month_booked', 'booked'],
+      ['doctor_month_visits', 'visits'],
+    ]) {
+      const res = await rdetail(metric, win);
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.strictEqual(res.body.total, doc.months[m.key][key],
+        `${metric} for ${m.key} does not match the cell`);
+    }
+    const billed = await rdetail('doctor_month_billed', win);
+    assert.strictEqual(round2(billed.body.rows.reduce((a, r) => a + Number(r.amount), 0)),
+      round2(doc.months[m.key].billed), `billed for ${m.key} does not match the cell`);
+  }
+});
+
+test('a doctor-monthly total opens the whole window', async () => {
+  const data = (await api('GET', '/api/reports/doctor-monthly?months=6')).body;
+  const doc = data.rows[0];
+  const res = await rdetail('doctor_month_visits',
+    { doctorId: doc.id, from: data.from, to: data.to });
+  assert.strictEqual(res.body.total, doc.total.visits);
+});
+
+test('a report detail insists on a sensible window', async () => {
+  const bad = [
+    { from: 'yesterday', to: '2026-01-01' },
+    { from: '2026-01-01', to: 'soon' },
+    { from: '2026-06-01', to: '2026-01-01' },   // ends before it starts
+    { to: '2026-01-01' },                        // no start
+  ];
+  for (const params of bad) {
+    const res = await rdetail('trend_visits', params);
+    assert.strictEqual(res.status, 400, `${JSON.stringify(params)} should be refused`);
+  }
+});
+
+test('a per-doctor report will not answer without a doctor', async () => {
+  const res = await rdetail('doctor_visits', WINDOW());
+  assert.strictEqual(res.status, 400);
+  const bogus = await rdetail('doctor_visits', { ...WINDOW(), doctorId: 999999 });
+  assert.strictEqual(bogus.status, 400);
+});
+
+test('report money is management\'s, and an unknown report metric is refused', async () => {
+  for (const metric of ['trend_collected', 'revenue_sliding', 'revenue_outstanding',
+    'doctor_month_billed']) {
+    const res = await rdetail(metric, { ...WINDOW(), doctorId: ids.imran }, 'imran');
+    assert.strictEqual(res.status, 403, `${metric} should be closed to a doctor`);
+  }
+  // Footfall and turnaround are not money and stay open to everyone.
+  assert.strictEqual((await rdetail('trend_visits', WINDOW(), 'imran')).status, 200);
+
+  for (const bad of ['', 'nonsense', 'constructor', 'toString']) {
+    assert.strictEqual((await rdetail(bad, WINDOW())).status, 400, `"${bad}" should be refused`);
+  }
+});

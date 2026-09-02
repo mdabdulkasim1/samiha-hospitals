@@ -243,11 +243,7 @@ function canDrill(metric) {
   return !!DRILL_ROLES[metric] && APP.can(DRILL_ROLES[metric]);
 }
 
-/** Patient, with the UHID underneath — the pairing used all over the app. */
-const who = (r) => `<b>${UI.esc(r.name || '—')}</b>` +
-  (r.uhid ? `<div class="muted small">${UI.esc(r.uhid)}</div>` : '');
-
-const source = (v) => (v ? UI.badge(UI.titleise(v), v === 'whatsapp' ? 'wa' : 'info') : '—');
+const { who, source } = Drilldown;
 
 /** What each list shows. Kept beside the tiles rather than in the API, so the
  *  server returns rows and the screen decides how to read them. */
@@ -336,50 +332,16 @@ const DRILL_COLUMNS = {
   ],
 };
 
-/** Which lists are worth a rupee total under them. */
+/** Which lists are worth a rupee total ruled off under them. */
 const DRILL_TOTAL = {
-  collections: { label: 'Collected', of: (rows) => rows.reduce((a, r) => a + Number(r.amount || 0), 0) },
-  outstanding: { label: 'Still to collect', of: (rows) => rows.reduce((a, r) => a + Number(r.balance || 0), 0) },
+  collections: { label: 'Collected', key: 'amount' },
+  outstanding: { label: 'Still to collect', key: 'balance' },
 };
 
-async function openMetric(metric, date) {
-  let data;
-  try {
-    data = await API.get('/api/reports/dashboard/detail' + API.qs({ metric, date }));
-  } catch (err) {
-    return UI.err(err.message);
-  }
-
-  const columns = DRILL_COLUMNS[metric] || [
-    { label: 'Name', render: (r) => UI.esc(r.name || '—') },
-  ];
-  const sum = DRILL_TOTAL[metric];
-
-  UI.modal({
-    title: data.title,
-    size: 'wide',
-    body: `
-      <div class="row-between mb">
-        <div class="muted small">${UI.esc(data.caption || '')}</div>
-        <div class="muted small">${UI.num(data.total)} row${data.total === 1 ? '' : 's'}${
-          data.truncated ? ` · showing the first ${UI.num(data.rows.length)}` : ''}</div>
-      </div>
-      ${UI.table(columns, data.rows, {
-        emptyText: 'Nothing behind this number yet — it is zero for a reason.',
-      })}
-      ${sum && data.rows.length ? `<div class="row-between mt">
-        <span class="muted small">${UI.esc(sum.label)}${
-          data.truncated ? ' (rows shown)' : ''}</span>
-        <b style="font-size:16px">${UI.money(sum.of(data.rows))}</b></div>` : ''}
-      ${data.truncated ? `<div class="alert info mt">Only the first ${UI.num(data.rows.length)}
-        of ${UI.num(data.total)} are listed here. Open the full screen to work through the rest.</div>` : ''}`,
-    footer: `${data.route
-      ? `<button class="btn ghost" data-act="open">${UI.esc(data.routeLabel || 'Open the screen')}</button>`
-      : ''}
-      <button class="btn" data-act="__close">Close</button>`,
-    onAction(act) {
-      if (act === 'open' && data.route) APP.navigate(data.route, data.routeParams || undefined);
-    },
+function openMetric(metric, date) {
+  return Drilldown.open('/api/reports/dashboard/detail' + API.qs({ metric, date }), {
+    columns: DRILL_COLUMNS[metric],
+    total: DRILL_TOTAL[metric],
   });
 }
 
