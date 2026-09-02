@@ -203,6 +203,30 @@ code, .mono { font-family: var(--mono); font-size: .92em; }
 .stat:not(.crimson):not(.teal):not(.orange):not(.ok) { color: var(--ink-3); }
 .stat .foot { color: inherit; opacity: .78; }
 
+/* A tile you can open. It is a real button, so it takes a keyboard and a
+   screen reader as readily as a mouse; these rules only undo what a button
+   would otherwise impose on the tile's layout, then say plainly that it
+   presses. The arrow appears on hover and focus rather than sitting there
+   permanently, so a board glanced at from across the room stays a board of
+   numbers rather than a wall of chevrons. */
+.stat.drillable {
+  width: 100%; text-align: left; font: inherit; cursor: pointer;
+  transition: transform .12s ease, box-shadow .12s ease, filter .12s ease;
+}
+.stat.drillable:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(12,32,38,.13); filter: saturate(1.06); }
+.stat.drillable:active { transform: translateY(0); box-shadow: var(--shadow); }
+.stat.drillable:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+.stat.drillable::before {
+  content: '→'; position: absolute; top: 12px; right: 14px;
+  font-size: 14px; opacity: 0; transition: opacity .12s ease, transform .12s ease;
+  transform: translateX(-3px);
+}
+.stat.drillable:hover::before, .stat.drillable:focus-visible::before { opacity: .55; transform: none; }
+
+/* A pressable tile is chrome, not content — printing a screen should not
+   suggest the paper can be clicked. */
+@media print { .stat.drillable::before { display: none; } }
+
 /* Card headings carry a small mark in the house teal, so a screenful of cards
    still reads as one system. */
 .card-head > h3 { position: relative; padding-left: 11px; }

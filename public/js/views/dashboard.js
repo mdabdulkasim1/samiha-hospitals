@@ -13,47 +13,60 @@ APP.register('dashboard', {
     // A doctor signed in sees their own clinic, not the whole rota.
     const isDoctor = APP.user.role === 'doctor';
 
-    const stat = (cls, label, value, foot) =>
-      `<div class="stat ${cls}"><div class="label">${UI.esc(label)}</div>
-       <div class="value">${value}</div><div class="foot">${foot || ''}</div></div>`;
+    /**
+     * A tile. Given a metric it becomes a button that opens the rows behind
+     * the number, because "5 registered today" is only ever the beginning of
+     * the question — the next one is always "which five?".
+     *
+     * A tile whose detail this user may not read stays a plain div: better an
+     * honest number they cannot open than a button that refuses them.
+     */
+    const stat = (cls, label, value, foot, metric) => {
+      const body = `<div class="label">${UI.esc(label)}</div>` +
+        `<div class="value">${value}</div><div class="foot">${foot || ''}</div>`;
+      return metric && canDrill(metric)
+        ? `<button type="button" class="stat ${cls} drillable" data-metric="${metric}"
+             title="Show the ${UI.esc(label.toLowerCase())} behind this number">${body}</button>`
+        : `<div class="stat ${cls}">${body}</div>`;
+    };
 
     el.innerHTML = `
       <div class="grid c4 mb">
         ${stat('orange', 'Enquiry patients', UI.num(d.patients ? d.patients.enquiry : 0),
-          `${UI.num(d.patients ? d.patients.enquiryToday : 0)} new today · not yet registered`)}
+          `${UI.num(d.patients ? d.patients.enquiryToday : 0)} new today · not yet registered`, 'enquiry_patients')}
         ${stat('ok', 'Registered patients', UI.num(d.patients ? d.patients.registered : 0),
-          `${UI.num(d.patients ? d.patients.registeredToday : 0)} registered today`)}
+          `${UI.num(d.patients ? d.patients.registeredToday : 0)} registered today`, 'registered_patients')}
         ${stat('teal', 'Converted from enquiry', UI.num(d.patients ? d.patients.convertedFromEnquiry : 0),
           d.patients && d.patients.enquiry + d.patients.convertedFromEnquiry > 0
             ? `${Math.round((d.patients.convertedFromEnquiry /
                 (d.patients.enquiry + d.patients.convertedFromEnquiry)) * 100)}% of enquiries came in`
-            : 'Enquiries who turned up')}
+            : 'Enquiries who turned up', 'converted')}
         ${stat('crimson', 'Open enquiries', UI.num(d.enquiries.open || 0),
-          `${UI.num(d.enquiries.via_whatsapp || 0)} via WhatsApp today`)}
+          `${UI.num(d.enquiries.via_whatsapp || 0)} via WhatsApp today`, 'open_enquiries')}
       </div>
 
       <div class="grid c4 mb">
         ${stat('teal', 'OPD visits today', UI.num(d.opd.visits),
-          `${UI.num(d.opd.in_progress || 0)} in progress · ${UI.num(d.opd.new_patients || 0)} new`)}
+          `${UI.num(d.opd.in_progress || 0)} in progress · ${UI.num(d.opd.new_patients || 0)} new`, 'opd_visits')}
         ${stat('crimson', 'Appointments', UI.num(d.appointments.total),
-          `${UI.num(d.appointments.via_whatsapp || 0)} via WhatsApp · ${UI.num(d.appointments.no_shows || 0)} no-show`)}
+          `${UI.num(d.appointments.via_whatsapp || 0)} via WhatsApp · ${UI.num(d.appointments.no_shows || 0)} no-show`, 'appointments')}
         ${stat('ok', 'Collected today', UI.money(d.revenue.collected),
-          `${UI.num(d.revenue.receipts)} receipt(s) · ${UI.money(d.revenue.outstanding)} outstanding`)}
+          `${UI.num(d.revenue.receipts)} receipt(s) · ${UI.money(d.revenue.outstanding)} outstanding`, 'collections')}
         ${stat('orange', 'Beds occupied', `${UI.num(d.ipd.beds.occupied)} / ${UI.num(d.ipd.beds.total)}`,
-          `${d.ipd.beds.occupancyPct}% occupancy · ${UI.num(d.ipd.currentInPatients)} in-patient(s)`)}
+          `${d.ipd.beds.occupancyPct}% occupancy · ${UI.num(d.ipd.currentInPatients)} in-patient(s)`, 'beds')}
       </div>
 
       ${APP.can(['cashier', 'reception', 'counselor']) ? `
         <div class="grid c4 mb">
           ${stat('crimson', 'Still to collect', UI.money(d.revenue.outstanding),
-            'Open invoices across the clinic')}
+            'Open invoices across the clinic', 'outstanding')}
           ${stat('ok', 'Taken today', UI.money(d.revenue.collected),
-            `${UI.num(d.revenue.receipts)} receipt(s)`)}
+            `${UI.num(d.revenue.receipts)} receipt(s)`, 'collections')}
           ${stat('teal', 'Self-paying patients', UI.num(d.patients ? d.patients.uninsured : 0),
-            'No insurance on file — they settle at the counter')}
+            'No insurance on file — they settle at the counter', 'self_paying')}
           ${stat('orange', 'With an insurer', UI.num(d.patients ? d.patients.insured : 0),
             d.insurance && d.insurance.receivable
-              ? `${UI.money(d.insurance.receivable)} approved, not yet received` : 'Cashless and reimbursement')}
+              ? `${UI.money(d.insurance.receivable)} approved, not yet received` : 'Cashless and reimbursement', 'insured')}
         </div>` : ''}
 
       ${d.insurance && d.insurance.receivable > 0 ? `<div class="alert info mb" style="cursor:pointer" onclick="APP.navigate('insurance')">
@@ -145,6 +158,10 @@ APP.register('dashboard', {
     el.querySelectorAll('[data-go]').forEach((b) =>
       b.addEventListener('click', () => APP.navigate(b.dataset.go)));
 
+    // Every figure on the board opens the rows it was counted from.
+    el.querySelectorAll('[data-metric]').forEach((b) =>
+      b.addEventListener('click', () => openMetric(b.dataset.metric, d.date)));
+
     // "How many has Dr Sheikh got, and who?" — one click, without leaving the
     // dashboard or needing a doctor's own sign-in.
     el.querySelectorAll('[data-doc-day]').forEach((b) =>
@@ -198,6 +215,173 @@ APP.register('dashboard', {
     }
   },
 });
+
+/* ------------------------------------------------------------------ drill-in
+ * A dashboard figure is the answer to a counting question, and the very next
+ * question is always which ones. These open that list without making anyone
+ * go and rebuild the same filter by hand on another screen.
+ *
+ * The roles mirror the guard on /api/reports/dashboard/detail. The server is
+ * what actually decides; this only decides whether the tile looks pressable,
+ * so that nobody is offered a door that will be shut in their face.
+ */
+const DRILL_ROLES = {
+  enquiry_patients:    ['reception', 'counselor', 'nurse', 'doctor', 'cashier'],
+  registered_patients: ['reception', 'counselor', 'nurse', 'doctor', 'cashier'],
+  converted:           ['reception', 'counselor', 'nurse', 'doctor', 'cashier'],
+  open_enquiries:      ['reception', 'counselor', 'nurse', 'doctor', 'cashier'],
+  opd_visits:          ['reception', 'counselor', 'nurse', 'doctor', 'cashier'],
+  appointments:        ['reception', 'counselor', 'nurse', 'doctor', 'cashier'],
+  collections:         ['cashier', 'reception', 'counselor'],
+  outstanding:         ['cashier', 'reception', 'counselor'],
+  beds:                ['ward', 'nurse', 'reception', 'doctor'],
+  self_paying:         ['cashier', 'reception', 'counselor'],
+  insured:             ['cashier', 'reception', 'counselor'],
+};
+
+function canDrill(metric) {
+  return !!DRILL_ROLES[metric] && APP.can(DRILL_ROLES[metric]);
+}
+
+/** Patient, with the UHID underneath — the pairing used all over the app. */
+const who = (r) => `<b>${UI.esc(r.name || '—')}</b>` +
+  (r.uhid ? `<div class="muted small">${UI.esc(r.uhid)}</div>` : '');
+
+const source = (v) => (v ? UI.badge(UI.titleise(v), v === 'whatsapp' ? 'wa' : 'info') : '—');
+
+/** What each list shows. Kept beside the tiles rather than in the API, so the
+ *  server returns rows and the screen decides how to read them. */
+const DRILL_COLUMNS = {
+  enquiry_patients: [
+    { label: 'Patient', render: who },
+    { label: 'Phone', render: (r) => UI.esc(r.phone || '—') },
+    { label: 'Came via', render: (r) => source(r.source) },
+    { label: 'Enquired', render: (r) => UI.esc(UI.ago(r.at)) },
+  ],
+  registered_patients: [
+    { label: 'Patient', render: who },
+    { label: 'Phone', render: (r) => UI.esc(r.phone || '—') },
+    { label: 'Visits', num: true, render: (r) => UI.num(r.visits || 0) },
+    { label: 'Registered', render: (r) => UI.esc(UI.date(r.at)) },
+  ],
+  converted: [
+    { label: 'Patient', render: who },
+    { label: 'Phone', render: (r) => UI.esc(r.phone || '—') },
+    { label: 'Came via', render: (r) => source(r.source) },
+    { label: 'Registered', render: (r) => UI.esc(UI.date(r.at)) },
+  ],
+  open_enquiries: [
+    { label: 'Ref', render: (r) => `<b>${UI.esc(r.ref_no)}</b>` },
+    { label: 'Name', render: (r) => UI.esc(r.name || '—') },
+    { label: 'Phone', render: (r) => UI.esc(r.phone || '—') },
+    { label: 'Came via', render: (r) => source(r.source) },
+    { label: 'About', render: (r) => UI.esc(r.subject || '—') },
+    { label: 'Asked', render: (r) => UI.esc(UI.ago(r.at)) },
+  ],
+  opd_visits: [
+    { label: 'Token', render: (r) => `<span class="badge crimson">${UI.esc(r.token_no || '—')}</span>` },
+    { label: 'Patient', render: who },
+    { label: 'Doctor', render: (r) => UI.esc(r.doctor || '—') },
+    { label: 'Stage', render: (r) => UI.statusBadge(r.status) },
+    { label: 'Arrived', render: (r) => UI.esc(UI.time(r.at)) },
+  ],
+  appointments: [
+    { label: 'Token', render: (r) => `<span class="badge crimson">${UI.esc(r.token_no || '—')}</span>` },
+    { label: 'Time', render: (r) => `<b>${UI.esc(UI.time(r.at))}</b>` },
+    { label: 'Patient', render: (r) => `<b>${UI.esc(r.name || '—')}</b>` +
+      `<div class="muted small">${UI.esc(r.phone || 'no number')}</div>` },
+    { label: 'Doctor', render: (r) => UI.esc(r.doctor || '—') },
+    { label: 'Booked via', render: (r) => source(r.source) },
+    { label: 'Status', render: (r) => UI.statusBadge(r.status) },
+  ],
+  collections: [
+    { label: 'Receipt', render: (r) => `<b>${UI.esc(r.receipt_no)}</b>` +
+      (r.invoice_no ? `<div class="muted small">${UI.esc(r.invoice_no)}</div>` : '') },
+    { label: 'Patient', render: who },
+    { label: 'Mode', render: (r) => UI.badge(UI.titleise(r.mode || '—'), 'info') },
+    { label: 'Taken by', render: (r) => UI.esc(r.taken_by || '—') },
+    { label: 'Time', render: (r) => UI.esc(UI.time(r.at)) },
+    { label: 'Amount', num: true, render: (r) => `<b>${UI.money(r.amount)}</b>` },
+  ],
+  outstanding: [
+    { label: 'Invoice', render: (r) => `<b>${UI.esc(r.invoice_no)}</b>` +
+      `<div class="muted small">${UI.esc(UI.titleise(r.kind || ''))}</div>` },
+    { label: 'Patient', render: who },
+    { label: 'Raised', render: (r) => UI.esc(UI.date(r.at)) },
+    { label: 'Status', render: (r) => UI.statusBadge(r.status) },
+    { label: 'Billed', num: true, render: (r) => UI.money(r.net) },
+    { label: 'Paid', num: true, render: (r) => UI.money(r.paid) },
+    { label: 'Balance', num: true, render: (r) => `<b>${UI.money(r.balance)}</b>` },
+  ],
+  beds: [
+    { label: 'Bed', render: (r) => `<b>${UI.esc(r.bed_no)}</b>` +
+      `<div class="muted small">${UI.esc(r.ward || '')}</div>` },
+    { label: 'Status', render: (r) => UI.statusBadge(r.status) },
+    { label: 'Patient', render: (r) => (r.name ? who(r) : '<span class="muted">—</span>') },
+    { label: 'IP No', render: (r) => UI.esc(r.ip_no || '—') },
+    { label: 'Since', render: (r) => (r.at ? UI.esc(UI.ago(r.at)) : '—') },
+    { label: 'Per day', num: true, render: (r) => UI.money(r.tariff) },
+  ],
+  self_paying: [
+    { label: 'Patient', render: who },
+    { label: 'Phone', render: (r) => UI.esc(r.phone || '—') },
+    { label: 'Registered', render: (r) => UI.esc(UI.date(r.at)) },
+  ],
+  insured: [
+    { label: 'Patient', render: who },
+    { label: 'Phone', render: (r) => UI.esc(r.phone || '—') },
+    { label: 'Insurer', render: (r) => UI.esc(r.insurer || '—') },
+    { label: 'Policy', render: (r) => UI.esc(r.policy_no || '—') },
+    { label: 'Valid till', render: (r) => (r.valid_till ? UI.esc(UI.date(r.valid_till)) : '—') },
+  ],
+};
+
+/** Which lists are worth a rupee total under them. */
+const DRILL_TOTAL = {
+  collections: { label: 'Collected', of: (rows) => rows.reduce((a, r) => a + Number(r.amount || 0), 0) },
+  outstanding: { label: 'Still to collect', of: (rows) => rows.reduce((a, r) => a + Number(r.balance || 0), 0) },
+};
+
+async function openMetric(metric, date) {
+  let data;
+  try {
+    data = await API.get('/api/reports/dashboard/detail' + API.qs({ metric, date }));
+  } catch (err) {
+    return UI.err(err.message);
+  }
+
+  const columns = DRILL_COLUMNS[metric] || [
+    { label: 'Name', render: (r) => UI.esc(r.name || '—') },
+  ];
+  const sum = DRILL_TOTAL[metric];
+
+  UI.modal({
+    title: data.title,
+    size: 'wide',
+    body: `
+      <div class="row-between mb">
+        <div class="muted small">${UI.esc(data.caption || '')}</div>
+        <div class="muted small">${UI.num(data.total)} row${data.total === 1 ? '' : 's'}${
+          data.truncated ? ` · showing the first ${UI.num(data.rows.length)}` : ''}</div>
+      </div>
+      ${UI.table(columns, data.rows, {
+        emptyText: 'Nothing behind this number yet — it is zero for a reason.',
+      })}
+      ${sum && data.rows.length ? `<div class="row-between mt">
+        <span class="muted small">${UI.esc(sum.label)}${
+          data.truncated ? ' (rows shown)' : ''}</span>
+        <b style="font-size:16px">${UI.money(sum.of(data.rows))}</b></div>` : ''}
+      ${data.truncated ? `<div class="alert info mt">Only the first ${UI.num(data.rows.length)}
+        of ${UI.num(data.total)} are listed here. Open the full screen to work through the rest.</div>` : ''}`,
+    footer: `${data.route
+      ? `<button class="btn ghost" data-act="open">${UI.esc(data.routeLabel || 'Open the screen')}</button>`
+      : ''}
+      <button class="btn" data-act="__close">Close</button>`,
+    onAction(act) {
+      if (act === 'open' && data.route) APP.navigate(data.route, data.routeParams || undefined);
+    },
+  });
+}
 
 /**
  * Doctor by doctor for the day: booked, seen, and how much of the clinic is

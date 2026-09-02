@@ -1,7 +1,7 @@
 'use strict';
 const express = require('express');
 const { db } = require('../db');
-const { wrap } = require('../lib/http');
+const { wrap, badRequest, forbidden } = require('../lib/http');
 const { requireAuth, requireRole } = require('../lib/auth');
 const scheduling = require('../services/scheduling');
 const { str, int } = require('../lib/validate');
@@ -415,6 +415,228 @@ router.get('/revenue', requireRole('admin', 'cashier', 'reception'), wrap((req, 
       `SELECT COUNT(*) AS invoices, COALESCE(SUM(balance),0) AS amount
          FROM invoices WHERE status IN ('unpaid','partial')`
     ).get(),
+  });
+}));
+
+/**
+ * The rows behind a dashboard number.
+ *
+ * Every metric here repeats, word for word, the predicate of the tile it sits
+ * under. That duplication is deliberate: if the list were assembled from its
+ * own idea of what counts, the two would drift the first time either changed,
+ * and a figure whose detail does not add up to it is worse than no figure at
+ * all. When a tile's SQL changes, its entry here changes with it.
+ *
+ * Each entry says who may read it. A tile the user cannot drill into is left
+ * unclickable on the dashboard, but that is a courtesy, not the control —
+ * the guard here is what actually decides.
+ */
+const DESK_ROLES = ['reception', 'counselor', 'nurse', 'doctor', 'cashier'];
+const MONEY_ROLES = ['cashier', 'reception', 'counselor'];
+const WARD_ROLES = ['ward', 'nurse', 'reception', 'doctor'];
+
+const PATIENT_NAME = "TRIM(p.first_name || ' ' || COALESCE(p.last_name, ''))";
+
+const DETAILS = Object.assign(Object.create(null), {
+  enquiry_patients: {
+    title: 'Enquiry patients',
+    caption: 'Asked about us, not registered yet',
+    roles: DESK_ROLES,
+    route: 'patients', routeParams: { stage: 'enquiry' }, routeLabel: 'Open the patient list',
+    rows: () => db.prepare(
+      `SELECT p.id, p.uhid, ${PATIENT_NAME} AS name, p.phone, p.enquiry_at AS at,
+              (SELECT e.source FROM enquiries e WHERE e.patient_id = p.id ORDER BY e.id LIMIT 1) AS source
+         FROM patients p
+        WHERE p.active = 1 AND p.stage = 'enquiry'
+        ORDER BY p.enquiry_at DESC, p.id DESC`
+    ).all(),
+  },
+
+  registered_patients: {
+    title: 'Registered patients',
+    caption: 'Everyone on the register',
+    roles: DESK_ROLES,
+    route: 'patients', routeParams: { stage: 'registered' }, routeLabel: 'Open the patient list',
+    rows: () => db.prepare(
+      `SELECT p.id, p.uhid, ${PATIENT_NAME} AS name, p.phone, p.registered_at AS at,
+              (SELECT COUNT(*) FROM visits v WHERE v.patient_id = p.id) AS visits
+         FROM patients p
+        WHERE p.active = 1 AND p.stage = 'registered'
+        ORDER BY p.registered_at DESC, p.id DESC`
+    ).all(),
+  },
+
+  converted: {
+    title: 'Converted from enquiry',
+    caption: 'Enquired first, then registered',
+    roles: DESK_ROLES,
+    route: 'patients', routeParams: { stage: 'registered' }, routeLabel: 'Open the patient list',
+    rows: () => db.prepare(
+      `SELECT DISTINCT p.id, p.uhid, ${PATIENT_NAME} AS name, p.phone,
+              p.registered_at AS at, e.source
+         FROM patients p
+         JOIN enquiries e ON e.patient_id = p.id
+        WHERE p.active = 1 AND p.stage = 'registered'
+        ORDER BY p.registered_at DESC, p.id DESC`
+    ).all(),
+  },
+
+  open_enquiries: {
+    title: 'Open enquiries',
+    caption: 'Asked today and still unanswered',
+    roles: DESK_ROLES,
+    route: 'enquiries', routeLabel: 'Open the enquiry desk',
+    rows: (date) => db.prepare(
+      `SELECT e.id, e.ref_no, e.name, e.phone, e.source, e.subject, e.created_at AS at
+         FROM enquiries e
+        WHERE date(e.created_at) = ? AND e.status = 'new'
+        ORDER BY e.created_at DESC`
+    ).all(date),
+  },
+
+  opd_visits: {
+    title: 'OPD visits today',
+    caption: 'Everyone who walked in today',
+    roles: DESK_ROLES, scopeToDoctor: true,
+    route: 'queue', routeLabel: 'Open the queue board',
+    rows: (date, user) => db.prepare(
+      `SELECT v.id, v.visit_no, v.token_no, ${PATIENT_NAME} AS name, p.uhid,
+              u.name AS doctor, v.status, v.arrived_at AS at
+         FROM visits v
+         JOIN patients p ON p.id = v.patient_id
+         LEFT JOIN users u ON u.id = v.doctor_id
+        WHERE date(v.arrived_at) = ?
+          AND (? IS NULL OR v.doctor_id = ?)
+        ORDER BY v.arrived_at DESC`
+    ).all(date, user, user),
+  },
+
+  appointments: {
+    title: 'Appointments today',
+    caption: "Today's diary",
+    roles: DESK_ROLES, scopeToDoctor: true,
+    route: 'appointments', routeLabel: 'Open the diary',
+    rows: (date, user) => db.prepare(
+      `SELECT a.id, a.appt_no, a.token_no, a.scheduled_at AS at,
+              COALESCE(${PATIENT_NAME}, a.guest_name) AS name,
+              COALESCE(p.phone, a.guest_phone) AS phone,
+              u.name AS doctor, a.status, a.source
+         FROM appointments a
+         LEFT JOIN patients p ON p.id = a.patient_id
+         LEFT JOIN users u ON u.id = a.doctor_id
+        WHERE date(a.scheduled_at) = ?
+          AND (? IS NULL OR a.doctor_id = ?)
+        ORDER BY a.scheduled_at`
+    ).all(date, user, user),
+  },
+
+  collections: {
+    title: 'Collected today',
+    caption: 'Every receipt taken today',
+    roles: MONEY_ROLES, money: true,
+    route: 'billing', routeLabel: 'Open billing',
+    rows: (date) => db.prepare(
+      `SELECT pay.id, pay.receipt_no, ${PATIENT_NAME} AS name, p.uhid,
+              i.invoice_no, pay.mode, pay.amount, u.name AS taken_by, pay.paid_at AS at
+         FROM payments pay
+         LEFT JOIN patients p ON p.id = pay.patient_id
+         LEFT JOIN invoices i ON i.id = pay.invoice_id
+         LEFT JOIN users u ON u.id = pay.received_by
+        WHERE date(pay.paid_at) = ?
+        ORDER BY pay.paid_at DESC`
+    ).all(date),
+  },
+
+  outstanding: {
+    title: 'Still to collect',
+    caption: 'Open invoices across the clinic',
+    roles: MONEY_ROLES, money: true,
+    route: 'billing', routeParams: { status: 'unpaid' }, routeLabel: 'Open billing',
+    rows: () => db.prepare(
+      `SELECT i.id, i.invoice_no, ${PATIENT_NAME} AS name, p.uhid, i.kind, i.status,
+              i.net, i.paid, i.balance, i.created_at AS at
+         FROM invoices i
+         LEFT JOIN patients p ON p.id = i.patient_id
+        WHERE i.status IN ('unpaid','partial')
+        ORDER BY i.balance DESC, i.created_at DESC`
+    ).all(),
+  },
+
+  beds: {
+    title: 'Beds',
+    caption: 'Every bed, and who is in it',
+    roles: WARD_ROLES,
+    route: 'ipd', routeLabel: 'Open wards & beds',
+    rows: () => db.prepare(
+      `SELECT b.id, b.bed_no, w.name AS ward, b.status, b.tariff_per_day AS tariff,
+              ${PATIENT_NAME} AS name, p.uhid, adm.ip_no, adm.admitted_at AS at
+         FROM beds b
+         LEFT JOIN wards w ON w.id = b.ward_id
+         LEFT JOIN admissions adm ON adm.bed_id = b.id AND adm.status = 'admitted'
+         LEFT JOIN patients p ON p.id = adm.patient_id
+        WHERE b.active = 1
+        ORDER BY b.status = 'occupied' DESC, w.name, b.bed_no`
+    ).all(),
+  },
+
+  self_paying: {
+    title: 'Self-paying patients',
+    caption: 'No insurance on file — they settle at the counter',
+    roles: MONEY_ROLES,
+    route: 'patients', routeParams: { stage: 'registered' }, routeLabel: 'Open the patient list',
+    rows: () => db.prepare(
+      `SELECT p.id, p.uhid, ${PATIENT_NAME} AS name, p.phone, p.registered_at AS at
+         FROM patients p
+        WHERE p.active = 1 AND p.stage = 'registered' AND p.is_uninsured = 1
+        ORDER BY p.registered_at DESC, p.id DESC`
+    ).all(),
+  },
+
+  insured: {
+    title: 'With an insurer',
+    caption: 'Cashless and reimbursement',
+    roles: MONEY_ROLES,
+    route: 'insurance', routeLabel: 'Open insurance & TPA',
+    rows: () => db.prepare(
+      `SELECT p.id, p.uhid, ${PATIENT_NAME} AS name, p.phone,
+              p.insurance_provider AS insurer, p.insurance_policy_no AS policy_no,
+              p.insurance_valid_till AS valid_till, p.registered_at AS at
+         FROM patients p
+        WHERE p.active = 1 AND p.stage = 'registered' AND p.is_uninsured = 0
+        ORDER BY p.registered_at DESC, p.id DESC`
+    ).all(),
+  },
+});
+
+/**
+ * A number on the dashboard is a question — "which five?" — and this answers
+ * it without making anyone hunt through a list on another screen.
+ */
+router.get('/dashboard/detail', requireAuth, wrap((req, res) => {
+  const metric = str(req.query.metric, '');
+  // A null-prototype table, checked for an own property: "constructor" and
+  // "toString" are not metrics, and a request for one is a bad request rather
+  // than a five hundred.
+  const spec = Object.prototype.hasOwnProperty.call(DETAILS, metric) ? DETAILS[metric] : null;
+  if (!spec) throw badRequest(`Unknown dashboard metric: ${metric || '(none)'}`);
+
+  if (req.user.role !== 'admin' && !spec.roles.includes(req.user.role)) {
+    throw forbidden(`These details are restricted to: ${spec.roles.join(', ')}`);
+  }
+
+  const date = str(req.query.date) || today();
+  // A doctor's dashboard shows their own clinic, so their drill-down does too.
+  const scopeTo = spec.scopeToDoctor && req.user.role === 'doctor' ? req.user.id : null;
+  const rows = spec.rows(date, scopeTo);
+
+  // A long list is capped for the modal; the full screen is one click away.
+  const LIMIT = 200;
+  res.json({
+    metric, title: spec.title, caption: spec.caption,
+    route: spec.route, routeParams: spec.routeParams || null, routeLabel: spec.routeLabel,
+    total: rows.length,
+    rows: rows.slice(0, LIMIT),
+    truncated: rows.length > LIMIT,
   });
 }));
 
