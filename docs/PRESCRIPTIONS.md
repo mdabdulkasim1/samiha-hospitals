@@ -129,6 +129,7 @@ Everything the patient takes home carries the code and no doctor's name:
 | Document | Shows |
 |---|---|
 | **Prescription** | The code beside the prescription number, and a blank box for the stamp |
+| **Investigation request** | The ordering doctor's code, the tests and which sample each needs, the sample barcode once collected, and a blank box for whoever draws it |
 | **Diagnostic report** | The referring doctor's code beside the order number, and a blank box |
 | **Bill / tax invoice** | The treating doctor's code, taken from the visit or admission the bill was raised against |
 | **Payment receipt** | The same code as the bill it settles. The cashier who took the money still signs it — they are the clinic's own counter |

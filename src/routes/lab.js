@@ -43,13 +43,14 @@ router.get('/orders', viewRoles, wrap((req, res) => {
   const patientId = req.query.patientId ? int(req.query.patientId) : null;
   const rows = db.prepare(
     `SELECT o.*, p.uhid, (p.first_name || ' ' || COALESCE(p.last_name,'')) AS patient_name,
-            p.age_years, p.gender, u.name AS doctor_name, v.visit_no, a.ip_no,
+            p.age_years, p.gender, u.name AS doctor_name, dp.doctor_code, v.visit_no, a.ip_no,
             (SELECT COUNT(*) FROM lab_order_items i WHERE i.order_id = o.id) AS item_count,
             (SELECT GROUP_CONCAT(test_name, ', ') FROM lab_order_items i WHERE i.order_id = o.id) AS tests,
             (SELECT COALESCE(SUM(price),0) FROM lab_order_items i WHERE i.order_id = o.id) AS total_price
        FROM lab_orders o
        JOIN patients p ON p.id = o.patient_id
        LEFT JOIN users u ON u.id = o.doctor_id
+       LEFT JOIN doctor_profiles dp ON dp.user_id = o.doctor_id
        LEFT JOIN visits v ON v.id = o.visit_id
        LEFT JOIN admissions a ON a.id = o.admission_id
       WHERE (? IS NULL OR o.status = ?) AND (? IS NULL OR o.visit_id = ?) AND (? IS NULL OR o.patient_id = ?)
@@ -66,15 +67,23 @@ router.get('/orders/:id', viewRoles, wrap((req, res) => {
   const id = int(req.params.id);
   const order = db.prepare(
     `SELECT o.*, p.uhid, (p.first_name || ' ' || COALESCE(p.last_name,'')) AS patient_name,
-            p.age_years, p.gender, p.whatsapp, p.phone, u.name AS doctor_name, v.visit_no
+            p.age_years, p.gender, p.whatsapp, p.phone, p.allergies,
+            u.name AS doctor_name, dp.doctor_code, v.visit_no, a.ip_no
        FROM lab_orders o JOIN patients p ON p.id = o.patient_id
-       LEFT JOIN users u ON u.id = o.doctor_id LEFT JOIN visits v ON v.id = o.visit_id
+       LEFT JOIN users u ON u.id = o.doctor_id
+       LEFT JOIN doctor_profiles dp ON dp.user_id = o.doctor_id
+       LEFT JOIN visits v ON v.id = o.visit_id
+       LEFT JOIN admissions a ON a.id = o.admission_id
       WHERE o.id = ?`
   ).get(id);
   if (!order) throw notFound('Order not found');
+  // `sample_type` lives on the test, and the collection counter needs it on the
+  // requisition to know which tube to draw.
   order.items = db.prepare(
-    `SELECT i.*, ru.name AS result_by_name, vu.name AS verified_by_name
+    `SELECT i.*, t.sample_type, t.category, t.tat_hours,
+            ru.name AS result_by_name, vu.name AS verified_by_name
        FROM lab_order_items i
+       LEFT JOIN lab_tests t ON t.id = i.test_id
        LEFT JOIN users ru ON ru.id = i.result_by
        LEFT JOIN users vu ON vu.id = i.verified_by
       WHERE i.order_id = ? ORDER BY i.id`

@@ -341,6 +341,16 @@ test('printed sheets carry the code and never the doctor', async () => {
     { results: [{ itemId: items[0].id, value: '12' }] }, 'admin');
   await api('POST', `/api/lab/orders/${order.id}/verify`, {}, 'admin');
 
+  // The order carries it from the moment it is placed — the requisition slip is
+  // printed before there is any result to report.
+  const placed = (await api('GET', `/api/lab/orders/${order.id}`, undefined, 'admin')).body;
+  assert.match(placed.doctor_code, /^SPC-[A-Z]{3}-\d{3}$/);
+  assert.ok(placed.items.every((i) => 'sample_type' in i),
+    'the collection counter is told which tube to draw');
+  const listed = (await api('GET', '/api/lab/orders', undefined, 'admin')).body.rows
+    .find((r) => r.id === order.id);
+  assert.strictEqual(listed.doctor_code, placed.doctor_code);
+
   const report = (await api('GET', `/api/lab/orders/${order.id}/report`, undefined, 'admin')).body;
   assert.match(report.doctor_code, /^SPC-[A-Z]{3}-\d{3}$/);
   assert.strictEqual(report.doctor_code,

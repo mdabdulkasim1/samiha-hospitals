@@ -42,7 +42,9 @@
         { label: 'Patient', render: (o) => `<b>${UI.esc(o.patient_name)}</b><div class="muted small">${UI.esc(o.uhid)} · ${UI.esc(o.age_years || '—')}${UI.esc((o.gender || '').charAt(0).toUpperCase())}</div>` },
         { label: 'Source', render: (o) => UI.esc(o.ip_no || o.visit_no || '—') },
         { label: 'Tests', render: (o) => `<div class="small">${UI.esc(o.tests || '')}</div>` },
-        { label: 'Doctor', render: (o) => UI.esc(o.doctor_name || '—') },
+        { label: 'Ordered by', render: (o) => o.doctor_code
+          ? `<code>${UI.esc(o.doctor_code)}</code><div class="muted small">${UI.esc(o.doctor_name || '')}</div>`
+          : UI.esc(o.doctor_name || '—') },
         { label: 'Status', render: (o) => UI.statusBadge(o.status) },
         { label: 'Ordered', render: (o) => UI.esc(UI.ago(o.ordered_at)) },
         { label: 'Amount', num: true, render: (o) => UI.money(o.total_price) },
@@ -75,7 +77,8 @@
           <div>${UI.statusBadge(o.status)}
             ${o.priority !== 'routine' ? UI.badge(o.priority.toUpperCase(), o.priority === 'stat' ? 'danger' : 'warn') : ''}
             ${UI.badge(o.uhid, 'teal')}</div>
-          <span class="muted small">Ordered ${UI.dateTime(o.ordered_at)} by ${UI.esc(o.doctor_name || '—')}</span>
+          <span class="muted small">Ordered ${UI.dateTime(o.ordered_at)} by
+            ${o.doctor_code ? `<code>${UI.esc(o.doctor_code)}</code> ` : ''}${UI.esc(o.doctor_name || '—')}</span>
         </div>
         ${o.clinical_notes ? `<div class="alert info"><b>Clinical notes:</b> ${UI.esc(o.clinical_notes)}</div>` : ''}
         ${o.samples.length ? `<div class="alert ok"><b>Sample:</b> <code>${UI.esc(o.samples[0].barcode)}</code>
@@ -85,6 +88,7 @@
           <th>Test</th><th>Result</th><th>Unit</th><th>Reference</th><th>Flag</th><th>Status</th>
         </tr></thead><tbody>${rows}</tbody></table></div>`,
       footer: `<button class="btn ghost" data-act="__close">Close</button>
+        <button class="btn ghost" data-act="requisition">Print the order</button>
         ${['result_entered','verified','reported'].includes(o.status) ? '<button class="btn ghost" data-act="print">Print report</button>' : ''}
         ${canEdit && o.status === 'ordered' ? '<button class="btn teal" data-act="collect">Collect sample</button>' : ''}
         ${canEdit && o.status === 'sample_collected' ? '<button class="btn teal" data-act="start">Start processing</button>' : ''}
@@ -93,6 +97,7 @@
 
       async onAction(act, modal) {
         if (act === 'print') return printReport(o);
+        if (act === 'requisition') { printRequisition(o); return 'keep'; }
         if (act === 'collect') {
           const r = await API.post(`/api/lab/orders/${id}/collect`, { sampleType: 'blood' });
           UI.ok(`Sample collected — barcode ${r.barcode}.`);
@@ -116,6 +121,109 @@
         APP.reload();
       },
     });
+  }
+
+  /**
+   * The test order itself — the requisition the patient carries to the sample
+   * counter, and the slip that goes with a sample sent out to a reference lab.
+   *
+   * Same form as the report and the prescription: the polyclinic's name and
+   * address at the top, the tests in the middle, the ordering doctor as their
+   * code and never by name, and a blank box for whoever collects the sample to
+   * sign. Nothing about money is on it — the patient settles at the counter.
+   */
+  function printRequisition(o) {
+    const c = APP.clinic || {};
+    const age = o.age_years ? `${o.age_years} yrs` : '—';
+    const sample = o.samples && o.samples[0];
+
+    UI.print(`
+      <style>
+        @page { size: A5 portrait; margin: 9mm; }
+        .rq { width: 128mm; margin: 0 auto; font-family: Georgia, "Times New Roman", serif;
+              color: #16232B; font-size: 11px; }
+        .rq-head { text-align: center; border-bottom: 2px solid #9E1B34; padding-bottom: 6px; }
+        .rq-head .clinic { font-size: 17px; font-weight: 700; letter-spacing: .5px; color: #9E1B34; }
+        .rq-head .tag { font-size: 8px; letter-spacing: 1.4px; text-transform: uppercase; color: #176B7C; margin-top: 2px; }
+        .rq-head .addr { font-size: 9.5px; color: #43555F; margin-top: 3px; }
+        .rq-title { margin-top: 6px; font-size: 11px; font-weight: 700; letter-spacing: 2.4px;
+                    text-transform: uppercase; color: #176B7C; }
+        .rq-patient { display: flex; flex-wrap: wrap; gap: 3px 16px; padding: 8px 0;
+          border-bottom: 1px dashed #B9C6CC; font-size: 10.5px; }
+        .rq-urgent { margin-top: 6px; font-weight: 700; color: #B03A2E; font-size: 11px;
+          letter-spacing: .08em; text-transform: uppercase; }
+        table.rq-tests { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 8px; }
+        table.rq-tests th { text-align: left; font-size: 8.5px; letter-spacing: .06em; text-transform: uppercase;
+          color: #74858E; border-bottom: 1px solid #16232B; padding: 0 4px 3px; font-weight: 600; }
+        table.rq-tests td { padding: 5px 4px; border-bottom: 1px dotted #DFE6EA; vertical-align: top; }
+        table.rq-tests .n { width: 22px; color: #74858E; }
+        table.rq-tests .test { font-weight: 700; }
+        .rq-note { font-size: 10px; margin-top: 8px; }
+        .rq-note .k { color: #74858E; font-size: 8.5px; text-transform: uppercase; letter-spacing: .06em; }
+        .rq-barcode { margin-top: 10px; text-align: center; }
+        .rq-barcode .code { font-family: monospace; font-size: 10px; letter-spacing: .08em; }
+        .rq-sign { margin-top: 16px; display: flex; justify-content: flex-end; }
+        .rq-stamp { text-align: center; width: 58mm; }
+        .rq-stamp-box { height: 20mm; border: 1px dashed #B9C6CC; border-radius: 3px; }
+        .rq-stamp-label { margin-top: 3px; font-size: 8.5px; color: #74858E;
+          letter-spacing: .06em; text-transform: uppercase; }
+        .rq-foot { margin-top: 12px; border-top: 1px solid #DFE6EA; padding-top: 5px;
+          font-size: 8.5px; color: #74858E; text-align: center; }
+        @media screen { body { background: #eef1f3; padding: 14px 0; }
+          .rq { background: #fff; padding: 9mm; box-shadow: 0 2px 14px rgba(0,0,0,.15); } }
+      </style>
+      <div class="rq">
+        <div class="rq-head">
+          <div class="clinic">${UI.esc(c.name || 'SAMIHA POLYCLINIC & DIAGNOSTICS')}</div>
+          <div class="tag">Care • Compassion • Commitment</div>
+          <div class="addr">${UI.esc(c.address || '')}${c.phone ? ' · ' + UI.esc(c.phone) : ''}</div>
+          <div class="rq-title">Investigation Request</div>
+        </div>
+
+        <div class="rq-patient">
+          <span><b>${UI.esc(o.patient_name)}</b></span>
+          <span>${UI.esc(age)} · ${UI.esc(UI.titleise(o.gender || '—'))}</span>
+          <span>UHID ${UI.esc(o.uhid)}</span>
+          <span>${UI.esc(UI.dateTime(o.ordered_at))}</span>
+          <span>${UI.esc(o.order_no)}${o.doctor_code ? ' · Ordered by ' + UI.esc(o.doctor_code) : ''}</span>
+          ${o.visit_no || o.ip_no ? `<span>${UI.esc(o.visit_no || o.ip_no)}</span>` : ''}
+        </div>
+
+        ${o.priority && o.priority !== 'routine'
+          ? `<div class="rq-urgent">${UI.esc(o.priority)} — process ahead of the routine queue</div>` : ''}
+        ${o.allergies ? `<div class="rq-urgent">Allergic to: ${UI.esc(o.allergies)}</div>` : ''}
+
+        <table class="rq-tests">
+          <thead><tr><th></th><th>Investigation requested</th><th>Sample</th></tr></thead>
+          <tbody>${o.items.map((i, n) => `<tr>
+            <td class="n">${n + 1}.</td>
+            <td class="test">${UI.esc(i.test_name)}</td>
+            <td>${UI.esc(i.sample_type || '')}</td>
+          </tr>`).join('')}</tbody>
+        </table>
+
+        ${o.clinical_notes ? `<div class="rq-note">
+          <span class="k">Clinical notes</span><br>${UI.esc(o.clinical_notes)}</div>` : ''}
+
+        ${sample ? `<div class="rq-barcode">
+          ${window.Barcode ? Barcode.svg(sample.barcode, { module: 1.4, height: 34, fontSize: 9 })
+                           : `<div class="code">${UI.esc(sample.barcode)}</div>`}
+          <div class="rq-note">Sample collected ${UI.esc(UI.dateTime(sample.collected_at))}</div>
+        </div>` : `<div class="rq-note"><span class="k">Sample</span><br>Not yet collected —
+          hand this slip in at the collection counter.</div>`}
+
+        <div class="rq-sign">
+          <div class="rq-stamp">
+            <div class="rq-stamp-box"></div>
+            <div class="rq-stamp-label">Collected by · stamp &amp; signature</div>
+          </div>
+        </div>
+
+        <div class="rq-foot">
+          Fasting samples must be taken before any food or drink other than water.
+          Bring this slip when you come to collect the report.
+        </div>
+      </div>`, `Order ${o.order_no}`);
   }
 
   /**
@@ -220,4 +328,5 @@
   }
   // Exposed so the browser checks can print a report without hunting for a button.
   window.__printReport = printReport;
+  window.__printRequisition = printRequisition;
 })();
