@@ -209,8 +209,11 @@
             placeholder: 'e.g. spouse, son, friend' })}
         </div>
         <div class="grid c2">
-          ${UI.field({ name: 'idType', label: 'Photo ID type', value: v('id_type'),
-            options: ['', 'Aadhaar', 'PAN', 'Voter ID', 'Passport', 'Driving licence'] })}
+          ${UI.field({ name: 'aadhaarNumber', label: 'Aadhaar number', value: v('aadhaar_number'),
+            placeholder: '12 digits',
+            hint: 'Checked against its own check digit. Only the last four are ever printed.' })}
+          ${UI.field({ name: 'idType', label: 'Other photo ID', value: v('id_type'),
+            options: ['', 'PAN', 'Voter ID', 'Passport', 'Driving licence', 'Ration card'] })}
           ${UI.field({ name: 'idNumber', label: 'ID number', value: v('id_number') })}
         </div>
       </fieldset>

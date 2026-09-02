@@ -13,6 +13,50 @@
 (function () {
   'use strict';
 
+  /**
+   * A medicine as it should read on a prescription. The clinic's own formulary
+   * names carry the strength already ("Paracetamol 500 mg"), so adding it
+   * again would print "Dolo 650 650 mg".
+   */
+  /**
+   * The BMI bands used in India, which are not the WHO ones.
+   *
+   * South Asians carry more visceral fat and develop diabetes and heart
+   * disease at a lower BMI, so the national guidelines cut overweight at 23
+   * and obesity at 25 rather than 25 and 30. Printing a WHO band would tell a
+   * patient at 24 that they are in the clear when they are not.
+   */
+  function bmiBand(bmi) {
+    const n = Number(bmi) || 0;
+    if (!n) return '';
+    if (n < 18.5) return 'underweight';
+    if (n < 23) return 'normal';
+    if (n < 25) return 'overweight';
+    return 'obese';
+  }
+
+  /**
+   * Aadhaar, printed the only way it should be: all but the last four hidden.
+   *
+   * A prescription is carried through a waiting room, left on a counter and
+   * kept in a drawer. The number identifies its holder to a bank and to the
+   * ration shop, and a clinic has no business spelling it out on paper it
+   * hands over. The last four are enough to confirm the right record.
+   */
+  function maskAadhaar(value) {
+    const raw = String(value || '').replace(/[\s-]/g, '');
+    if (!/^\d{12}$/.test(raw)) return '';
+    return `XXXX XXXX ${raw.slice(8)}`;
+  }
+
+  function drugLabel(drug) {
+    const name = String(drug.name || '').trim();
+    const strength = String(drug.strength || '').trim();
+    if (!strength) return name;
+    const squash = (x) => x.toLowerCase().replace(/\s+/g, '');
+    return squash(name).endsWith(squash(strength)) ? name : `${name} ${strength}`;
+  }
+
   const ROUTES = ['oral', 'topical', 'inhalation', 'eye', 'ear', 'nasal', 'iv', 'im', 'sc', 'rectal'];
 
   /*
@@ -88,6 +132,8 @@
   async function open(patient, context = {}) {
     const drugs = await API.get('/api/pharmacy/drugs?limit=500');
     const lines = [];
+    // Coded diagnoses, in order; the first is the primary.
+    const diagnoses = [];
     // The sheet, once saved. Signing and printing act on this rather than
     // creating a second prescription for the same consultation.
     let saved = null;
@@ -112,11 +158,24 @@
         <form id="rx-head">
           <div class="grid c2">
             ${UI.field({ name: 'complaints', label: 'Complaints', placeholder: 'Fever 3 days, dry cough' })}
-            ${UI.field({ name: 'diagnosis', label: 'Diagnosis', placeholder: 'Acute viral pharyngitis' })}
+            ${UI.field({ name: 'findings', label: 'Examination findings',
+              placeholder: 'Throat congested, chest clear' })}
           </div>
-          ${UI.field({ name: 'findings', label: 'Examination findings',
-            placeholder: 'Throat congested, chest clear, BP 124/80' })}
         </form>
+
+        <div class="card"><div class="card-head"><h3>Diagnosis</h3>
+          <span class="muted small">Coded, so it can be claimed and counted later</span></div>
+          <div class="card-body">
+            <div class="search-row">
+              <input type="search" id="dx-q" placeholder="Search a diagnosis or an ICD-10 code…"
+                autocomplete="off">
+            </div>
+            <div id="dx-results"></div>
+            <div id="dx-list" class="mt"></div>
+            ${UI.field({ name: 'diagnosis', label: 'Anything the codes do not cover',
+              placeholder: 'In your own words — printed under the coded list' })}
+          </div>
+        </div>
 
         <div class="card"><div class="card-head"><h3>℞ Medicines</h3>
           <span class="muted small">From the clinic formulary — stock shown as you type</span></div>
@@ -148,6 +207,69 @@
         const linesHost = modal.querySelector('#rx-lines');
         const resultsHost = modal.querySelector('#rx-results');
         const search = modal.querySelector('#rx-q');
+
+        /* ---------------------------------------------------------- diagnosis
+         * Coded, because a diagnosis written out in a doctor's own words
+         * cannot be claimed against, counted, or looked up a year later. The
+         * first one added is the primary — the complaint the visit was for —
+         * and the doctor can move another into that place.
+         */
+        const dxSearch = modal.querySelector('#dx-q');
+        const dxResults = modal.querySelector('#dx-results');
+        const dxHost = modal.querySelector('#dx-list');
+
+        const drawDx = () => {
+          dxHost.innerHTML = diagnoses.length ? `
+            <table class="dx-table"><tbody>${diagnoses.map((d, i) => `<tr>
+              <td>${i === 0
+                ? UI.badge('Primary', 'crimson')
+                : `<button type="button" class="btn ghost sm" data-dx-primary="${i}"
+                     title="Make this the primary diagnosis">Secondary</button>`}</td>
+              <td><code>${UI.esc(d.code || '—')}</code></td>
+              <td><b>${UI.esc(d.title)}</b></td>
+              <td class="num"><button type="button" class="btn ghost sm" data-dx-rm="${i}">×</button></td>
+            </tr>`).join('')}</tbody></table>`
+            : '<div class="muted small">No diagnosis coded yet — search above.</div>';
+
+          dxHost.querySelectorAll('[data-dx-rm]').forEach((b) => b.addEventListener('click', () => {
+            diagnoses.splice(Number(b.dataset.dxRm), 1); drawDx();
+          }));
+          dxHost.querySelectorAll('[data-dx-primary]').forEach((b) => b.addEventListener('click', () => {
+            const i = Number(b.dataset.dxPrimary);
+            diagnoses.unshift(diagnoses.splice(i, 1)[0]);
+            drawDx();
+          }));
+        };
+
+        let dxTimer;
+        dxSearch.addEventListener('input', () => {
+          clearTimeout(dxTimer);
+          dxTimer = setTimeout(async () => {
+            const q = dxSearch.value.trim();
+            if (q.length < 2) return void (dxResults.innerHTML = '');
+            let hits = [];
+            try { hits = await API.get('/api/masters/icd' + API.qs({ q })); }
+            catch { hits = []; }
+            const already = new Set(diagnoses.map((d) => d.code));
+            dxResults.innerHTML = hits.length ? hits.slice(0, 8).map((h) => `
+              <button type="button" class="btn ghost sm block mb" data-dx-add="${UI.esc(h.code)}"
+                style="justify-content:space-between"${already.has(h.code) ? ' disabled' : ''}>
+                <span><code>${UI.esc(h.code)}</code> ${UI.esc(h.title)}</span>
+                <span class="muted small">${UI.esc(h.chapter || '')}</span>
+              </button>`).join('')
+              : `<div class="muted small">Nothing matched. Type it into
+                 “anything the codes do not cover” below instead.</div>`;
+
+            dxResults.querySelectorAll('[data-dx-add]').forEach((b) => b.addEventListener('click', () => {
+              const hit = hits.find((h) => h.code === b.dataset.dxAdd);
+              if (hit) diagnoses.push({ code: hit.code, title: hit.title });
+              dxSearch.value = '';
+              dxResults.innerHTML = '';
+              drawDx();
+            }));
+          }, 220);
+        });
+        drawDx();
 
         const allergyHit = (drug) => {
           const terms = (patient.allergies || '').split(/[,;]/).map((a) => a.trim().toLowerCase()).filter(Boolean);
@@ -262,7 +384,7 @@
           // writes, so the line starts there and is changed from there.
           lines.push({
             drugId: drug.id,
-            drugName: `${drug.name}${drug.strength ? ' ' + drug.strength : ''}`,
+            drugName: drugLabel(drug),
             form: drug.form, scheduleType: drug.schedule_type,
             allergy: allergyHit(drug),
             unit: unitFor(drug.form),
@@ -287,7 +409,7 @@
               `${dg.name} ${dg.generic_name || ''} ${dg.code}`.toLowerCase().includes(q)).slice(0, 8);
             resultsHost.innerHTML = hits.length ? hits.map((dg) => `
               <button type="button" class="btn ghost sm block mb" data-add="${dg.id}" style="justify-content:space-between">
-                <span>${UI.esc(dg.name)} ${UI.esc(dg.strength || '')}
+                <span>${UI.esc(drugLabel(dg))}
                   <span class="muted">${UI.esc(dg.generic_name || '')}</span>
                   ${['H', 'H1', 'X'].includes(String(dg.schedule_type || '').toUpperCase())
                     ? `<span class="badge warn">Sch ${UI.esc(dg.schedule_type)}</span>` : ''}</span>
@@ -323,6 +445,12 @@
         if (!['save', 'sign', 'print'].includes(act)) return;
         if (!lines.length) { UI.err('Add at least one medicine.'); return 'keep'; }
 
+        // Claimed here, while the browser is still handling the press. An
+        // unsaved sheet has to be saved before it can be printed, and by the
+        // time that returns the permission to open a window is gone.
+        const printWindow = act === 'print' && !saved
+          ? UI.openPrintWindow({ width: 620, height: 900 }) : null;
+
         const save = async () => {
           if (saved) return saved;
           const payload = {
@@ -331,6 +459,13 @@
             appointmentId: context.appointmentId || undefined,
             ...UI.formValues(modal.querySelector('#rx-head')),
             ...UI.formValues(modal.querySelector('#rx-foot')),
+            // The free-text line sits in the diagnosis card, outside both
+            // forms, so it is read on its own rather than swept up by one.
+            diagnosis: (modal.querySelector('[name=diagnosis]') || {}).value || '',
+            // First in the list is the primary; the rest follow it.
+            diagnoses: diagnoses.map((d, i) => ({
+              code: d.code, title: d.title, rank: i === 0 ? 'primary' : 'secondary',
+            })),
             items: lines.map((l) => ({
               drugId: l.drugId, route: l.route, durationDays: l.durationDays,
               quantity: l.quantity, instructions: l.instructions,
@@ -355,7 +490,10 @@
         };
 
         const sheet = await save();
-        if (!sheet) return 'keep';
+        if (!sheet) {
+          if (printWindow) printWindow.close();
+          return 'keep';
+        }
 
         if (act === 'save') {
           UI.ok(`Prescription ${sheet.rx_no} saved — the pharmacy can see it now.`);
@@ -382,7 +520,7 @@
           return 'keep';
         }
 
-        printSheet(saved);
+        printSheet(saved, printWindow);
         markSaved(modal, saved);
         return 'keep';
       },
@@ -515,9 +653,10 @@
    * the point: nobody should be able to read a doctor's details off a sheet
    * that leaves the building.
    */
-  function printSheet(sheet) {
+  function printSheet(sheet, windowRef = null) {
     const c = APP.clinic || {};
     const age = sheet.age_years ? `${sheet.age_years} yrs` : '—';
+    const vt = sheet.vitals || {};
 
     UI.printSheet(`${UI.sheetStyles()}
       <style>
@@ -534,6 +673,16 @@
         }
         .rx-sig { color: #5A6B74; font-size: 9.5px; margin-top: 2px; }
         .rx-key { margin-top: 5px; font-size: 8px; color: #8B9AA2; }
+        /* Diagnosis, coded. Ranked first because a claim reads that column
+           before it reads anything else, then the code, then the term. */
+        .sheet table.dx { width: 100%; border-collapse: collapse; margin-top: 3px; }
+        .sheet table.dx td { border: 0; padding: 2px 0; vertical-align: top; }
+        .dx-rank { width: 62px; font-size: 8px; letter-spacing: .06em; text-transform: uppercase;
+                   color: #8B9AA2; font-weight: 600; padding-top: 3px !important; }
+        .dx-code { width: 58px; font-weight: 700; font-variant-numeric: lining-nums tabular-nums; }
+        .dx-term { font-weight: 600; }
+        .dx-note { margin-top: 4px; color: #5A6B74; font-size: 9.5px; }
+        .bmi-band { color: #8B9AA2; font-weight: 500; font-size: 9px; }
         .rx-qty { font-weight: 600; }
       </style>
       <div class="sheet">
@@ -546,7 +695,16 @@
           </div>
           <div><div class="k">Age / Sex</div>
             <div class="v">${UI.esc(age)} · ${UI.esc(UI.titleise(sheet.gender || '—'))}</div></div>
+          <div><div class="k">Weight</div><div class="v">${vt.weight_kg
+            ? `${UI.esc(UI.num(vt.weight_kg, 1))} kg` : '—'}</div></div>
+          <div><div class="k">Height</div><div class="v">${vt.height_cm
+            ? `${UI.esc(UI.num(vt.height_cm, 0))} cm` : '—'}</div></div>
+          <div><div class="k">BMI</div><div class="v">${vt.bmi
+            ? `${UI.esc(UI.num(vt.bmi, 1))}<span class="bmi-band"> ${UI.esc(bmiBand(vt.bmi))}</span>`
+            : '—'}</div></div>
           <div><div class="k">UHID</div><div class="v">${UI.esc(sheet.uhid || '—')}</div></div>
+          <div><div class="k">Aadhaar</div><div class="v">${
+            maskAadhaar(sheet.aadhaar_number) || '—'}</div></div>
           <div><div class="k">Date</div><div class="v">${UI.esc(UI.date(sheet.created_at))}</div></div>
           <div><div class="k">Prescription</div><div class="v">${UI.esc(sheet.rx_no)}</div></div>
           <div><div class="k">Doctor code</div><div class="v">${UI.esc(sheet.doctor_code || '—')}</div></div>
@@ -557,8 +715,16 @@
           <p>${UI.esc(sheet.complaints)}</p></div>` : ''}
         ${sheet.findings ? `<div class="block"><div class="k">On examination</div>
           <p>${UI.esc(sheet.findings)}</p></div>` : ''}
-        ${sheet.diagnosis ? `<div class="block"><div class="k">Diagnosis</div>
-          <p class="strong">${UI.esc(sheet.diagnosis)}</p></div>` : ''}
+        ${(sheet.diagnoses && sheet.diagnoses.length) ? `<div class="block">
+          <div class="k">Diagnosis</div>
+          <table class="dx"><tbody>${sheet.diagnoses.map((d) => `<tr>
+            <td class="dx-rank">${d.rank === 'primary' ? 'Primary' : 'Secondary'}</td>
+            <td class="dx-code">${UI.esc(d.code || '—')}</td>
+            <td class="dx-term">${UI.esc(d.title)}</td></tr>`).join('')}
+          </tbody></table>
+          ${sheet.diagnosis ? `<p class="dx-note">${UI.esc(sheet.diagnosis)}</p>` : ''}
+        </div>` : (sheet.diagnosis ? `<div class="block"><div class="k">Diagnosis</div>
+          <p class="strong">${UI.esc(sheet.diagnosis)}</p></div>` : '')}
 
         <div class="rx-symbol">℞</div>
         <table>
@@ -610,7 +776,7 @@
           Not valid for medico-legal purposes. Take the medicines only as directed above
           and complete the full course.
         </div>
-      </div>`, `Prescription ${sheet.rx_no}`);
+      </div>`, `Prescription ${sheet.rx_no}`, windowRef);
   }
 
   /** Reprint an already-signed prescription. */

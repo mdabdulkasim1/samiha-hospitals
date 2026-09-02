@@ -391,14 +391,45 @@
      * `@page` rule of its own, which is exactly the sort of thing that quietly
      * turns an A5 prescription into an A4 one.
      */
-    print(html, title, { standalone = false, width = 900, height = 1000, watermark = true } = {}) {
+    /**
+     * Open a print window now, to be filled in later.
+     *
+     * A browser only allows window.open while it is still handling the click
+     * that asked for it. Anything that has to save before it can print — a
+     * prescription written and printed in one press — loses that permission
+     * during the await, and the window is silently blocked. So the window is
+     * claimed on the click and handed to print() when there is something to
+     * put in it.
+     */
+    openPrintWindow({ width = 900, height = 1000 } = {}) {
       const w = window.open('', '_blank', `width=${width},height=${height}`);
+      if (!w) { UI.err('Allow pop-ups to print this document.'); return null; }
+      w.document.write('<!DOCTYPE html><html><head><title>Preparing…</title></head>'
+        + '<body style="font:14px system-ui;padding:24px;color:#5A6B74">'
+        + 'Preparing the document…</body></html>');
+      w.document.close();   // finish it, so the real document can replace it
+      return w;
+    },
+
+    print(html, title, { standalone = false, width = 900, height = 1000, watermark = true,
+      windowRef = null } = {}) {
+      const w = windowRef || window.open('', '_blank', `width=${width},height=${height}`);
       if (!w) return UI.err('Allow pop-ups to print this document.');
+      // open() clears whatever is there — a holding page, or nothing at all.
+      w.document.open();
       w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(title)}</title>` +
         (standalone ? '' : '<link rel="stylesheet" href="/css/app.css">') +
         `</head><body>${watermark ? UI.watermark() : ''}${html}</body></html>`);
       w.document.close();
-      w.onload = () => { w.focus(); w.print(); };
+      /*
+       * Print once the document is ready. A re-opened document may finish
+       * loading before this line runs, and its load event will not fire again,
+       * so the state is checked rather than assumed — otherwise the window
+       * sits there showing the right page and never offers to print it.
+       */
+      const go = () => { try { w.focus(); w.print(); } catch { /* window closed */ } };
+      if (w.document.readyState === 'complete') setTimeout(go, 60);
+      else w.addEventListener('load', go, { once: true });
     },
 
     /**
@@ -427,9 +458,9 @@
     },
 
     /** Print one of the A5 sheets, which carry their own house style. */
-    printSheet(html, title) {
+    printSheet(html, title, windowRef = null) {
       // Roughly A5 at 96dpi, so the window itself is the shape of the page.
-      return UI.print(html, title, { standalone: true, width: 620, height: 900 });
+      return UI.print(html, title, { standalone: true, width: 620, height: 900, windowRef });
     },
     /**
      * The house style for the A5 sheets a patient takes home — the

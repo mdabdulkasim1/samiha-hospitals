@@ -371,7 +371,20 @@ for (const w of wards) {
 
 // -------------------------------------------------------------- ICD-10 seed
 const icd = [
+  // Infections — most of an OPD morning in this part of Tamil Nadu.
   ['A09', 'Infectious gastroenteritis and colitis, unspecified', 'Infectious diseases'],
+  ['A49.9', 'Bacterial infection, unspecified', 'Infectious diseases'],
+  ['A90', 'Dengue fever', 'Infectious diseases'],
+  ['A91', 'Dengue haemorrhagic fever', 'Infectious diseases'],
+  ['B54', 'Unspecified malaria', 'Infectious diseases'],
+  ['A01.0', 'Typhoid fever', 'Infectious diseases'],
+  ['B34.9', 'Viral infection, unspecified', 'Infectious diseases'],
+  ['B35.4', 'Tinea corporis', 'Infectious diseases'],
+  ['B37.9', 'Candidiasis, unspecified', 'Infectious diseases'],
+  ['B86', 'Scabies', 'Infectious diseases'],
+  ['A15.0', 'Tuberculosis of lung', 'Infectious diseases'],
+  ['B02.9', 'Zoster without complication', 'Infectious diseases'],
+  ['B00.9', 'Herpesviral infection, unspecified', 'Infectious diseases'],
   ['E11.9', 'Type 2 diabetes mellitus without complications', 'Endocrine'],
   ['E03.9', 'Hypothyroidism, unspecified', 'Endocrine'],
   ['E66.9', 'Obesity, unspecified', 'Endocrine'],
@@ -394,6 +407,90 @@ const icd = [
   ['R10.4', 'Other and unspecified abdominal pain', 'Symptoms'],
   ['Z00.0', 'General adult medical examination', 'Health status'],
   ['Z34.9', 'Supervision of normal pregnancy, unspecified', 'Health status'],
+
+  // Endocrine and metabolic
+  ['E11.9', 'Type 2 diabetes mellitus without complications', 'Endocrine'],
+  ['E11.65', 'Type 2 diabetes mellitus with hyperglycaemia', 'Endocrine'],
+  ['E10.9', 'Type 1 diabetes mellitus without complications', 'Endocrine'],
+  ['E78.5', 'Hyperlipidaemia, unspecified', 'Endocrine'],
+  ['E05.9', 'Thyrotoxicosis, unspecified', 'Endocrine'],
+  ['E55.9', 'Vitamin D deficiency, unspecified', 'Endocrine'],
+  ['E53.8', 'Deficiency of other specified B group vitamins', 'Endocrine'],
+
+  // Blood
+  ['D64.9', 'Anaemia, unspecified', 'Blood'],
+
+  // Circulatory
+  ['I10', 'Essential (primary) hypertension', 'Circulatory'],
+  ['I48.9', 'Atrial fibrillation and flutter, unspecified', 'Circulatory'],
+  ['I83.9', 'Varicose veins of lower extremities without ulcer', 'Circulatory'],
+
+  // Respiratory
+  ['J00', 'Acute nasopharyngitis (common cold)', 'Respiratory'],
+  ['J02.9', 'Acute pharyngitis, unspecified', 'Respiratory'],
+  ['J03.9', 'Acute tonsillitis, unspecified', 'Respiratory'],
+  ['J01.9', 'Acute sinusitis, unspecified', 'Respiratory'],
+  ['J18.9', 'Pneumonia, unspecified organism', 'Respiratory'],
+  ['J44.9', 'Chronic obstructive pulmonary disease, unspecified', 'Respiratory'],
+  ['J30.4', 'Allergic rhinitis, unspecified', 'Respiratory'],
+
+  // Digestive
+  ['K30', 'Functional dyspepsia', 'Digestive'],
+  ['K52.9', 'Non-infective gastroenteritis and colitis, unspecified', 'Digestive'],
+  ['K59.0', 'Constipation', 'Digestive'],
+  ['K64.9', 'Haemorrhoids, unspecified', 'Digestive'],
+  ['K08.8', 'Other specified disorders of teeth and supporting structures', 'Digestive'],
+  ['K12.1', 'Other forms of stomatitis', 'Digestive'],
+
+  // Skin
+  ['L23.9', 'Allergic contact dermatitis, unspecified cause', 'Skin'],
+  ['L50.9', 'Urticaria, unspecified', 'Skin'],
+  ['L03.9', 'Cellulitis, unspecified', 'Skin'],
+  ['L02.9', 'Cutaneous abscess, furuncle and carbuncle, unspecified', 'Skin'],
+  ['L70.9', 'Acne, unspecified', 'Skin'],
+
+  // Musculoskeletal
+  ['M25.5', 'Pain in joint', 'Musculoskeletal'],
+  ['M79.1', 'Myalgia', 'Musculoskeletal'],
+  ['M54.2', 'Cervicalgia', 'Musculoskeletal'],
+  ['M06.9', 'Rheumatoid arthritis, unspecified', 'Musculoskeletal'],
+  ['M10.9', 'Gout, unspecified', 'Musculoskeletal'],
+
+  // Genitourinary and pregnancy
+  ['N30.0', 'Acute cystitis', 'Genitourinary'],
+  ['N20.0', 'Calculus of kidney', 'Genitourinary'],
+  ['N92.0', 'Excessive and frequent menstruation with regular cycle', 'Genitourinary'],
+  ['N94.6', 'Dysmenorrhoea, unspecified', 'Genitourinary'],
+  ['O21.0', 'Mild hyperemesis gravidarum', 'Pregnancy'],
+  ['Z33.1', 'Pregnant state, incidental', 'Health status'],
+
+  // Eye and ear
+  ['H10.9', 'Conjunctivitis, unspecified', 'Eye'],
+  ['H66.9', 'Otitis media, unspecified', 'Ear'],
+  ['H61.2', 'Impacted cerumen', 'Ear'],
+
+  // Nervous system and mind
+  ['G43.9', 'Migraine, unspecified', 'Nervous system'],
+  ['F41.9', 'Anxiety disorder, unspecified', 'Mental health'],
+  ['F32.9', 'Depressive episode, unspecified', 'Mental health'],
+  ['G47.0', 'Insomnia', 'Nervous system'],
+
+  // Symptoms and signs
+  ['R11.0', 'Nausea', 'Symptoms'],
+  ['R05', 'Cough', 'Symptoms'],
+  ['R42', 'Dizziness and giddiness', 'Symptoms'],
+  ['R53.83', 'Other fatigue', 'Symptoms'],
+  ['R06.0', 'Dyspnoea', 'Symptoms'],
+
+  // Injury
+  ['T14.90', 'Injury, unspecified', 'Injury'],
+  ['S61.9', 'Open wound of wrist, hand and fingers, unspecified', 'Injury'],
+  ['T30.0', 'Burn of unspecified body region, unspecified degree', 'Injury'],
+  ['W57', 'Bitten or stung by non-venomous insect and other arthropods', 'Injury'],
+
+  // Health status
+  ['Z23', 'Encounter for immunisation', 'Health status'],
+  ['Z71.3', 'Dietary counselling and surveillance', 'Health status'],
 ];
 for (const [code, title, chapter] of icd) {
   db.prepare('INSERT OR IGNORE INTO icd_codes (code, title, chapter) VALUES (?, ?, ?)').run(code, title, chapter);

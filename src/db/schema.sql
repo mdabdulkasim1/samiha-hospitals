@@ -1188,3 +1188,27 @@ CREATE TABLE IF NOT EXISTS prescription_sheets (
 );
 CREATE INDEX IF NOT EXISTS idx_rx_sheet_doctor ON prescription_sheets(doctor_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_rx_sheet_patient ON prescription_sheets(patient_id);
+
+-- ---------------------------------------------------------------- diagnoses
+-- The diagnosis list a prescription carries, coded rather than written out.
+--
+-- A term in a doctor's own words cannot be counted, claimed against or looked
+-- up later; a code can. So each diagnosis keeps both — the ICD-10 code and the
+-- term it stands for — and the term is copied onto the sheet rather than
+-- joined to the master, because the wording of a code can be revised and a
+-- prescription already handed to a patient must not change afterwards.
+-- The code master itself already exists above as icd_codes(code, title,
+-- chapter); this only records which of them a prescription carries.
+--
+-- Ranked, because a bill and a claim both need to know which complaint the
+-- visit was actually for. Exactly one diagnosis on a sheet is primary.
+CREATE TABLE IF NOT EXISTS prescription_diagnoses (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  sheet_id   INTEGER NOT NULL REFERENCES prescription_sheets(id) ON DELETE CASCADE,
+  code       TEXT,
+  title      TEXT NOT NULL,
+  rank       TEXT NOT NULL DEFAULT 'secondary'
+               CHECK (rank IN ('primary','secondary')),
+  sort_order INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_rx_dx_sheet ON prescription_diagnoses(sheet_id, sort_order);

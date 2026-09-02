@@ -3,7 +3,7 @@ const express = require('express');
 const { db } = require('../db');
 const { wrap, notFound, conflict, badRequest } = require('../lib/http');
 const { requireRole } = require('../lib/auth');
-const { required, str, int, num, bool, phone, paging, oneOf } = require('../lib/validate');
+const { required, str, int, num, bool, phone, paging, oneOf, aadhaar } = require('../lib/validate');
 const { generate } = require('../lib/ids');
 const audit = require('../lib/audit');
 
@@ -31,6 +31,8 @@ function registrationMap(body) {
     emergency_name: str(body.emergencyName), emergency_phone: phone(body.emergencyPhone),
     emergency_relation: str(body.emergencyRelation),
     id_type: str(body.idType), id_number: str(body.idNumber),
+    // Validated, not just stored: a mistyped Aadhaar is somebody else's.
+    aadhaar_number: aadhaar(body.aadhaarNumber),
     blood_group: str(body.bloodGroup), marital_status: str(body.maritalStatus),
     // How this person relates to whoever else shares their mobile number.
     relationship_to_primary: str(body.relationshipToPrimary),

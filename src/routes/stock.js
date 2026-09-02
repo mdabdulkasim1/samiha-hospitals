@@ -446,6 +446,98 @@ router.get('/register/:drugId/movements', readRoles, wrap((req, res) => {
   res.json({ drug, batches, movements });
 }));
 
+/**
+ * Set what is actually on the shelf for one medicine.
+ *
+ * The register's "opening" is not a number anyone can edit: it is worked out
+ * from the ledger up to the start of the window, so writing over it would
+ * leave a total that no longer matches the movements it is supposed to
+ * summarise. What a pharmacist actually wants is to say how many there are,
+ * which is what this does — and it does it the same way a stock take does, by
+ * writing the difference to the ledger with a reason attached, so the register
+ * still reconciles afterwards and the change can be traced to whoever made it.
+ *
+ * Stock cannot exist apart from a batch, because a batch is what carries the
+ * expiry and the printed price. So the first count on a medicine that has none
+ * asks for a batch number, an expiry and the MRP off the pack, and later counts
+ * adjust the batch already there.
+ */
+router.post('/opening', stockRoles, wrap((req, res) => {
+  required(req.body, ['drugId', 'qty']);
+  const drugId = int(req.body.drugId);
+  const drug = db.prepare('SELECT * FROM drugs WHERE id = ? AND active = 1').get(drugId);
+  if (!drug) throw notFound('Medicine not found');
+
+  const qty = num(req.body.qty);
+  if (!(qty >= 0)) throw badRequest('A count cannot be negative.');
+
+  const batchNo = str(req.body.batchNo);
+  let batch = batchNo
+    ? db.prepare('SELECT * FROM drug_batches WHERE drug_id = ? AND batch_no = ?').get(drugId, batchNo)
+    : db.prepare(
+        `SELECT * FROM drug_batches WHERE drug_id = ?
+          ORDER BY (qty_available > 0) DESC, date(expiry_date) LIMIT 1`
+      ).get(drugId);
+
+  const out = db.transaction(() => {
+    if (!batch) {
+      // A new batch needs the two things only the pack can tell us.
+      for (const field of ['batchNo', 'expiryDate']) {
+        if (!str(req.body[field])) {
+          throw badRequest('A first count needs the batch number and expiry printed on the pack.');
+        }
+      }
+      const expiry = str(req.body.expiryDate);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(expiry)) throw badRequest('Expiry must be a date (YYYY-MM-DD).');
+      if (expiry <= today()) throw badRequest(`That batch expired on ${expiry} — do not take it into stock.`);
+
+      const mrp = num(req.body.mrp, drug.mrp || 0);
+      if (!(mrp > 0)) throw badRequest('Enter the MRP printed on the pack — a medicine with no price bills nothing.');
+      const info = db.prepare(
+        `INSERT INTO drug_batches (drug_id, batch_no, expiry_date, qty_received, qty_available,
+                                   mrp, purchase_price, supplier)
+         VALUES (?, ?, ?, 0, 0, ?, ?, ?)`
+      ).run(drugId, str(req.body.batchNo), expiry, mrp,
+            num(req.body.purchasePrice, drug.purchase_price || 0), str(req.body.supplier) || 'Opening stock');
+      batch = db.prepare('SELECT * FROM drug_batches WHERE id = ?').get(info.lastInsertRowid);
+
+      // The drug's default price follows the first pack that arrives, so the
+      // formulary stops reading zero the moment there is stock to sell.
+      if (!drug.mrp) db.prepare('UPDATE drugs SET mrp = ? WHERE id = ?').run(mrp, drugId);
+    } else if (req.body.mrp !== undefined && num(req.body.mrp) > 0) {
+      db.prepare('UPDATE drug_batches SET mrp = ? WHERE id = ?').run(num(req.body.mrp), batch.id);
+    }
+
+    const delta = round2(qty - batch.qty_available);
+    if (delta) {
+      db.prepare(
+        `UPDATE drug_batches
+            SET qty_available = ?,
+                qty_received = CASE WHEN ? > 0 THEN qty_received + ? ELSE qty_received END
+          WHERE id = ?`
+      ).run(qty, delta, delta, batch.id);
+      pharmacy.writeLedger({
+        drugId, batchId: batch.id, txnType: 'adjustment', qtyDelta: delta,
+        refType: 'opening_stock', refId: batch.id, userId: req.user.id,
+        notes: str(req.body.reason) || 'Counted on the shelf',
+      });
+    }
+    return { batchId: batch.id, delta };
+  })();
+
+  audit.log(req, 'set_stock', 'drug', drugId,
+    { batchId: out.batchId, to: qty, delta: out.delta, reason: str(req.body.reason) || null });
+
+  res.json({
+    drug: db.prepare('SELECT * FROM drugs WHERE id = ?').get(drugId),
+    batch: db.prepare('SELECT * FROM drug_batches WHERE id = ?').get(out.batchId),
+    delta: out.delta,
+    onHand: db.prepare(
+      'SELECT COALESCE(SUM(qty_available), 0) AS q FROM drug_batches WHERE drug_id = ?'
+    ).get(drugId).q,
+  });
+}));
+
 // ----------------------------------------------------------------- stocktake
 router.get('/takes', readRoles, wrap((req, res) => {
   const { limit, offset } = paging(req.query, 25);

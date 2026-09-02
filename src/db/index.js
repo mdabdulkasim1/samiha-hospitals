@@ -179,6 +179,14 @@ function migrate() {
   // and the invoice has to be able to show its working.
   ensureColumn('pharmacy_sale_items', 'discount', 'REAL NOT NULL DEFAULT 0');
 
+  /*
+   * The patient's Aadhaar. Kept apart from the generic photo-ID fields because
+   * it is the number every other record in India is matched on, it has a check
+   * digit worth validating, and what may be shown of it is not a matter of
+   * taste — see the masking on anything that gets printed.
+   */
+  ensureColumn('patients', 'aadhaar_number', 'TEXT');
+
   ensureColumn('drugs', 'category', 'TEXT');
   ensureColumn('drugs', 'pack_size', 'TEXT');
 

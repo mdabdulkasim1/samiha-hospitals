@@ -19,6 +19,22 @@ const pharmacy = require('../services/pharmacy');
 const audit = require('../lib/audit');
 
 const router = express.Router();
+
+/**
+ * A medicine as it should read on a prescription.
+ *
+ * A brand name does not carry its strength ("Dolo 650" is a brand, "650 mg" is
+ * the dose) but a generic formulary line often does, and appending the
+ * strength to a name that already ends in it gives "Dolo 650 650 mg". So it is
+ * added only when the name does not already say it.
+ */
+function drugLabel(drug) {
+  const name = String(drug.name || '').trim();
+  const strength = String(drug.strength || '').trim();
+  if (!strength) return name;
+  const squash = (s) => s.toLowerCase().replace(/\s+/g, '');
+  return squash(name).endsWith(squash(strength)) ? name : `${name} ${strength}`;
+}
 const prescriberRoles = requireRole('doctor');
 // The pharmacy and the desk read prescriptions; only a doctor writes one.
 const readerRoles = requireRole('doctor', 'pharmacy', 'nurse', 'reception');
@@ -70,7 +86,7 @@ function sheetOr404(id) {
             dp.qualification, dp.specialization, dp.reg_no, dp.room_no, dp.signature_line,
             dep.name AS department_name,
             p.uhid, p.first_name, p.last_name, p.age_years, p.gender, p.phone,
-            p.allergies, p.dob,
+            p.allergies, p.dob, p.aadhaar_number,
             v.visit_no
        FROM prescription_sheets s
        JOIN users u ON u.id = s.doctor_id
@@ -81,6 +97,38 @@ function sheetOr404(id) {
       WHERE s.id = ?`
   ).get(id);
   if (!sheet) throw notFound('Prescription not found');
+
+  /*
+   * The measurements as they stood when the prescription was written, not as
+   * they stand now. A dose worked out against a 12 kg child must still read
+   * against 12 kg when the sheet is reprinted a year later, so the reading
+   * taken nearest the sheet's own date is the one it carries.
+   */
+  const vitals = db.prepare(
+    `SELECT height_cm, weight_kg, bmi, bp_systolic, bp_diastolic, recorded_at
+       FROM vitals
+      WHERE patient_id = ? AND (height_cm IS NOT NULL OR weight_kg IS NOT NULL)
+        AND datetime(recorded_at) <= datetime(?, '+1 day')
+      ORDER BY datetime(recorded_at) DESC LIMIT 1`
+  ).get(sheet.patient_id, sheet.created_at) || null;
+
+  if (vitals) {
+    // A BMI recorded at the time is kept; otherwise it is worked out from the
+    // height and weight that were, rather than left blank.
+    if (!vitals.bmi && vitals.height_cm > 0 && vitals.weight_kg > 0) {
+      const m = vitals.height_cm / 100;
+      vitals.bmi = Math.round((vitals.weight_kg / (m * m)) * 10) / 10;
+    }
+  }
+  sheet.vitals = vitals;
+
+  // The coded diagnosis list. Older sheets have only the free-text line, which
+  // still prints — a prescription already issued is not rewritten.
+  sheet.diagnoses = db.prepare(
+    `SELECT code, title, rank FROM prescription_diagnoses
+      WHERE sheet_id = ? ORDER BY (rank = 'primary') DESC, sort_order, id`
+  ).all(sheet.id);
+
   return sheet;
 }
 
@@ -166,13 +214,42 @@ router.post('/', prescriberRoles, wrap((req, res) => {
           str(req.body.advice), str(req.body.followUpDate));
     const sheetId = info.lastInsertRowid;
 
+    /*
+     * The coded diagnoses. The term is copied onto the sheet rather than left
+     * to a join: the wording behind a code can be revised, and a prescription
+     * already in a patient's hand must not quietly change afterwards.
+     *
+     * Exactly one is primary. If the doctor marks none, the first is taken as
+     * the primary, because a claim and a bill both have to know what the visit
+     * was actually for and "none of them" is not an answer.
+     */
+    const diagnoses = Array.isArray(req.body.diagnoses) ? req.body.diagnoses : [];
+    const isPrimary = (d) => String(d.rank || '').toLowerCase() === 'primary';
+    // Whichever the doctor marked, or the first if they marked none.
+    const primaryAt = diagnoses.findIndex(isPrimary);
+    const primaryIdx = primaryAt === -1 ? 0 : primaryAt;
+
+    diagnoses.forEach((d, i) => {
+      const code = str(d.code) || null;
+      let title = str(d.title);
+      if (code && !title) {
+        const known = db.prepare('SELECT title FROM icd_codes WHERE code = ?').get(code);
+        title = known ? known.title : '';
+      }
+      if (!title) throw badRequest('A diagnosis needs a term, or a code we know the term for.');
+      db.prepare(
+        `INSERT INTO prescription_diagnoses (sheet_id, code, title, rank, sort_order)
+         VALUES (?, ?, ?, ?, ?)`
+      ).run(sheetId, code, title, i === primaryIdx ? 'primary' : 'secondary', i);
+    });
+
     for (const it of items) {
       let drug = null;
       if (it.drugId) {
         drug = db.prepare('SELECT * FROM drugs WHERE id = ? AND active = 1').get(int(it.drugId));
         if (!drug) throw notFound(`Medicine #${it.drugId} is not in the formulary.`);
       }
-      const name = drug ? `${drug.name}${drug.strength ? ' ' + drug.strength : ''}` : str(it.drugName);
+      const name = drug ? drugLabel(drug) : str(it.drugName);
       if (!name) throw badRequest('Every line needs a medicine.');
 
       const { slots, perDay, frequency } = doseSchedule(it);

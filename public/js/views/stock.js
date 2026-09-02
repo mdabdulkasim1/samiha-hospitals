@@ -554,15 +554,24 @@
         { label: 'Received', num: true, render: (r) => UI.num(r.inward) },
         { label: 'Issued', num: true, render: (r) => UI.num(r.outward) },
         { label: 'Closing', num: true, render: (r) => `<b>${UI.num(r.closing)}</b>` },
-        { label: 'On hand', num: true, render: (r) => r.on_hand <= r.reorder_level
-          ? `<b style="color:var(--danger)">${UI.num(r.on_hand)}</b>` : UI.num(r.on_hand) },
+        { label: 'On hand', num: true, render: (r) => (APP.can(['pharmacy'])
+          ? `<button type="button" class="linknum" data-set="${r.drug_id}"
+               title="Correct the count on the shelf"${r.on_hand <= r.reorder_level
+                 ? ' style="color:var(--danger);font-weight:700"' : ''}>${UI.num(r.on_hand)}</button>`
+          : (r.on_hand <= r.reorder_level
+            ? `<b style="color:var(--danger)">${UI.num(r.on_hand)}</b>` : UI.num(r.on_hand))) },
         { label: 'Expired', num: true, render: (r) => r.expired_qty
           ? `<b style="color:var(--danger)">${UI.num(r.expired_qty)}</b>` : '—' },
         { label: 'Value', num: true, render: (r) => money(r.stock_value) },
-        { label: '', render: (r) => `<button class="btn ghost sm" data-mv="${r.drug_id}">Movements</button>` },
+        { label: '', render: (r) => `${APP.can(['pharmacy'])
+          ? `<button class="btn ghost sm" data-set="${r.drug_id}">Set stock</button> ` : ''}` +
+          `<button class="btn ghost sm" data-mv="${r.drug_id}">Movements</button>` },
       ], data.rows, { emptyText: 'No medicine matched.' });
       body.querySelectorAll('[data-mv]').forEach((b) =>
         b.addEventListener('click', () => openMovements(Number(b.dataset.mv), params)));
+      body.querySelectorAll('[data-set]').forEach((b) =>
+        b.addEventListener('click', () => openSetStock(
+          data.rows.find((r) => r.drug_id === Number(b.dataset.set)), load)));
     };
 
     let t;
@@ -795,5 +804,79 @@
     await Promise.all([loadSheet(), loadPast()]);
   }
 
-  window.StockUI = { barcodes, purchases, register, stocktake, scanBox, printLabels, openLabelDialog, openMovements, openGrn };
+  /**
+   * Say how many of a medicine are actually on the shelf.
+   *
+   * This is the honest version of "edit the opening figure". Opening is worked
+   * out from the ledger and cannot be written over without the register
+   * ceasing to reconcile — so instead the pharmacist states the count, and the
+   * difference is posted as an adjustment with a reason on it, exactly as a
+   * stock take does. The register still adds up afterwards and the change has
+   * a name against it.
+   *
+   * A medicine with nothing on the shelf yet needs the batch and expiry off
+   * the pack, because stock without an expiry is stock nobody can safely sell.
+   */
+  async function openSetStock(row, refresh) {
+    if (!row) return;
+    let batches = [];
+    try {
+      const detail = await API.get(`/api/stock/register${API.qs({ drugId: row.drug_id })}`);
+      batches = (detail.rows && detail.rows[0] && detail.rows[0].batches) || [];
+    } catch { batches = []; }
+    // The register does not carry batches, so ask the counter list instead.
+    if (!batches.length) {
+      try {
+        const sheet = await API.get('/api/stock/takes/new/sheet' + API.qs({ q: row.code }));
+        batches = sheet.filter((b) => b.drug_id === row.drug_id);
+      } catch { batches = []; }
+    }
+    const known = batches[0] || null;
+
+    UI.modal({
+      title: `Stock on hand — ${row.name}`,
+      size: 'narrow',
+      body: `
+        <div class="alert info">The book says <b>${UI.num(row.on_hand)}</b>
+          ${row.strength ? UI.esc(row.strength) + ' ' : ''}${UI.esc(row.form || 'unit')}(s) on the shelf.
+          Enter what is really there; the difference is posted as an adjustment against your name.</div>
+        <form id="ss-form">
+          ${UI.field({ name: 'qty', label: 'Counted on the shelf', type: 'number',
+            min: '0', step: '1', value: row.on_hand, required: true })}
+          ${known
+            ? `<div class="muted small mb">Against batch <b>${UI.esc(known.batch_no)}</b>,
+                 expiring ${UI.esc(UI.date(known.expiry_date))}.</div>
+               <input type="hidden" name="batchNo" value="${UI.esc(known.batch_no)}">`
+            : `<div class="muted small mb">Nothing is on the shelf yet, so this is the first
+                 batch — take the details off the pack.</div>
+               <div class="grid c2">
+                 ${UI.field({ name: 'batchNo', label: 'Batch number', required: true })}
+                 ${UI.field({ name: 'expiryDate', label: 'Expiry', type: 'date', required: true })}
+               </div>
+               <div class="grid c2">
+                 ${UI.field({ name: 'mrp', label: 'MRP on the pack', type: 'number', step: '0.01',
+                   min: '0.01', value: row.mrp || '', required: true })}
+                 ${UI.field({ name: 'purchasePrice', label: 'Cost price', type: 'number',
+                   step: '0.01', min: '0', value: row.purchase_price || '' })}
+               </div>`}
+          ${UI.field({ name: 'reason', label: 'Reason', rows: 2,
+            placeholder: 'Opening stock, recount, damage, sample — whatever it was' })}
+        </form>`,
+      footer: `<button class="btn ghost" data-act="__close">Cancel</button>
+               <button class="btn" data-act="save">Save the count</button>`,
+      async onAction(act, modal) {
+        if (act !== 'save') return;
+        const form = modal.querySelector('#ss-form');
+        if (!form.reportValidity()) return 'keep';
+        const res = await API.post('/api/stock/opening',
+          { drugId: row.drug_id, ...UI.formValues(form) });
+        UI.ok(res.delta
+          ? `${row.name}: ${res.delta > 0 ? '+' : ''}${UI.num(res.delta)} — now ${UI.num(res.onHand)} on hand.`
+          : `${row.name} was already right at ${UI.num(res.onHand)}.`);
+        if (refresh) refresh();
+      },
+    });
+  }
+
+  window.StockUI = { barcodes, purchases, register, stocktake, scanBox, printLabels, openLabelDialog, openMovements, openGrn, openSetStock };
 })();
