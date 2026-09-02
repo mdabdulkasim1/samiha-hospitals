@@ -29,6 +29,29 @@ router.get('/drugs', rxRoles, wrap((req, res) => {
       WHERE d.active = 1 AND (d.name LIKE ? OR d.generic_name LIKE ? OR d.code LIKE ?)
       ORDER BY d.name LIMIT ? OFFSET ?`
   ).all(like, like, like, limit, offset);
+
+  /*
+   * What each medicine will actually be charged at, and out of which batches.
+   *
+   * A drug's own `mrp` is only a default for stock that arrived without one.
+   * What the customer pays is the MRP printed on the pack in front of them,
+   * which lives on the batch — and the counter takes the batches in expiry
+   * order, so a sale can straddle two packs at different prices. Sending the
+   * batch prices lets the till quote the figure the bill will actually carry
+   * rather than a list price that may be years out of date.
+   */
+  const batchesOf = db.prepare(
+    `SELECT id, batch_no, mrp, qty_available, expiry_date
+       FROM drug_batches
+      WHERE drug_id = ? AND qty_available > 0 AND date(expiry_date) >= date('now')
+      ORDER BY date(expiry_date), id`
+  );
+  for (const r of rows) {
+    r.batches = batchesOf.all(r.id).map((b) => ({
+      id: b.id, batchNo: b.batch_no, mrp: b.mrp || r.mrp, qty: b.qty_available, expiry: b.expiry_date,
+    }));
+    r.sale_mrp = r.batches.length ? r.batches[0].mrp : r.mrp;
+  }
   res.json(rows);
 }));
 
@@ -161,36 +184,19 @@ router.post('/dispense', requireRole('pharmacy'), wrap((req, res) => {
     ).run(billNo, patientId, visitId, admissionId, req.user.id);
     const saleId = saleInfo.lastInsertRowid;
 
-    let gross = 0;
-    let tax = 0;
+    // Allocate first, price second — a discount on the bill is shared across
+    // the lines, and each line's GST is charged on its own discounted value.
+    const lines = [];
     for (const it of items) {
       const drugId = int(it.drugId);
       const qty = num(it.qty);
       pharmacy.assertPositive(qty, `Quantity for drug #${drugId}`);
       const drug = db.prepare('SELECT * FROM drugs WHERE id = ?').get(drugId);
       if (!drug) throw notFound(`Drug #${drugId} not found`);
-
       for (const pick of pharmacy.allocate(drugId, qty)) {
         const unitPrice = pick.batch.mrp || drug.mrp;
-        const g = pharmacy.gstOnLine({ mrp: unitPrice, qty: pick.qty, taxPct: drug.tax_pct });
-        gross += g.taxable;
-        tax += g.tax;
-
-        db.prepare(
-          `INSERT INTO pharmacy_sale_items (sale_id, prescription_id, drug_id, batch_id, drug_name,
-                                            batch_no, expiry_date, qty, mrp, tax_pct, amount,
-                                            hsn, taxable, cgst, sgst)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-        ).run(saleId, int(it.prescriptionId) || null, drugId, pick.batch.id, drug.name,
-              pick.batch.batch_no, pick.batch.expiry_date, pick.qty, unitPrice, drug.tax_pct,
-              g.lineTotal, drug.hsn, g.taxable, g.cgst, g.sgst);
-
-        pharmacy.consume(pick.batch.id, pick.qty);
-        pharmacy.writeLedger({
-          drugId, batchId: pick.batch.id, txnType: admissionId ? 'ip_issue' : 'sale',
-          qtyDelta: -pick.qty, refType: 'pharmacy_sale', refId: saleId, userId: req.user.id,
-          notes: `Bill ${billNo}`,
-        });
+        lines.push({ drugId, drug, pick, unitPrice, prescriptionId: int(it.prescriptionId) || null,
+          listTotal: pharmacy.round2(unitPrice * pick.qty) });
       }
 
       if (it.prescriptionId) {
@@ -203,10 +209,46 @@ router.post('/dispense', requireRole('pharmacy'), wrap((req, res) => {
       }
     }
 
-    const discount = num(req.body.discount, 0);
-    // Dispensed medicines go onto the visit invoice, which is settled to the
-    // paisa at the cashier — so no rupee rounding here.
-    const net = pharmacy.round2(gross + tax - discount);
+    const asked = num(req.body.discount, 0);
+    if (asked < 0) throw badRequest('A discount cannot be negative.');
+    const mrpTotal = pharmacy.round2(lines.reduce((a, l) => a + l.listTotal, 0));
+    if (asked > mrpTotal) {
+      throw badRequest(`That is more than the bill. At most ${mrpTotal.toFixed(2)} can be taken off.`);
+    }
+    const shares = pharmacy.apportion(lines.map((l) => l.listTotal), asked);
+
+    let gross = 0;
+    let tax = 0;
+    let discount = 0;
+    lines.forEach((l, idx) => {
+      const g = pharmacy.gstOnLine({
+        mrp: l.unitPrice, qty: l.pick.qty, taxPct: l.drug.tax_pct, discount: shares[idx],
+      });
+      gross += g.taxable;
+      tax += g.tax;
+      discount = pharmacy.round2(discount + g.discount);
+
+      db.prepare(
+        `INSERT INTO pharmacy_sale_items (sale_id, prescription_id, drug_id, batch_id, drug_name,
+                                          batch_no, expiry_date, qty, mrp, tax_pct, amount, discount,
+                                          hsn, taxable, cgst, sgst)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(saleId, l.prescriptionId, l.drugId, l.pick.batch.id, l.drug.name,
+            l.pick.batch.batch_no, l.pick.batch.expiry_date, l.pick.qty, l.unitPrice,
+            l.drug.tax_pct, g.lineTotal, g.discount, l.drug.hsn, g.taxable, g.cgst, g.sgst);
+
+      pharmacy.consume(l.pick.batch.id, l.pick.qty);
+      pharmacy.writeLedger({
+        drugId: l.drugId, batchId: l.pick.batch.id, txnType: admissionId ? 'ip_issue' : 'sale',
+        qtyDelta: -l.pick.qty, refType: 'pharmacy_sale', refId: saleId, userId: req.user.id,
+        notes: `Bill ${billNo}`,
+      });
+    });
+
+    // Taxable plus tax is already net of the discount. This bill is settled to
+    // the paisa — at the counter for an out-patient, on the hospital bill for
+    // an in-patient — so there is no rupee rounding here.
+    const net = pharmacy.round2(gross + tax);
     db.prepare('UPDATE pharmacy_sales SET gross = ?, discount = ?, tax = ?, net = ? WHERE id = ?')
       .run(pharmacy.round2(gross), discount, pharmacy.round2(tax), net, saleId);
     return { saleId, net };
@@ -312,39 +354,65 @@ router.post('/counter-sale', requireRole('pharmacy'), wrap((req, res) => {
     ).run(billNo, str(req.body.customerName), phone(req.body.customerPhone), rxReference, req.user.id);
     const saleId = saleInfo.lastInsertRowid;
 
-    let gross = 0;
-    let tax = 0;
+    /*
+     * Allocate first, bill second. A discount given on the whole bill has to be
+     * shared out across the lines before any of them can be priced, because
+     * each line's GST is charged on its own discounted value — so nothing can
+     * be written until every line is known.
+     */
+    const lines = [];
     for (const it of items) {
       const drugId = int(it.drugId);
       const qty = num(it.qty);
       pharmacy.assertPositive(qty, `Quantity for medicine #${drugId}`);
       const drug = db.prepare('SELECT * FROM drugs WHERE id = ?').get(drugId);
-
       for (const pick of pharmacy.allocate(drugId, qty)) {
         const unitPrice = pick.batch.mrp || drug.mrp;
-        // MRP already contains the GST, so it is extracted, never added on top.
-        const g = pharmacy.gstOnLine({ mrp: unitPrice, qty: pick.qty, taxPct: drug.tax_pct });
-        gross += g.taxable;
-        tax += g.tax;
-
-        db.prepare(
-          `INSERT INTO pharmacy_sale_items (sale_id, drug_id, batch_id, drug_name, batch_no,
-                                            expiry_date, qty, mrp, tax_pct, amount, hsn, taxable, cgst, sgst)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-        ).run(saleId, drugId, pick.batch.id, drug.name, pick.batch.batch_no, pick.batch.expiry_date,
-              pick.qty, unitPrice, drug.tax_pct, g.lineTotal, drug.hsn, g.taxable, g.cgst, g.sgst);
-
-        pharmacy.consume(pick.batch.id, pick.qty);
-        pharmacy.writeLedger({
-          drugId, batchId: pick.batch.id, txnType: 'sale', qtyDelta: -pick.qty,
-          refType: 'counter_sale', refId: saleId, userId: req.user.id,
-          notes: `Counter bill ${billNo}`,
-        });
+        lines.push({ drugId, drug, pick, unitPrice,
+          listTotal: pharmacy.round2(unitPrice * pick.qty) });
       }
     }
 
-    const discount = money(req.body.discount, 0);
-    const payable = pharmacy.round2(gross + tax - discount);
+    const asked = money(req.body.discount, 0);
+    if (asked < 0) throw badRequest('A discount cannot be negative.');
+    const mrpTotal = pharmacy.round2(lines.reduce((a, l) => a + l.listTotal, 0));
+    if (asked > mrpTotal) {
+      throw badRequest(`That is more than the bill. At most ${mrpTotal.toFixed(2)} can be taken off.`);
+    }
+    const shares = pharmacy.apportion(lines.map((l) => l.listTotal), asked);
+
+    let gross = 0;
+    let tax = 0;
+    let discount = 0;
+    lines.forEach((l, idx) => {
+      // MRP already contains the GST, so it is extracted, never added on top —
+      // and it is extracted from what the customer actually pays for the line.
+      const g = pharmacy.gstOnLine({
+        mrp: l.unitPrice, qty: l.pick.qty, taxPct: l.drug.tax_pct, discount: shares[idx],
+      });
+      gross += g.taxable;
+      tax += g.tax;
+      discount = pharmacy.round2(discount + g.discount);
+
+      db.prepare(
+        `INSERT INTO pharmacy_sale_items (sale_id, drug_id, batch_id, drug_name, batch_no,
+                                          expiry_date, qty, mrp, tax_pct, amount, discount,
+                                          hsn, taxable, cgst, sgst)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(saleId, l.drugId, l.pick.batch.id, l.drug.name, l.pick.batch.batch_no,
+            l.pick.batch.expiry_date, l.pick.qty, l.unitPrice, l.drug.tax_pct, g.lineTotal,
+            g.discount, l.drug.hsn, g.taxable, g.cgst, g.sgst);
+
+      pharmacy.consume(l.pick.batch.id, l.pick.qty);
+      pharmacy.writeLedger({
+        drugId: l.drugId, batchId: l.pick.batch.id, txnType: 'sale', qtyDelta: -l.pick.qty,
+        refType: 'counter_sale', refId: saleId, userId: req.user.id,
+        notes: `Counter bill ${billNo}`,
+      });
+    });
+
+    // Taxable plus tax is already net of the discount, so nothing more comes off.
+    const payable = pharmacy.round2(gross + tax);
     // Thermal bills are settled in cash, so the total is rounded to the rupee
     // and the adjustment is declared on the invoice rather than hidden.
     const net = Math.round(payable);

@@ -23,6 +23,9 @@
     tpl(strings, ...values) {
       return strings.reduce((out, s, i) => out + s + (i < values.length ? esc(values[i]) : ''), '');
     },
+    /** Money is rounded the same way here as it is on the server. */
+    round2(v) { return Math.round((Number(v) || 0) * 100) / 100; },
+
     money(v) {
       const n = Number(v || 0);
       return (window.APP && APP.clinic ? APP.clinic.currencySymbol : '₹') +

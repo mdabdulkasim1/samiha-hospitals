@@ -21,21 +21,59 @@ const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
  * counter. Set MRP_INCLUDES_GST=false only if a supplier's prices are quoted
  * before tax.
  */
-function gstOnLine({ mrp, qty, taxPct }) {
+function gstOnLine({ mrp, qty, taxPct, discount = 0 }) {
   const rate = Number(taxPct) || 0;
-  const lineTotal = round2((Number(mrp) || 0) * (Number(qty) || 0));
+  const listTotal = round2((Number(mrp) || 0) * (Number(qty) || 0));
+  /*
+   * A discount given at the time of supply and shown on the invoice reduces
+   * the value the tax is charged on — section 15(3)(a). So it comes off before
+   * the GST is extracted, not after: knocking it off the total afterwards
+   * would leave the invoice declaring CGST and SGST on money nobody paid, and
+   * the tax table would not add up to the amount charged.
+   */
+  const lineTotal = round2(Math.max(listTotal - (Number(discount) || 0), 0));
   const taxable = config.pharmacy.mrpIncludesGst
     ? round2((lineTotal * 100) / (100 + rate))
     : lineTotal;
   const tax = round2((config.pharmacy.mrpIncludesGst ? lineTotal : lineTotal * (1 + rate / 100)) - taxable);
   return {
     rate,
+    listTotal,
+    discount: round2(Math.min(Number(discount) || 0, listTotal)),
     lineTotal: round2(taxable + tax),
     taxable,
     tax,
     cgst: round2(tax / 2),
     sgst: round2(tax - round2(tax / 2)),   // the odd paisa stays with SGST
   };
+}
+
+/**
+ * Split a discount given on the whole bill across its lines, in proportion to
+ * what each line costs.
+ *
+ * It has to be split at all because GST is charged rate by rate: a bill with a
+ * 12% medicine and a 5% one cannot have a single lump taken off the bottom
+ * without the tax table becoming a work of fiction. Paise are the awkward
+ * part, so every line is rounded and whatever is left over — never more than a
+ * few paise — is put on the largest line, where it is least visible and where
+ * it cannot make a small line negative. The parts always sum to the whole.
+ */
+function apportion(lineTotals, discount) {
+  const total = round2(lineTotals.reduce((a, n) => a + n, 0));
+  const want = round2(Math.min(Math.max(Number(discount) || 0, 0), total));
+  if (!want || !total) return lineTotals.map(() => 0);
+
+  const parts = lineTotals.map((n) => round2((n / total) * want));
+  const drift = round2(want - parts.reduce((a, n) => a + n, 0));
+  if (drift) {
+    let biggest = 0;
+    for (let i = 1; i < lineTotals.length; i += 1) {
+      if (lineTotals[i] > lineTotals[biggest]) biggest = i;
+    }
+    parts[biggest] = round2(parts[biggest] + drift);
+  }
+  return parts;
 }
 
 /** Rate-wise HSN summary — the table a GST invoice has to carry. */
@@ -271,5 +309,5 @@ function assertPositive(qty, label) {
 module.exports = {
   round2, availableBatches, stockOnHand, writeLedger, receiveStock,
   allocate, consume, lowStock, expiringSoon, safetyCheck, assertPositive,
-  gstOnLine, gstSummary, amountInWords,
+  gstOnLine, gstSummary, apportion, amountInWords,
 };

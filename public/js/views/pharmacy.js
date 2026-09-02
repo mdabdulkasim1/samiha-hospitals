@@ -2,6 +2,56 @@
 (function () {
   'use strict';
 
+  /**
+   * Share a discount given on the whole bill across its lines, in proportion
+   * to what each costs — the same split the server does, so the total on
+   * screen is the total that prints.
+   *
+   * It has to be split because GST is charged rate by rate: a 12% medicine and
+   * a 5% one cannot have one lump taken off the bottom. The paise left over by
+   * rounding go on the largest line, where they cannot make a small line
+   * negative, so the parts always sum to the whole.
+   */
+  /**
+   * What a quantity of one medicine comes to, taken out of the batches in the
+   * order the counter will actually take them — earliest expiry first.
+   *
+   * A sale can straddle two packs bought at different prices, and the customer
+   * pays what is printed on each. Pricing from the drug's own MRP instead
+   * would quote one figure and print another.
+   */
+  function priceLine(drug, qty) {
+    const batches = (drug.batches || []).slice();
+    let left = qty;
+    let total = 0;
+    for (const b of batches) {
+      if (left <= 0) break;
+      const take = Math.min(left, b.qty);
+      total += take * (b.mrp || drug.mrp || 0);
+      left -= take;
+    }
+    // Anything beyond what is in stock is priced at the list rate; the server
+    // will refuse the sale, and the till should not pretend it is free.
+    if (left > 0) total += left * (drug.sale_mrp || drug.mrp || 0);
+    return UI.round2(total);
+  }
+
+  function apportion(lineTotals, discount) {
+    const total = UI.round2(lineTotals.reduce((a, n) => a + n, 0));
+    const want = UI.round2(Math.min(Math.max(Number(discount) || 0, 0), total));
+    if (!want || !total) return lineTotals.map(() => 0);
+    const parts = lineTotals.map((n) => UI.round2((n / total) * want));
+    const drift = UI.round2(want - parts.reduce((a, n) => a + n, 0));
+    if (drift) {
+      let biggest = 0;
+      for (let i = 1; i < lineTotals.length; i += 1) {
+        if (lineTotals[i] > lineTotals[biggest]) biggest = i;
+      }
+      parts[biggest] = UI.round2(parts[biggest] + drift);
+    }
+    return parts;
+  }
+
   APP.register('pharmacy', {
     title: 'Pharmacy',
     subtitle: 'Dispensing, stock and formulary',
@@ -110,11 +160,11 @@
                 `${['H', 'H1', 'X'].includes(String(c.schedule_type || '').toUpperCase())
                     ? ' · ' + UI.badge('Schedule ' + c.schedule_type + ' — prescription only', 'warn')
                     : ''}</div>` },
-              { label: 'MRP', num: true, render: (c) => UI.money(c.mrp) },
+              { label: 'MRP', num: true, render: (c) => UI.money(c.sale_mrp || c.mrp) },
               { label: 'Qty', num: true, render: (c, i) =>
                 `<input type="number" min="1" max="${c.on_hand}" value="${c.qty}" data-qty="${i}" style="width:74px;text-align:right">` },
               { label: 'Stock', num: true, render: (c) => UI.esc(c.on_hand) },
-              { label: 'Amount', num: true, render: (c) => UI.money(c.qty * c.mrp * (1 + (c.tax_pct || 0) / 100)) },
+              { label: 'Amount', num: true, render: (c) => UI.money(priceLine(c, c.qty)) },
               { label: '', render: (c, i) => `<button class="btn ghost sm" data-rm="${i}">×</button>` },
             ], cart);
 
@@ -129,22 +179,54 @@
               cart.splice(Number(b.dataset.rm), 1); drawCart();
             }));
 
-            const gross = cart.reduce((s2, c) => s2 + c.qty * c.mrp, 0);
-            const tax = cart.reduce((s2, c) => s2 + c.qty * c.mrp * ((c.tax_pct || 0) / 100), 0);
-            const discount = Number(body.querySelector('[name=discount]').value || 0);
-            const net = Math.max(gross + tax - discount, 0);
+            /*
+             * The same arithmetic the bill will use, so the figure on screen is
+             * the figure that prints. MRP already contains the GST, so the tax
+             * is extracted from the price rather than added to it, and the
+             * discount is taken off before the extraction — a discount shown on
+             * the invoice reduces the value the tax is charged on. Cash bills
+             * settle to the rupee, and the round-off is shown rather than
+             * quietly absorbed.
+             */
+            const totals = cart.map((c) => priceLine(c, c.qty));
+            const mrpTotal = UI.round2(totals.reduce((a, n) => a + n, 0));
+            const discountBox = body.querySelector('[name=discount]');
+            const asked = Math.max(Number(discountBox.value || 0), 0);
+            const discount = Math.min(asked, mrpTotal);
+            const shares = apportion(totals, discount);
+
+            let taxable = 0;
+            let tax = 0;
+            cart.forEach((c, i) => {
+              const rate = Number(c.tax_pct) || 0;
+              const line = Math.max(totals[i] - shares[i], 0);
+              const t = UI.round2((line * 100) / (100 + rate));
+              taxable = UI.round2(taxable + t);
+              tax = UI.round2(tax + UI.round2(line - t));
+            });
+            const payable = UI.round2(taxable + tax);
+            const net = Math.round(payable);
+            const roundOff = UI.round2(net - payable);
             const scheduled = cart.filter((c) => ['H', 'H1', 'X'].includes(String(c.schedule_type || '').toUpperCase()));
 
             body.querySelector('#cs-total').innerHTML = `
-              <div class="row-between"><span>Gross</span><b>${UI.money(gross)}</b></div>
-              <div class="row-between"><span>Tax</span><span>${UI.money(tax)}</span></div>
-              ${discount ? `<div class="row-between"><span>Discount</span><span>− ${UI.money(discount)}</span></div>` : ''}
+              <div class="row-between"><span>MRP total</span><b>${UI.money(mrpTotal)}</b></div>
+              ${discount ? `<div class="row-between" style="color:var(--orange-dark)">
+                <span>Discount</span><span>− ${UI.money(discount)}</span></div>` : ''}
+              <div class="row-between muted small"><span>Taxable value</span><span>${UI.money(taxable)}</span></div>
+              <div class="row-between muted small"><span>GST included</span><span>${UI.money(tax)}</span></div>
+              ${roundOff ? `<div class="row-between muted small"><span>Round off</span>
+                <span>${roundOff > 0 ? '+' : '−'} ${UI.money(Math.abs(roundOff))}</span></div>` : ''}
               <div class="row-between" style="font-size:17px;border-top:1px solid var(--line);margin-top:6px;padding-top:8px">
                 <b>To pay</b><b>${UI.money(net)}</b></div>
+              ${asked > mrpTotal ? `<div class="alert warn mt">A discount of ${UI.money(asked)} is more
+                than the bill. At most ${UI.money(mrpTotal)} can be taken off.</div>` : ''}
               ${scheduled.length ? `<div class="alert warn mt">
                 ${UI.esc(scheduled.map((c) => c.name).join(', '))} ${scheduled.length > 1 ? 'are' : 'is'}
                 prescription-only. Record the outside prescription before completing the sale.</div>` : ''}`;
-            body.querySelector('#cs-save').disabled = false;
+            // A discount bigger than the bill would be refused by the server
+            // anyway; better to say so before the cashier presses the button.
+            body.querySelector('#cs-save').disabled = asked > mrpTotal;
           };
 
           /** Add a medicine to the bill, respecting what is actually in stock. */
@@ -197,7 +279,7 @@
                   <span>${UI.esc(d.name)} ${UI.esc(d.strength || '')}
                     ${['H', 'H1', 'X'].includes(String(d.schedule_type || '').toUpperCase())
                       ? `<span class="badge warn">Sch ${UI.esc(d.schedule_type)}</span>` : ''}</span>
-                  <span>${UI.money(d.mrp)} · ${d.on_hand <= 0 ? 'out of stock' : `${d.on_hand} in stock`}</span>
+                  <span>${UI.money(d.sale_mrp || d.mrp)} · ${d.on_hand <= 0 ? 'out of stock' : `${d.on_hand} in stock`}</span>
                 </button>`).join('') : '<div class="muted small">No medicine matched.</div>';
 
               host.querySelectorAll('[data-add]').forEach((b) => b.addEventListener('click', () => {
@@ -560,10 +642,12 @@
 
         <div class="r-rule"></div>
         <table class="r-tot">
+          ${sale.discount ? `
+            <tr><td>MRP total</td><td class="r-r">${rs(summary.mrpTotal)}</td></tr>
+            <tr><td>Less discount</td><td class="r-r">− ${rs(sale.discount)}</td></tr>` : ''}
           <tr><td>Taxable value</td><td class="r-r">${rs(summary.taxable)}</td></tr>
           <tr><td>CGST</td><td class="r-r">${rs(summary.cgst)}</td></tr>
           <tr><td>SGST</td><td class="r-r">${rs(summary.sgst)}</td></tr>
-          ${sale.discount ? `<tr><td>Discount</td><td class="r-r">− ${rs(sale.discount)}</td></tr>` : ''}
           ${sale.round_off ? `<tr><td>Round off</td><td class="r-r">${sale.round_off > 0 ? '+ ' : '− '}${rs(Math.abs(sale.round_off))}</td></tr>` : ''}
           <tr class="r-grand"><td>TOTAL</td><td class="r-r">${rs(sale.net)}</td></tr>
           ${isCounter ? `

@@ -186,3 +186,104 @@ test('a dispensed prescription is taxed the same way, to the paisa', async () =>
   assert.strictEqual(inv.sale.sale_type, 'prescription');
   assert.ok(inv.items.every((i) => i.hsn_code));
 });
+
+// ------------------------------------------------------------- the discount
+test('a discount on a pharmacy bill is taxed correctly, not just subtracted', async () => {
+  const sale = await api('POST', '/api/pharmacy/counter-sale', {
+    customerName: 'Discount Kumar', customerPhone: '9845012399',
+    items: [{ drugId: ids.para.id, qty: 10 }, { drugId: ids.ors.id, qty: 2 }],
+    paymentMode: 'cash', discount: 20,
+  });
+  assert.strictEqual(sale.status, 201, JSON.stringify(sale.body));
+  const s = sale.body.sale;
+
+  const mrpTotal = pharmacy.round2(ids.para.mrp * 10 + ids.ors.mrp * 2);
+  assert.strictEqual(s.discount, 20, 'the discount is recorded as given');
+
+  // Taxable plus tax is the MRP total less the discount — the tax is charged
+  // on what the customer actually pays, not on what they did not.
+  assert.strictEqual(pharmacy.round2(s.gross + s.tax), pharmacy.round2(mrpTotal - 20),
+    'GST must be extracted from the discounted value');
+  assert.strictEqual(s.net, Math.round(mrpTotal - 20), 'cash bills settle to the rupee');
+
+  // Without the discount the same basket costs more, by exactly the discount.
+  const plain = await api('POST', '/api/pharmacy/counter-sale', {
+    customerName: 'Full Price', customerPhone: '9845012398',
+    items: [{ drugId: ids.para.id, qty: 10 }, { drugId: ids.ors.id, qty: 2 }],
+    paymentMode: 'cash',
+  });
+  assert.strictEqual(
+    pharmacy.round2(plain.body.sale.gross + plain.body.sale.tax - (s.gross + s.tax)), 20);
+
+  ids.discountedSale = s.id;
+});
+
+test('the discounted invoice adds up, line by line and rate by rate', async () => {
+  const inv = (await api('GET', `/api/pharmacy/sales/${ids.discountedSale}/invoice`)).body;
+
+  // The discount is shared across the lines, and the shares sum to the whole.
+  const shared = pharmacy.round2(inv.items.reduce((a, i) => a + Number(i.discount || 0), 0));
+  assert.strictEqual(shared, 20, 'every paisa of the discount is on a line');
+
+  // Each line's own figures reconcile.
+  for (const i of inv.items) {
+    const charged = pharmacy.round2(i.mrp * i.qty - i.discount);
+    assert.strictEqual(pharmacy.round2(i.taxable + i.cgst + i.sgst), charged,
+      `line ${i.drug_name}: taxable + GST must equal what was charged`);
+  }
+
+  // And the rate-wise table reconciles with the bill.
+  const table = pharmacy.round2(inv.hsnSummary.reduce((a, r) => a + r.taxable + r.cgst + r.sgst, 0));
+  assert.strictEqual(table, pharmacy.round2(inv.sale.gross + inv.sale.tax),
+    'the HSN table must add up to the bill');
+  assert.strictEqual(pharmacy.round2(inv.summary.mrpTotal - inv.sale.discount),
+    pharmacy.round2(inv.sale.gross + inv.sale.tax),
+    'MRP total less the discount is the taxable value plus the tax');
+});
+
+test('a discount is shared out in proportion, to the paisa', () => {
+  // Three lines, an awkward discount: the parts must still sum to the whole.
+  for (const [totals, want] of [
+    [[600, 300, 100], 100], [[10, 10, 10], 33.33], [[999.99, 0.01], 7],
+    [[1], 0.005], [[123.45, 67.89, 1.11], 50],
+  ]) {
+    const parts = pharmacy.apportion(totals, want);
+    const sum = pharmacy.round2(parts.reduce((a, n) => a + n, 0));
+    const expected = pharmacy.round2(Math.min(want, totals.reduce((a, n) => a + n, 0)));
+    assert.strictEqual(sum, expected, `${JSON.stringify(totals)} / ${want} came to ${sum}`);
+    assert.ok(parts.every((p, i) => p <= totals[i] + 0.001),
+      'no line is discounted below nothing');
+  }
+});
+
+test('a discount larger than the bill is refused, on the counter and on a prescription', async () => {
+  const tooBig = await api('POST', '/api/pharmacy/counter-sale', {
+    customerName: 'Greedy', items: [{ drugId: ids.para.id, qty: 1 }],
+    paymentMode: 'cash', discount: 99999,
+  });
+  assert.strictEqual(tooBig.status, 400);
+  assert.match(tooBig.body.error, /more than the bill/i);
+
+  const negative = await api('POST', '/api/pharmacy/counter-sale', {
+    customerName: 'Negative', items: [{ drugId: ids.para.id, qty: 1 }],
+    paymentMode: 'cash', discount: -5,
+  });
+  assert.strictEqual(negative.status, 400);
+});
+
+test('a discount on a dispensed prescription is taxed the same way', async () => {
+  const patient = (await api('POST', '/api/patients', {
+    firstName: 'Rx', lastName: 'Discount', phone: '9845012397', gender: 'male',
+    age: 44, consentTreatment: true,
+  }, 'admin')).body;
+
+  const out = await api('POST', '/api/pharmacy/dispense', {
+    patientId: patient.id, items: [{ drugId: ids.para.id, qty: 10 }], discount: 15,
+  });
+  assert.strictEqual(out.status, 201, JSON.stringify(out.body));
+  const s = out.body.sale;
+  assert.strictEqual(s.discount, 15);
+  assert.strictEqual(pharmacy.round2(s.gross + s.tax), pharmacy.round2(ids.para.mrp * 10 - 15));
+  assert.strictEqual(s.net, pharmacy.round2(ids.para.mrp * 10 - 15),
+    'a prescription bill settles to the paisa, with no rupee rounding');
+});

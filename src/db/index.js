@@ -174,6 +174,11 @@ function migrate() {
    * "Analgesics", "Emergency / Crash-cart" — the headings the clinic's own
    * stock list uses, so the register reads the way the pharmacist thinks.
    */
+  // A line's share of a discount given on the whole pharmacy bill. It is kept
+  // per line because the GST on that line is charged on the discounted value,
+  // and the invoice has to be able to show its working.
+  ensureColumn('pharmacy_sale_items', 'discount', 'REAL NOT NULL DEFAULT 0');
+
   ensureColumn('drugs', 'category', 'TEXT');
   ensureColumn('drugs', 'pack_size', 'TEXT');
 
