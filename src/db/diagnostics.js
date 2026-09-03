@@ -285,4 +285,25 @@ const IMAGING = [
   ['USG-DOPO', 'Doppler — Obstetric', 'Ultrasound & Doppler', 'radiology'],
 ];
 
-module.exports = { PANELS, SINGLES, COMPONENTS, IMAGING };
+
+/*
+ * The clinic's screening packages, as advertised.
+ *
+ * A package is billed as one line at its package price, not as its tests one
+ * by one — that is the whole point of it, and billing both would charge the
+ * patient twice for the same blood. The tests it covers are named in the
+ * item itself so the counter, the bench and the patient are reading the same
+ * list, and the lab reports the results against the one order.
+ *
+ * Columns: code, name, price, tests covered.
+ */
+const PACKAGES = [
+  ['PKG-MAN', 'Common Man Package — Basic Health Screening', 500,
+    'CBC, Blood Sugar, Urine Routine, Uric Acid'],
+  ['PKG-WOMAN', 'Common Woman Package — Basic Health Screening', 500,
+    'CBC, Haemoglobin, Blood Sugar, Urine Routine, Blood Group & Rh'],
+  ['PKG-DIAB', 'Diabetic Package — Diabetes Health Check', 500,
+    'Fasting Blood Sugar, Post-Prandial Blood Sugar, HbA1c, Serum Creatinine'],
+];
+
+module.exports = { PANELS, SINGLES, COMPONENTS, IMAGING, PACKAGES };

@@ -317,6 +317,19 @@ for (const [code, name, bill_group, sample_type, unit, ref_low, ref_high, ref_te
  * "chest PA and lateral", "left ankle", "PNS". Reported in words, so the ref
  * text says whose opinion the report carries rather than a range.
  */
+/*
+ * The screening packages. Their name carries the tests they cover, in
+ * brackets, because a package is chosen off a poster and pressed at a counter
+ * — and whoever presses it should not have to remember what is in it.
+ */
+for (const [code, name, price, covers] of diagnostics.PACKAGES) {
+  upsert('lab_tests', 'code', {
+    code, name: `${name} (${covers})`, category: 'lab', bill_group: 'Health packages',
+    sample_type: 'As per the tests covered', price, tat_hours: 12,
+    ref_text: `Covers: ${covers}. Reported as one package.`,
+  });
+}
+
 diagnostics.IMAGING.forEach(([code, name, bill_group, category], i) => {
   const id = upsert('lab_tests', 'code', {
     code, name, category, bill_group, price: 0, tat_hours: 24, sort_order: i + 1,

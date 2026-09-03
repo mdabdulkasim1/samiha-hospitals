@@ -98,7 +98,8 @@
 
     // Grouped the way the department works rather than alphabetically: the
     // bench first, then the couch, then the scanner.
-    const ORDER = ['Blood tests', 'Urine & stool', 'X-ray', 'Ultrasound & Doppler', 'ECG & heart'];
+    const ORDER = ['Health packages', 'Blood tests', 'Urine & stool', 'X-ray',
+      'Ultrasound & Doppler', 'ECG & heart'];
     const groups = [];
     for (const t of tests) {
       const label = t.bill_group || 'Other';

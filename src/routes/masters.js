@@ -387,8 +387,9 @@ router.get('/catalogue', wrap((req, res) => {
 
   // Group order is the order of a visit, not the alphabet: what a patient is
   // charged for first comes first.
-  const ORDER = ['Consultation', 'Procedures & treatment', 'Blood tests', 'Urine & stool',
-    'X-ray', 'Ultrasound & Doppler', 'ECG & heart', 'Nursing & ward', 'Ambulance & other'];
+  const ORDER = ['Consultation', 'Health packages', 'Procedures & treatment', 'Blood tests',
+    'Urine & stool', 'X-ray', 'Ultrasound & Doppler', 'ECG & heart', 'Nursing & ward',
+    'Ambulance & other'];
   const rank = (g) => { const i = ORDER.indexOf(g); return i === -1 ? ORDER.length : i; };
 
   const byGroup = new Map();

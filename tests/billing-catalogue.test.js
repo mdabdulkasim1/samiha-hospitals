@@ -753,3 +753,41 @@ test('a clinic switches off what it does not do, without erasing it', async () =
 
   await api('PATCH', `/api/masters/lab-tests/${barium.id}`, { active: true }, 'admin');
 });
+
+test('the screening packages are sold as one line, naming what they cover', async () => {
+  const { PACKAGES } = require('../src/db/diagnostics');
+  assert.strictEqual(PACKAGES.length, 3);
+
+  for (const [code, title, price, covers] of PACKAGES) {
+    const row = db.prepare('SELECT * FROM lab_tests WHERE code = ?').get(code);
+    assert.ok(row, `${code} reached the catalogue`);
+    assert.strictEqual(row.price, price, 'at the price on the poster');
+    assert.strictEqual(row.bill_group, 'Health packages', 'in their own group');
+    assert.ok(row.name.startsWith(title));
+    assert.ok(row.name.endsWith(`(${covers})`), 'with the tests in brackets');
+    assert.match(row.ref_text, /^Covers: /);
+  }
+
+  // On the counter's charge board as one pressable item at the package price.
+  const board = (await api('GET', '/api/masters/catalogue', undefined, 'cashier')).body;
+  const group = board.find((g) => g.group === 'Health packages');
+  assert.ok(group, 'the group is on the board');
+  assert.strictEqual(group.items.length, 3);
+  assert.ok(group.items.every((i) => i.price === 500));
+
+  // Health packages come early, where a walk-in asks for one.
+  const order = board.map((g) => g.group);
+  assert.ok(order.indexOf('Health packages') < order.indexOf('Blood tests'));
+
+  // Billed, it is one line — not the four tests it covers.
+  const patient = db.prepare('SELECT id FROM patients ORDER BY id LIMIT 1').get();
+  const pkg = db.prepare("SELECT * FROM lab_tests WHERE code = 'PKG-MAN'").get();
+  const inv = (await api('POST', '/api/billing/invoices',
+    { patientId: patient.id, kind: 'opd' }, 'cashier')).body;
+  const added = await api('POST', `/api/billing/invoices/${inv.id}/items`, {
+    refType: 'lab', refId: pkg.id, description: pkg.name, qty: 1, unitPrice: pkg.price,
+  }, 'cashier');
+  assert.strictEqual(added.status, 201, JSON.stringify(added.body));
+  assert.strictEqual(added.body.items.length, 1);
+  assert.strictEqual(added.body.net, 500, 'the package price, not the sum of its tests');
+});
