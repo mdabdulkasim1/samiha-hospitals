@@ -25,6 +25,50 @@
   const sumOf = (rows, key) => rows.reduce((a, r) => a + Number(r[key] || 0), 0);
 
   /**
+   * The last column on a list of bills: print the thing itself.
+   *
+   * A report is read for a reason — a patient on the phone asking what they
+   * were charged, an insurer wanting the paperwork again, a month-end tally
+   * that needs a copy attached. Finding the row and then hunting the same bill
+   * down again in Billing is a second search for a document already on screen.
+   *
+   * A row is printable when it names an invoice; a receipt row prints either
+   * the receipt or the bill behind it.
+   */
+  const documents = {
+    label: '',
+    render: (r) => {
+      const out = [];
+      if (r.receipt_no) {
+        out.push(`<button type="button" class="btn ghost sm" data-print-receipt="${UI.esc(r.receipt_no)}"
+          title="Print this receipt">Receipt</button>`);
+      }
+      const invoiceId = r.invoice_id || (r.receipt_no ? null : r.id);
+      if (invoiceId && r.invoice_no !== undefined) {
+        out.push(`<button type="button" class="btn ghost sm" data-print-invoice="${invoiceId}"
+          title="Print this invoice">Invoice</button>`);
+      }
+      return out.join(' ') || '<span class="muted">—</span>';
+    },
+  };
+
+  /**
+   * Wire those buttons. The print window is claimed on the click itself,
+   * because the document is fetched before it can be written and a browser
+   * only allows a popup while it can still see the gesture that asked for it.
+   */
+  function wireDocuments(scope) {
+    scope.querySelectorAll('[data-print-invoice]').forEach((b) => b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      APP.printInvoiceById(Number(b.dataset.printInvoice), UI.openPrintWindow());
+    }));
+    scope.querySelectorAll('[data-print-receipt]').forEach((b) => b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      APP.printReceipt(b.dataset.printReceipt, UI.openPrintWindow());
+    }));
+  }
+
+  /**
    * Ask an endpoint for the rows behind a figure and show them.
    *
    * `columns` is a UI.table column spec. `total`, when given, rules a rupee
@@ -63,11 +107,12 @@
         ? `<button class="btn ghost" data-act="open">${UI.esc(data.routeLabel || 'Open the screen')}</button>`
         : ''}
         <button class="btn" data-act="__close">Close</button>`,
+      onMount(modal) { wireDocuments(modal); },
       onAction(act) {
         if (act === 'open' && data.route) APP.navigate(data.route, data.routeParams || undefined);
       },
     });
   }
 
-  window.Drilldown = { open, who, source, sumOf };
+  window.Drilldown = { open, who, source, sumOf, documents, wireDocuments };
 })();

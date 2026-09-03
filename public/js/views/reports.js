@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const { who, source } = Drilldown;
+  const { who, source, documents } = Drilldown;
 
   /**
    * A report tile you can open. Same bargain as the dashboard's: the list it
@@ -69,6 +69,7 @@
       { label: 'Taken by', render: (r) => UI.esc(r.taken_by || '—') },
       { label: 'When', render: when },
       { label: 'Amount', num: true, render: (r) => `<b>${UI.money(r.amount)}</b>` },
+      documents,
     ],
     admissions: [
       { label: 'IP No', render: (r) => `<b>${UI.esc(r.ip_no)}</b>` },
@@ -93,6 +94,7 @@
       { label: 'Raised', render: (r) => UI.esc(UI.date(r.at)) },
       { label: 'Invoice total', num: true, render: (r) => UI.money(r.net) },
       { label: 'Given', num: true, render: (r) => `<b>${UI.money(r.amount)}</b>` },
+      documents,
     ],
     invoices: [
       { label: 'Invoice', render: (r) => `<b>${UI.esc(r.invoice_no)}</b>` +
@@ -103,6 +105,7 @@
       { label: 'Billed', num: true, render: (r) => UI.money(r.net) },
       { label: 'Paid', num: true, render: (r) => UI.money(r.paid) },
       { label: 'Balance', num: true, render: (r) => `<b>${UI.money(r.balance)}</b>` },
+      documents,
     ],
     doctorVisits: [
       { label: 'Visit', render: (r) => `<b>${UI.esc(r.visit_no)}</b>` },
@@ -119,6 +122,7 @@
       { label: 'Status', render: (r) => UI.statusBadge(r.status) },
       { label: 'Outstanding', num: true, render: (r) => UI.money(r.balance) },
       { label: 'Billed', num: true, render: (r) => `<b>${UI.money(r.amount)}</b>` },
+      documents,
     ],
     collected: [
       { label: 'Invoice', render: (r) => `<b>${UI.esc(r.invoice_no)}</b>` +
@@ -127,6 +131,7 @@
       { label: 'Raised', render: (r) => UI.esc(UI.date(r.at)) },
       { label: 'Billed', num: true, render: (r) => UI.money(r.net) },
       { label: 'Received', num: true, render: (r) => `<b>${UI.money(r.amount)}</b>` },
+      documents,
     ],
   };
 

@@ -251,6 +251,33 @@ test('the footfall figures open exactly what they counted', async () => {
   void w;
 });
 
+test('a row that names a bill can be printed from where it is read', async () => {
+  // Every money list carries the id of the bill it names, so the report can
+  // offer the invoice itself rather than sending the reader back to Billing to
+  // search for a document already on their screen.
+  const win = WINDOW();
+  for (const metric of ['revenue_outstanding', 'revenue_sliding', 'revenue_assistance']) {
+    const res = await rdetail(metric, win);
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    for (const r of res.body.rows) {
+      assert.ok(r.invoice_no, `${metric} names the invoice`);
+      assert.ok(Number(r.id) > 0, `${metric} carries the invoice id`);
+      const inv = await api('GET', `/api/billing/invoices/${r.id}`, undefined, 'cashier');
+      assert.strictEqual(inv.status, 200);
+      assert.strictEqual(inv.body.invoice_no, r.invoice_no, 'and the id is that invoice');
+    }
+  }
+
+  // A receipt row prints two documents, so it carries both numbers.
+  const receipts = await rdetail('trend_collected', win);
+  for (const r of receipts.body.rows) {
+    assert.ok(r.receipt_no, 'the receipt');
+    assert.ok(Number(r.invoice_id) > 0, 'and the bill it settled');
+    const inv = (await api('GET', `/api/billing/invoices/${r.invoice_id}`, undefined, 'cashier')).body;
+    assert.strictEqual(inv.invoice_no, r.invoice_no);
+  }
+});
+
 test('a report answers for the window it was asked about, and no other', async () => {
   const today = new Date().toISOString().slice(0, 10);
   const wide = await rdetail('trend_visits', WINDOW());

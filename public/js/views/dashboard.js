@@ -298,6 +298,7 @@ const DRILL_COLUMNS = {
     { label: 'Taken by', render: (r) => UI.esc(r.taken_by || '—') },
     { label: 'Time', render: (r) => UI.esc(UI.time(r.at)) },
     { label: 'Amount', num: true, render: (r) => `<b>${UI.money(r.amount)}</b>` },
+    Drilldown.documents,
   ],
   outstanding: [
     { label: 'Invoice', render: (r) => `<b>${UI.esc(r.invoice_no)}</b>` +
@@ -308,6 +309,7 @@ const DRILL_COLUMNS = {
     { label: 'Billed', num: true, render: (r) => UI.money(r.net) },
     { label: 'Paid', num: true, render: (r) => UI.money(r.paid) },
     { label: 'Balance', num: true, render: (r) => `<b>${UI.money(r.balance)}</b>` },
+    Drilldown.documents,
   ],
   beds: [
     { label: 'Bed', render: (r) => `<b>${UI.esc(r.bed_no)}</b>` +

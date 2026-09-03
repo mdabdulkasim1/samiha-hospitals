@@ -1017,6 +1017,25 @@
   }
   APP.openInvoice = openInvoice;
 
+  /*
+   * Printing a bill or a receipt from somewhere else in the app — a report
+   * list, a dashboard drill-down — where only its number is known.
+   *
+   * The caller claims the print window on the click and hands it over, because
+   * the document has to be fetched first and a browser only allows a popup
+   * while it can still see the gesture that asked for it.
+   */
+  APP.printInvoiceById = async (id, windowRef = null) => {
+    const win = windowRef || UI.openPrintWindow();
+    try {
+      printInvoice(await API.get(`/api/billing/invoices/${id}`), win);
+    } catch (err) {
+      UI.err(err.message);
+      if (win) win.close();
+    }
+  };
+  APP.printReceipt = printReceipt;
+
   // ---------------------------------------------------------- printable docs
   /**
    * The bill. The treating doctor appears as their code — SPC-MHD-002 — and not
@@ -1194,8 +1213,11 @@
    * own counter — but the treating doctor appears only as their code, the same
    * rule the bill it settles follows.
    */
-  async function printReceipt(receiptNo) {
-    const r = await API.get(`/api/billing/receipts/${receiptNo}`);
+  async function printReceipt(receiptNo, windowRef = null) {
+    const win = windowRef || UI.openPrintWindow();
+    let r;
+    try { r = await API.get(`/api/billing/receipts/${receiptNo}`); }
+    catch (err) { UI.err(err.message); if (win) win.close(); return; }
     const html = `<div class="doc">
       ${UI.docHeader('Payment Receipt', [`Receipt: ${r.receipt_no}`, `Date: ${UI.dateTime(r.paid_at)}`])}
       <table><tbody>
@@ -1210,7 +1232,7 @@
       <div class="sign"><div></div><div>${UI.esc(r.received_by_name || '')}<br>Received by</div></div>
       <div class="foot-note">Thank you. Cheques are subject to realisation.</div>
     </div>`;
-    UI.print(html, 'Receipt ' + receiptNo);
+    UI.print(html, 'Receipt ' + receiptNo, { windowRef: win });
   }
 
   function printAgreement(r) {

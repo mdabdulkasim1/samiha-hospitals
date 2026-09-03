@@ -537,7 +537,8 @@ const DETAILS = Object.assign(Object.create(null), {
     route: 'billing', routeLabel: 'Open billing',
     rows: (date) => db.prepare(
       `SELECT pay.id, pay.receipt_no, ${PATIENT_NAME} AS name, p.uhid,
-              i.invoice_no, pay.mode, pay.amount, u.name AS taken_by, pay.paid_at AS at
+              pay.invoice_id, i.invoice_no, pay.mode, pay.amount,
+              u.name AS taken_by, pay.paid_at AS at
          FROM payments pay
          LEFT JOIN patients p ON p.id = pay.patient_id
          LEFT JOIN invoices i ON i.id = pay.invoice_id
@@ -687,7 +688,8 @@ const REPORT_DETAILS = Object.assign(Object.create(null), {
     roles: MGMT_ROLES, route: 'billing', routeLabel: 'Open billing',
     rows: ({ from, to }) => db.prepare(
       `SELECT pay.id, pay.receipt_no, ${PATIENT_NAME} AS name, p.uhid,
-              i.invoice_no, pay.mode, pay.amount, u.name AS taken_by, pay.paid_at AS at
+              pay.invoice_id, i.invoice_no, pay.mode, pay.amount,
+              u.name AS taken_by, pay.paid_at AS at
          FROM payments pay
          LEFT JOIN patients p ON p.id = pay.patient_id
          LEFT JOIN invoices i ON i.id = pay.invoice_id

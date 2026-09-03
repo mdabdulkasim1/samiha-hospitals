@@ -163,6 +163,12 @@ The account it points at is set once, by an administrator, under **Account &
 System → Clinic & payments**. Until it is set, bills print without a code —
 never with a guessed one.
 
+The same invoice can be printed again from wherever it is read. Open any money
+figure on the **Dashboard** or under **Reports** — collections, outstanding,
+concessions, a doctor's month — and each row carries **Invoice** (and, on a
+receipt, **Receipt**) beside it. A patient ringing to ask what they were
+charged is answered from the list already on screen.
+
 ## 8 · Pharmacy
 
 *pharmacy@samiha.local · Pharmacy → To dispense*
