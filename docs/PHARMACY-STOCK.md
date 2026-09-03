@@ -89,6 +89,37 @@ Supplier payments run through `POST /api/stock/purchases/:id/pay`, which moves
 the note from `received` to `partially_paid` to `paid` and refuses to pay more
 than the invoice. What is still owed to each supplier shows on the supplier list.
 
+## Filling the shelf the first time
+
+A new pharmacy is stocked in one sitting, not one medicine at a time.
+**Pharmacy → Opening stock** is the whole formulary on one page, with the
+quantity from the clinic's own starter list already filled in as a proposal.
+Type over any of it with what was actually counted, then take the lot in with
+one press.
+
+`GET /api/stock/opening/sheet` returns every active medicine with what is on
+the shelf now, the starter list's suggested quantity, its pack size, and two
+flags the screen filters on: `needsCount` (nothing on the shelf) and
+`needsRate` (no MRP anywhere).
+
+`POST /api/stock/opening/bulk` takes `rows[]` of `{ drugId, qty, mrp? }` plus
+an optional `batchNo`, `expiryDate` and `reason` for the take-in as a whole.
+Every line goes through the same first-count path a single medicine does, so
+the ledger reads the same either way, and the lot is one transaction. A line
+with no quantity is left alone rather than zeroed; a line naming no batch
+corrects the medicine's existing batch rather than stacking a second one
+beside it, so a recount fixes the shelf instead of doubling it. Anything it
+could not take is returned in `skipped` with the reason.
+
+**A count may be taken before the medicine is priced.** Stock arriving and
+stock being priced are two different jobs, often done by two people on two
+days, and refusing the count until somebody knows the MRP leaves the shelf full
+and the register empty. What an unpriced medicine cannot do is *leave*: the
+counter refuses it by name — *"… has no rate set"* — until a rate is entered.
+The response's `unpriced[]` names what still needs one, and the screen's **No
+rate set** filter is where they are filled in; a rate typed there against stock
+already counted saves on its own, without retyping the count.
+
 ## The stock register
 
 `GET /api/stock/register?from=&to=` returns, for every medicine:

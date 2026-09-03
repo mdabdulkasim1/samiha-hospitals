@@ -281,6 +281,13 @@ router.post('/dispense', requireRole('pharmacy'), wrap((req, res) => {
       if (!drug) throw notFound(`Drug #${drugId} not found`);
       for (const pick of pharmacy.allocate(drugId, qty)) {
         const unitPrice = pick.batch.mrp || drug.mrp;
+        // Stock may be counted onto the shelf before anyone prices it. It must
+        // not leave the counter that way: a line at nothing looks charged and
+        // is not, and the money is gone by the time anybody notices.
+        if (!(unitPrice > 0)) {
+          throw conflict(`${drug.name} has no rate set. Put the MRP printed on the pack `
+            + 'against its batch in the stock register before selling it.');
+        }
         lines.push({ drugId, drug, pick, unitPrice, prescriptionId: int(it.prescriptionId) || null,
           listTotal: pharmacy.round2(unitPrice * pick.qty) });
       }
@@ -494,6 +501,13 @@ router.post('/counter-sale', requireRole('pharmacy'), wrap((req, res) => {
       const drug = db.prepare('SELECT * FROM drugs WHERE id = ?').get(drugId);
       for (const pick of pharmacy.allocate(drugId, qty)) {
         const unitPrice = pick.batch.mrp || drug.mrp;
+        // Stock may be counted onto the shelf before anyone prices it. It must
+        // not leave the counter that way: a line at nothing looks charged and
+        // is not, and the money is gone by the time anybody notices.
+        if (!(unitPrice > 0)) {
+          throw conflict(`${drug.name} has no rate set. Put the MRP printed on the pack `
+            + 'against its batch in the stock register before selling it.');
+        }
         lines.push({ drugId, drug, pick, unitPrice,
           listTotal: pharmacy.round2(unitPrice * pick.qty) });
       }

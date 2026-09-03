@@ -16,9 +16,11 @@
  * No stock. Loading a formulary is not the same as having the medicines on the
  * shelf: writing opening batches here would put quantities in the register
  * that nobody has counted and let the counter dispense against them. The
- * opening quantity from the sheet is kept as a suggestion for the first
- * purchase order, and the reorder level is set from it, so the low-stock
- * warning means something once real stock is received.
+ * opening quantity from the sheet is kept as a suggestion instead — the
+ * reorder level is set from it, and the pharmacy's opening-stock sheet offers
+ * it as the proposed count when the shelf is first filled, for a pharmacist to
+ * accept or type over. It becomes stock when a person says it is on the shelf,
+ * and the adjustment carries their name.
  *
  * Columns: code, name, generic, form, strength, category, schedule, pack,
  * suggested opening quantity in units.

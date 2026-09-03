@@ -848,14 +848,15 @@
                  expiring ${UI.esc(UI.date(known.expiry_date))}.</div>
                <input type="hidden" name="batchNo" value="${UI.esc(known.batch_no)}">`
             : `<div class="muted small mb">Nothing is on the shelf yet, so this is the first
-                 batch — take the details off the pack.</div>
+                 batch — take the details off the pack. The MRP can wait, but nothing sells
+                 until it is entered.</div>
                <div class="grid c2">
                  ${UI.field({ name: 'batchNo', label: 'Batch number', required: true })}
                  ${UI.field({ name: 'expiryDate', label: 'Expiry', type: 'date', required: true })}
                </div>
                <div class="grid c2">
                  ${UI.field({ name: 'mrp', label: 'MRP on the pack', type: 'number', step: '0.01',
-                   min: '0.01', value: row.mrp || '', required: true })}
+                   min: '0', value: row.mrp || '' })}
                  ${UI.field({ name: 'purchasePrice', label: 'Cost price', type: 'number',
                    step: '0.01', min: '0', value: row.purchase_price || '' })}
                </div>`}
@@ -878,5 +879,217 @@
     });
   }
 
-  window.StockUI = { barcodes, purchases, register, stocktake, scanBox, printLabels, openLabelDialog, openMovements, openGrn, openSetStock };
+  // ---------------------------------------------------------- opening stock
+  /**
+   * Filling the shelf, the whole formulary at once.
+   *
+   * A pharmacy is stocked in one sitting. Counting a hundred medicines in
+   * through a dialog that opens once per medicine is an afternoon's typing, so
+   * this is the same first count laid out as a sheet: every medicine on one
+   * page, the quantity already filled in from the clinic's own starter list,
+   * and one press to take the lot in.
+   *
+   * The suggested quantity is a proposal, not a fact. What the pharmacist types
+   * over it is the count, and that is what the register records.
+   */
+  async function opening(body) {
+    const entered = new Map();   // drugId -> { qty, mrp }, kept across filters
+    let data = null;
+    let filter = null;
+    let q = '';
+
+    const load = async () => {
+      data = await API.get('/api/stock/opening/sheet');
+      // Open on the work there is to do: the uncounted shelf while one exists,
+      // then the unpriced medicines, and the whole list once neither is left.
+      // A screen that opens on an empty filter reads as a screen that is broken.
+      if (filter === null || (filter === 'need' && !data.totals.needCount)) {
+        filter = data.totals.needCount ? 'need' : (data.totals.needRate ? 'rate' : 'all');
+      }
+      for (const r of data.rows) {
+        if (!entered.has(r.id)) {
+          entered.set(r.id, {
+            // Only propose a count for a medicine that has none. A shelf that
+            // already holds something has been counted by somebody.
+            qty: r.needsCount && r.suggested ? String(r.suggested) : '',
+            mrp: r.mrp > 0 ? String(r.mrp) : '',
+          });
+        }
+      }
+      paint();
+    };
+
+    const shown = () => {
+      const needle = q.toLowerCase();
+      return data.rows.filter((r) => {
+        if (filter === 'need' && !r.needsCount) return false;
+        if (filter === 'rate' && !r.needsRate) return false;
+        if (needle && !(`${r.name} ${r.code} ${r.generic_name || ''} ${r.category || ''}`)
+          .toLowerCase().includes(needle)) return false;
+        return true;
+      });
+    };
+
+    /*
+     * What one press will send. A quantity is a count of the shelf. A price
+     * typed against a medicine already on the shelf is a rate being set, and
+     * sending its own count back unchanged is how the sheet says "price this,
+     * leave the count alone" — the pharmacist filling in the rates column
+     * should not have to retype a number they already counted.
+     */
+    const toSend = () => data.rows.map((r) => {
+      const e = entered.get(r.id);
+      const qty = Number(e.qty);
+      const mrp = e.mrp === '' ? undefined : Number(e.mrp);
+      if (qty > 0) return { drugId: r.id, qty, mrp };
+      if (mrp > 0 && mrp !== r.mrp && r.on_hand > 0) return { drugId: r.id, qty: r.on_hand, mrp };
+      return null;
+    }).filter(Boolean);
+
+    const paint = () => {
+      const t = data.totals;
+      const rows = shown();
+      const chosen = toSend().length;
+
+      body.innerHTML = `
+        <div class="grid c4 mb">
+          <div class="stat teal"><div class="label">Medicines</div><div class="value">${UI.num(t.medicines)}</div></div>
+          <div class="stat ok"><div class="label">On the shelf</div><div class="value">${UI.num(t.onShelf)}</div>
+            <div class="foot">counted in already</div></div>
+          <div class="stat orange"><div class="label">Nothing counted</div><div class="value">${UI.num(t.needCount)}</div>
+            <div class="foot">on the list, not on the shelf</div></div>
+          <div class="stat crimson"><div class="label">No rate set</div><div class="value">${UI.num(t.needRate)}</div>
+            <div class="foot">cannot be sold until priced</div></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h3>Take the shelf into stock</h3>
+            <span class="muted small">Quantities are the starter list's — type over them with what you counted</span>
+          </div>
+          <div class="card-body">
+            <div class="grid c3">
+              ${UI.field({ name: 'batchNo', label: 'Batch number for this take-in',
+                value: 'OPEN-' + new Date().toISOString().slice(0, 7).replace('-', ''),
+                hint: 'Used where a medicine has no batch of its own yet' })}
+              ${UI.field({ name: 'expiryDate', label: 'Expiry to record', type: 'date',
+                value: new Date(Date.now() + 730 * 86400000).toISOString().slice(0, 10) })}
+              ${UI.field({ name: 'reason', label: 'Note for the register', value: 'Opening stock' })}
+            </div>
+            <div class="chip-row mb">
+              <button type="button" class="chip${filter === 'need' ? ' on' : ''}" data-f="need">
+                Nothing counted <span class="chip-n">${UI.num(t.needCount)}</span></button>
+              <button type="button" class="chip${filter === 'rate' ? ' on' : ''}" data-f="rate">
+                No rate set <span class="chip-n">${UI.num(t.needRate)}</span></button>
+              <button type="button" class="chip${filter === 'all' ? ' on' : ''}" data-f="all">
+                Everything <span class="chip-n">${UI.num(t.medicines)}</span></button>
+              <input type="search" id="op-q" placeholder="Find a medicine…" value="${UI.esc(q)}"
+                style="max-width:220px;margin-left:auto">
+            </div>
+          </div>
+          <div class="card-body tight" id="op-list"></div>
+          <div class="card-body">
+            <div class="row-between">
+              <span class="muted small"><b id="op-count">${UI.num(chosen)}</b> medicine(s) will be
+                counted in or repriced. A medicine left blank is not touched.</span>
+              <span>
+                <button class="btn ghost" id="op-fill">Fill every count from the starter list</button>
+                <button class="btn" id="op-save">${filter === 'rate'
+                  ? 'Save these rates' : 'Take these into stock'}</button>
+              </span>
+            </div>
+            <div id="op-out"></div>
+          </div>
+        </div>`;
+
+      body.querySelector('#op-list').innerHTML = UI.table([
+        { label: 'Medicine', render: (r) => `<b>${UI.esc(r.name)}</b>` +
+          `<div class="muted small"><code>${UI.esc(r.code)}</code> ${UI.esc(r.form || '')}` +
+          `${r.schedule && r.schedule !== 'OTC' ? ` · Schedule ${UI.esc(r.schedule)}` : ''}</div>` },
+        { label: 'Category', render: (r) => `<span class="muted small">${UI.esc(r.category || '—')}</span>` },
+        { label: 'Pack', render: (r) => `<span class="muted small">${UI.esc(r.pack || '—')}</span>` },
+        { label: 'Suggested', num: true, render: (r) => (r.suggested
+          ? UI.num(r.suggested) : '<span class="muted">—</span>') },
+        { label: 'On hand', num: true, render: (r) => (r.on_hand > 0
+          ? UI.num(r.on_hand) : '<span class="muted">0</span>') },
+        { label: 'Count in', num: true, render: (r) => `<input type="number" min="0" step="1"
+            data-qty="${r.id}" value="${UI.esc(entered.get(r.id).qty)}"
+            style="width:90px;text-align:right">` },
+        { label: 'MRP each', num: true, render: (r) => `<input type="number" min="0" step="0.01"
+            data-mrp="${r.id}" value="${UI.esc(entered.get(r.id).mrp)}"
+            placeholder="${r.needsRate ? 'no rate' : ''}"
+            style="width:90px;text-align:right${r.needsRate ? ';border-color:var(--danger)' : ''}">` },
+      ], rows, { emptyText: 'Nothing matches that filter.' });
+
+      const recount = () => { body.querySelector('#op-count').textContent = UI.num(toSend().length); };
+      body.querySelectorAll('[data-qty]').forEach((i) => i.addEventListener('input', () => {
+        entered.get(Number(i.dataset.qty)).qty = i.value;
+        recount();
+      }));
+      body.querySelectorAll('[data-mrp]').forEach((i) => i.addEventListener('input', () => {
+        entered.get(Number(i.dataset.mrp)).mrp = i.value;
+        recount();
+      }));
+
+      body.querySelectorAll('[data-f]').forEach((b) => b.addEventListener('click', () => {
+        filter = b.dataset.f;
+        paint();
+      }));
+      let timer;
+      body.querySelector('#op-q').addEventListener('input', (e) => {
+        clearTimeout(timer);
+        q = e.target.value.trim();
+        timer = setTimeout(() => { paint(); body.querySelector('#op-q').focus(); }, 250);
+      });
+
+      body.querySelector('#op-fill').addEventListener('click', () => {
+        let filled = 0;
+        for (const r of data.rows) {
+          if (r.needsCount && r.suggested && !Number(entered.get(r.id).qty)) {
+            entered.get(r.id).qty = String(r.suggested);
+            filled += 1;
+          }
+        }
+        UI.ok(filled ? `${filled} count(s) filled from the starter list.` : 'Every count is already filled.');
+        paint();
+      });
+
+      body.querySelector('#op-save').addEventListener('click', async (e) => {
+        const send = toSend();
+        if (!send.length) return UI.err('Put a quantity or a rate against at least one medicine.');
+        if (!await UI.confirm(
+          `Save ${send.length} medicine(s)? A count replaces what the register holds for that `
+          + 'medicine, and the difference is posted against your name.', { title: 'Opening stock' })) return;
+
+        e.target.disabled = true;
+        try {
+          const res = await API.post('/api/stock/opening/bulk', {
+            rows: send,
+            batchNo: body.querySelector('[name=batchNo]').value,
+            expiryDate: body.querySelector('[name=expiryDate]').value,
+            reason: body.querySelector('[name=reason]').value,
+          });
+          UI.ok(`${res.taken} medicine(s) saved — ${UI.num(res.units)} unit(s) on the shelf.`);
+          entered.clear();
+          await load();
+          body.querySelector('#op-out').innerHTML = `
+            <div class="alert ok mt"><b>${UI.num(res.taken)} medicine(s)</b> taken in on batch
+              <code>${UI.esc(res.batchNo)}</code>, expiring ${UI.esc(UI.date(res.expiryDate))}.
+              ${res.unpriced.length
+                ? `<div class="mt"><b>${UI.num(res.unpriced.length)} of them have no rate</b> and cannot be
+                     sold until one is set: ${UI.esc(res.unpriced.slice(0, 8).join(', '))}${
+                       res.unpriced.length > 8 ? ` and ${UI.num(res.unpriced.length - 8)} more` : ''}.
+                   <div class="small">Use the “No rate set” filter above to fill them in.</div></div>` : ''}
+              ${res.skipped.length
+                ? `<div class="mt muted small">${UI.num(res.skipped.length)} skipped:
+                     ${UI.esc(res.skipped.slice(0, 5).map((x) => `${x.name || x.drugId} (${x.why})`).join('; '))}</div>` : ''}
+            </div>`;
+        } catch (err) { UI.err(err.message); e.target.disabled = false; }
+      });
+    };
+
+    body.innerHTML = UI.loading();
+    await load();
+  }
+
+  window.StockUI = { barcodes, purchases, register, stocktake, opening, scanBox, printLabels, openLabelDialog, openMovements, openGrn, openSetStock };
 })();

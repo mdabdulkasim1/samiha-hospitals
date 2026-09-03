@@ -86,6 +86,7 @@
           <button data-tab="barcodes">Barcodes</button>
           <button data-tab="purchases">Purchases</button>
           <button data-tab="register">Stock register</button>
+          <button data-tab="opening">Opening stock</button>
           <button data-tab="stocktake">Stock take</button>
           <button data-tab="formulary">Formulary</button>
         </div>
@@ -469,6 +470,7 @@
         barcodes()  { return StockUI.barcodes(body); },
         purchases() { return StockUI.purchases(body); },
         register()  { return StockUI.register(body); },
+        opening()   { return StockUI.opening(body); },
         stocktake() { return StockUI.stocktake(body); },
 
         async formulary() {

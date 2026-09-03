@@ -238,6 +238,90 @@ test('supplier payments run the invoice down to paid', async () => {
   assert.strictEqual(list.outstanding, 0);
 });
 
+test('the whole shelf can be counted in on one sheet', async () => {
+  const sheet = (await api('GET', '/api/stock/opening/sheet')).body;
+  assert.ok(sheet.rows.length > 50, 'the sheet is the formulary, not a page of it');
+  assert.strictEqual(sheet.totals.medicines, sheet.rows.length);
+
+  // The starter list's own quantity is carried through as a proposal.
+  const proposed = sheet.rows.find((r) => r.code === 'PARA-500MG-TAB');
+  assert.ok(proposed, 'the formulary is on the sheet');
+  assert.strictEqual(proposed.suggested, 1000);
+  assert.strictEqual(proposed.pack, 'Strip of 10');
+  assert.ok(proposed.needsCount, 'nothing is on the shelf until somebody counts it');
+  assert.ok(proposed.needsRate, 'and the formulary carries no prices');
+
+  const take = sheet.rows.filter((r) => r.needsCount && r.suggested).slice(0, 20);
+  const res = await api('POST', '/api/stock/opening/bulk', {
+    rows: take.map((r) => ({ drugId: r.id, qty: r.suggested })),
+    reason: 'Opening stock',
+  });
+  assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+  assert.strictEqual(res.body.taken, take.length);
+  assert.strictEqual(res.body.units, take.reduce((t, r) => t + r.suggested, 0));
+  assert.ok(res.body.batchNo.startsWith('OPEN-'));
+
+  // Counted in, and the register says who by.
+  const again = (await api('GET', '/api/stock/opening/sheet')).body;
+  const now = again.rows.find((r) => r.id === take[0].id);
+  assert.strictEqual(now.on_hand, take[0].suggested);
+  assert.ok(!now.needsCount);
+
+  const moves = (await api('GET', `/api/stock/register/${take[0].id}/movements`)).body;
+  assert.ok(moves.movements.some((m) => m.txn_type === 'adjustment' && m.qty_delta === take[0].suggested));
+});
+
+test('counting a medicine again corrects the shelf instead of doubling it', async () => {
+  const sheet = (await api('GET', '/api/stock/opening/sheet')).body;
+  const row = sheet.rows.find((r) => r.code === 'PARA-500MG-TAB');
+  assert.ok(row.on_hand > 0, 'it went in on the sheet above');
+
+  await api('POST', '/api/stock/opening/bulk', { rows: [{ drugId: row.id, qty: 40 }] });
+  const after = (await api('GET', '/api/stock/opening/sheet')).body.rows.find((r) => r.id === row.id);
+  assert.strictEqual(after.on_hand, 40, 'the count is what is on the shelf, not what to add to it');
+});
+
+test('stock may be counted in before it is priced, but not sold that way', async () => {
+  const sheet = (await api('GET', '/api/stock/opening/sheet')).body;
+  // Over the counter, so the sale is refused for the price and nothing else.
+  const unpriced = sheet.rows.find((r) => r.needsRate && r.on_hand > 0 && r.schedule === 'OTC');
+  assert.ok(unpriced, 'the formulary carries no prices, so something is unpriced on the shelf');
+
+  const sale = await api('POST', '/api/pharmacy/counter-sale', {
+    customerName: 'Walk-in', items: [{ drugId: unpriced.id, qty: 1 }],
+  });
+  assert.strictEqual(sale.status, 409, JSON.stringify(sale.body));
+  assert.match(sale.body.error, /no rate set/i);
+
+  // Price it on the sheet and it sells.
+  const priced = await api('POST', '/api/stock/opening/bulk',
+    { rows: [{ drugId: unpriced.id, qty: unpriced.on_hand, mrp: 4.5 }] });
+  assert.strictEqual(priced.status, 200, JSON.stringify(priced.body));
+  assert.deepStrictEqual(priced.body.unpriced, []);
+
+  const ok = await api('POST', '/api/pharmacy/counter-sale', {
+    customerName: 'Walk-in', items: [{ drugId: unpriced.id, qty: 1 }],
+  });
+  assert.strictEqual(ok.status, 201, JSON.stringify(ok.body));
+});
+
+test('a sheet nobody may file, and one that says nothing', async () => {
+  const blocked = await api('POST', '/api/stock/opening/bulk',
+    { rows: [{ drugId: ids.para, qty: 10 }] }, 'reception');
+  assert.strictEqual(blocked.status, 403, 'the shelf is the pharmacy’s to count');
+
+  assert.strictEqual((await api('POST', '/api/stock/opening/bulk', { rows: [] })).status, 400);
+
+  // A line with no quantity is left alone rather than zeroed.
+  const before = (await api('GET', '/api/stock/opening/sheet')).body.rows.find((r) => r.id === ids.para);
+  const res = (await api('POST', '/api/stock/opening/bulk',
+    { rows: [{ drugId: ids.para, qty: 0 }, { drugId: 999999, qty: 5 }] })).body;
+  assert.strictEqual(res.taken, 0);
+  assert.strictEqual(res.skipped.length, 2);
+  const after = (await api('GET', '/api/stock/opening/sheet')).body.rows.find((r) => r.id === ids.para);
+  assert.strictEqual(after.on_hand, before.on_hand);
+});
+
 test('only the pharmacy may take stock in; everyone at the desk may scan', async () => {
   const blocked = await api('POST', '/api/stock/purchases', {
     supplierId: ids.supplier, items: [{ drugId: ids.ors, batchNo: 'X1', expiryDate: future(200), qty: 1 }],
