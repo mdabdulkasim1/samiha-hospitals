@@ -39,6 +39,7 @@
         <div class="tabs" id="b-tabs">
           <button class="active" data-tab="today">Today's collections${
             pending.totals.toCollect ? ` <span class="pill">${UI.num(pending.totals.toCollect)}</span>` : ''}</button>
+          <button data-tab="raise">Raise a bill</button>
           <button data-tab="invoices">Invoices</button>
           <button data-tab="plans">Payment plans</button>
         </div>
@@ -103,6 +104,8 @@
           host.querySelectorAll('[data-bill-for]').forEach((b) => b.addEventListener('click', () =>
             startBill(Number(b.dataset.billFor))));
         },
+
+        raise() { return renderCounterDesk(body); },
 
         invoices() {
           body.innerHTML = `
@@ -243,7 +246,7 @@
       });
 
       const printBtn = el.querySelector('#print-inv');
-      if (printBtn) printBtn.addEventListener('click', () => printInvoice(invoice));
+      if (printBtn) printBtn.addEventListener('click', () => printInvoice(invoice, UI.openPrintWindow()));
 
       const disc = el.querySelector('#discount');
       if (disc) disc.addEventListener('click', () => openBillDiscount(invoice, () => draw()));
@@ -290,6 +293,244 @@
     await draw();
   }
 
+  // ------------------------------------------------------------ the counter
+  /**
+   * The cashier's own screen: every service the clinic charges for, as a
+   * button with its rate on it.
+   *
+   * The question this answers is the one asked at the counter a hundred times
+   * a day — "what did this patient have?" — and the answer is given by
+   * pressing it. Charges go onto a running bill on the right, the patient is
+   * named once, and one press raises the invoice, takes the money and prints
+   * it. Nothing is typed but the discount and the amount received.
+   *
+   * The bill is built here before it exists in the database, because a cashier
+   * changes their mind mid-bill and a half-made invoice nobody finished is
+   * worse than no invoice at all. It reaches the server once, complete.
+   */
+  async function renderCounterDesk(body) {
+    const draft = [];          // { kind, id, name, price, taxPct, qty }
+    let patient = null;
+
+    body.innerHTML = `
+      <div class="grid sidebar-right">
+        <div>
+          <div class="card">
+            <div class="card-head"><h3>What did the patient have?</h3>
+              <span class="muted small">Press an item to put it on the bill — rates are the ones set
+                under Services &amp; Rates</span></div>
+            <div class="card-body" id="cd-board">${UI.loading()}</div>
+          </div>
+        </div>
+
+        <div>
+          <div class="card"><div class="card-head"><h3>Bill</h3>
+              <button class="btn ghost sm" id="cd-clear">Clear</button></div>
+            <div class="card-body tight" id="cd-lines"></div>
+            <div class="card-body">
+              <div id="cd-total"></div>
+              <div class="mt" id="cd-who"></div>
+              ${UI.field({ name: 'discountMode', label: 'Discount', value: 'amount',
+                options: [{ value: 'amount', label: 'Rupees off' }, { value: 'pct', label: 'A percentage' }] })}
+              ${UI.field({ name: 'discountValue', label: 'How much', type: 'number',
+                step: '0.01', min: '0', value: 0 })}
+              ${UI.field({ name: 'discountReason', label: 'Why', placeholder: 'Staff, goodwill, rounding' })}
+              ${UI.field({ name: 'mode', label: 'Paid by', value: 'cash',
+                options: ['cash', 'upi', 'card', 'netbanking', 'cheque', 'wallet']
+                  .map((m) => ({ value: m, label: UI.titleise(m) })) })}
+              ${UI.field({ name: 'reference', label: 'Reference', placeholder: 'UPI / card reference' })}
+              <button class="btn block mt" id="cd-raise" disabled>Raise the bill &amp; collect</button>
+              <button class="btn ghost block mt" id="cd-raise-only" disabled>Raise it without taking money</button>
+              <div id="cd-out"></div>
+            </div>
+          </div>
+        </div>
+      </div>`;
+
+    // ---- who it is for
+    const who = body.querySelector('#cd-who');
+    const drawWho = () => {
+      who.innerHTML = patient
+        ? `<div class="alert ok"><b>${UI.esc(patient.first_name)} ${UI.esc(patient.last_name || '')}</b>
+             · ${UI.esc(patient.uhid)}${patient.phone ? ' · ' + UI.esc(patient.phone) : ''}
+             <button class="btn ghost sm" id="cd-unpick" style="float:right">Change</button></div>`
+        : `<div class="search-row">
+             <input type="search" id="cd-q" placeholder="Whose bill is this? Name, UHID or mobile…"
+               autocomplete="off"></div>
+           <div id="cd-hits"></div>`;
+
+      const un = who.querySelector('#cd-unpick');
+      if (un) un.addEventListener('click', () => { patient = null; drawWho(); refresh(); });
+
+      const input = who.querySelector('#cd-q');
+      if (!input) return;
+      let timer;
+      input.addEventListener('input', () => {
+        clearTimeout(timer);
+        timer = setTimeout(async () => {
+          const q = input.value.trim();
+          const hits = who.querySelector('#cd-hits');
+          if (q.length < 2) return void (hits.innerHTML = '');
+          let rows = [];
+          try { rows = (await API.get('/api/patients' + API.qs({ q, limit: 6 }))).rows; }
+          catch (err) { return void (hits.innerHTML = `<div class="alert warn">${UI.esc(err.message)}</div>`); }
+          hits.innerHTML = rows.length ? rows.map((p) => `
+            <button type="button" class="btn ghost sm block mb" data-pt="${p.id}"
+              style="justify-content:space-between">
+              <span><b>${UI.esc(p.first_name)} ${UI.esc(p.last_name || '')}</b>
+                <span class="muted small"> ${UI.esc(p.uhid)}</span></span>
+              <span class="muted small">${UI.esc(p.phone || '')}</span></button>`).join('')
+            : '<div class="muted small">Nobody matched. Register them at the front desk first.</div>';
+          hits.querySelectorAll('[data-pt]').forEach((b) => b.addEventListener('click', () => {
+            patient = rows.find((r) => r.id === Number(b.dataset.pt));
+            drawWho();
+            refresh();
+          }));
+        }, 220);
+      });
+    };
+
+    // ---- the running bill
+    const lineTotal = (l) => UI.round2(l.price * l.qty);
+    const gross = () => UI.round2(draft.reduce((a, l) => a + lineTotal(l), 0));
+    const taxOf = () => UI.round2(draft.reduce((a, l) => a + lineTotal(l) * ((l.taxPct || 0) / 100), 0));
+
+    const discountOf = () => {
+      const mode = body.querySelector('[name=discountMode]').value;
+      const v = Math.max(Number(body.querySelector('[name=discountValue]').value) || 0, 0);
+      const chargeable = UI.round2(gross() + taxOf());
+      return { asked: mode === 'pct' ? UI.round2(chargeable * (v / 100)) : UI.round2(v), chargeable };
+    };
+
+    const refresh = () => {
+      body.querySelector('#cd-lines').innerHTML = UI.table([
+        { label: 'Item', render: (l) => `<b>${UI.esc(l.name)}</b>` },
+        { label: 'Qty', num: true, render: (l, i) => `<input type="number" min="1" step="1"
+            data-q="${i}" value="${l.qty}" style="width:64px;text-align:right">` },
+        { label: 'Amount', num: true, render: (l) => UI.money(lineTotal(l)) },
+        { label: '', render: (l, i) => `<button class="btn ghost sm" data-rm="${i}">Remove</button>` },
+      ], draft, { emptyText: 'Nothing on the bill yet — press what the patient had.' });
+
+      const d = discountOf();
+      const off = Math.min(d.asked, d.chargeable);
+      const net = UI.round2(d.chargeable - off);
+      body.querySelector('#cd-total').innerHTML = `
+        <div class="row-between"><span>Gross</span><b>${UI.money(gross())}</b></div>
+        ${taxOf() ? `<div class="row-between muted small"><span>Tax</span><span>${UI.money(taxOf())}</span></div>` : ''}
+        ${off ? `<div class="row-between" style="color:var(--orange-dark)">
+          <span>Discount</span><span>− ${UI.money(off)}</span></div>` : ''}
+        <div class="row-between" style="font-size:17px;border-top:1px solid var(--line);margin-top:6px;padding-top:8px">
+          <b>To pay</b><b>${UI.money(net)}</b></div>
+        ${d.asked > d.chargeable ? `<div class="alert warn mt">A discount of ${UI.money(d.asked)}
+          is more than the bill.</div>` : ''}
+        ${draft.length && !patient
+          ? '<div class="alert info mt">Name the patient below and the bill can be raised.</div>' : ''}`;
+
+      body.querySelectorAll('[data-q]').forEach((i) => i.addEventListener('input', () => {
+        draft[Number(i.dataset.q)].qty = Math.max(Number(i.value) || 1, 1);
+        refresh();
+      }));
+      body.querySelectorAll('[data-rm]').forEach((b) => b.addEventListener('click', () => {
+        draft.splice(Number(b.dataset.rm), 1);
+        refresh();
+      }));
+
+      const ready = Boolean(draft.length && patient && d.asked <= d.chargeable);
+      body.querySelector('#cd-raise').disabled = !ready;
+      body.querySelector('#cd-raise-only').disabled = !ready;
+    };
+
+    body.querySelectorAll('[name=discountValue], [name=discountMode]')
+      .forEach((f) => f.addEventListener('input', refresh));
+    body.querySelector('#cd-clear').addEventListener('click', () => {
+      draft.length = 0;
+      refresh();
+    });
+
+    // ---- the board itself
+    BillingTools.quickAdd(body.querySelector('#cd-board'), {
+      async onAdd(item) {
+        const found = draft.find((l) => l.kind === item.kind && l.id === item.id);
+        if (found) found.qty += 1;
+        else draft.push({ ...item, qty: 1 });
+        refresh();
+      },
+    });
+
+    // ---- raising it
+    const raise = async (collect) => {
+      const btn = body.querySelector(collect ? '#cd-raise' : '#cd-raise-only');
+      btn.disabled = true;
+      try {
+        const inv = await API.post('/api/billing/invoices', { patientId: patient.id, kind: 'opd' });
+        for (const l of draft) {
+          await API.post(`/api/billing/invoices/${inv.id}/items`, {
+            refType: l.kind === 'test' ? 'lab' : 'service', refId: l.id,
+            description: l.name, qty: l.qty, unitPrice: l.price, taxPct: l.taxPct,
+          });
+        }
+
+        const d = discountOf();
+        if (d.asked > 0) {
+          await API.post(`/api/billing/invoices/${inv.id}/bill-discount`, {
+            amount: Math.min(d.asked, d.chargeable),
+            reason: body.querySelector('[name=discountReason]').value || 'Given at the counter',
+          });
+        }
+
+        let full = await API.get(`/api/billing/invoices/${inv.id}`);
+        let receipt = null;
+        if (collect && full.balance > 0) {
+          const paid = await API.post(`/api/billing/invoices/${inv.id}/payments`, {
+            amount: full.balance,
+            mode: body.querySelector('[name=mode]').value,
+            reference: body.querySelector('[name=reference]').value || undefined,
+          });
+          receipt = paid.receiptNo || paid.receipt_no;
+          full = await API.get(`/api/billing/invoices/${inv.id}`);
+        }
+
+        UI.ok(`${full.invoice_no} raised — ${UI.money(full.net)}${receipt ? `, receipt ${receipt}` : ''}.`);
+        body.querySelector('#cd-out').innerHTML = `
+          <div class="alert ok mt"><b>${UI.esc(full.invoice_no)}</b> — ${UI.money(full.net)}
+            ${receipt ? `collected, receipt ${UI.esc(receipt)}.` : `raised, ${UI.money(full.balance)} to collect.`}
+            <div class="mt">
+              <button class="btn sm" id="cd-print">Print the invoice</button>
+              <button class="btn ghost sm" id="cd-open">Open the bill</button>
+              <button class="btn ghost sm" id="cd-next">Next patient</button>
+            </div></div>`;
+        // The window is claimed on the click itself: a browser only allows a
+        // popup while it can still see the gesture, and the QR is fetched after.
+        body.querySelector('#cd-print').addEventListener('click', () => {
+          printInvoice(full, UI.openPrintWindow());
+        });
+        body.querySelector('#cd-open').addEventListener('click', () =>
+          APP.navigate('billing', { invoiceId: full.id }));
+        body.querySelector('#cd-next').addEventListener('click', () => {
+          draft.length = 0;
+          patient = null;
+          body.querySelector('[name=discountValue]').value = 0;
+          body.querySelector('[name=reference]').value = '';
+          body.querySelector('#cd-out').innerHTML = '';
+          drawWho();
+          refresh();
+        });
+
+        // The bill is made; the board is ready for the next patient either way.
+        draft.length = 0;
+        refresh();
+      } catch (err) {
+        UI.err(err.message);
+        btn.disabled = false;
+      }
+    };
+    body.querySelector('#cd-raise').addEventListener('click', () => raise(true));
+    body.querySelector('#cd-raise-only').addEventListener('click', () => raise(false));
+
+    drawWho();
+    refresh();
+  }
+
   // ------------------------------------------------------------ counter bill
   /**
    * A bill made up by hand, service by service, off the clinic's own tariff.
@@ -310,7 +551,7 @@
     APP.setSubtitle(`${inv.invoice_no} · ${who} · ${inv.uhid}`);
     APP.actions([
       { id: 'back', label: '← Billing', onClick: () => APP.navigate('billing') },
-      { id: 'print', label: 'Print invoice', onClick: () => printInvoice(inv) },
+      { id: 'print', label: 'Print invoice', onClick: () => printInvoice(inv, UI.openPrintWindow()) },
     ]);
 
     const draw = async () => {
@@ -390,7 +631,7 @@
       const disc = el.querySelector('#b-discount');
       if (disc) disc.addEventListener('click', () => BillingTools.discount(inv, draw));
       el.querySelectorAll('#b-print, #b-print2').forEach((b) =>
-        b.addEventListener('click', () => printInvoice(inv)));
+        b.addEventListener('click', () => printInvoice(inv, UI.openPrintWindow())));
       const pay = el.querySelector('#b-pay');
       if (pay) pay.addEventListener('click', () => openPayment(inv, draw));
       const visit = el.querySelector('#b-visit');
@@ -771,7 +1012,7 @@
       footer: `<button class="btn ghost" data-act="print">Print invoice</button>
                <button class="btn ghost" data-act="__close">Close</button>`,
       onMount() { wireInvoiceActions(inv, () => { UI.closeAllModals(); openInvoice(id); }); },
-      onAction(act) { if (act === 'print') { printInvoice(inv); return 'keep'; } },
+      onAction(act) { if (act === 'print') { printInvoice(inv, UI.openPrintWindow()); return 'keep'; } },
     });
   }
   APP.openInvoice = openInvoice;
@@ -782,40 +1023,170 @@
    * by name, the same rule the prescription and the report follow: a bill goes
    * home with the patient and on to their insurer.
    */
-  function printInvoice(inv) {
-    const html = `<div class="doc">
-      ${UI.docHeader('Tax Invoice', [`Invoice: ${inv.invoice_no}`, `Date: ${UI.date(inv.created_at)}`,
-        `Status: ${UI.titleise(inv.status)}`])}
-      <table><tbody>
-        <tr><th>Patient</th><td>${UI.esc(inv.first_name)} ${UI.esc(inv.last_name || '')}</td>
-            <th>UHID</th><td>${UI.esc(inv.uhid)}</td></tr>
-        <tr><th>Phone</th><td>${UI.esc(inv.phone || '—')}</td>
-            <th>Type</th><td>${UI.esc(inv.kind.toUpperCase())}</td></tr>
-        ${inv.doctor_code ? `<tr><th>Treating doctor</th><td>${UI.esc(inv.doctor_code)}</td>
-            <th>Visit</th><td>${UI.esc(inv.visit_no || inv.ip_no || '—')}</td></tr>` : ''}
-      </tbody></table>
-      <table class="mt"><thead><tr><th>#</th><th>Description</th><th class="num">Qty</th>
-        <th class="num">Rate</th><th class="num">Amount</th></tr></thead><tbody>
-        ${inv.items.map((i, n) => `<tr><td>${n + 1}</td><td>${UI.esc(i.description)}</td>
-          <td class="num">${UI.esc(i.qty)}</td><td class="num">${UI.money(i.unit_price)}</td>
-          <td class="num">${UI.money(i.amount)}</td></tr>`).join('')}
-      </tbody></table>
-      <div class="totals">
-        <div class="line"><span>Gross</span><span>${UI.money(inv.gross)}</span></div>
-        ${inv.discount ? `<div class="line"><span>Line discounts</span><span>− ${UI.money(inv.discount)}</span></div>` : ''}
-        ${inv.bill_discount ? `<div class="line"><span>Discount</span><span>− ${UI.money(inv.bill_discount)}</span></div>` : ''}
-        ${inv.sliding_discount ? `<div class="line"><span>Sliding-scale discount</span><span>− ${UI.money(inv.sliding_discount)}</span></div>` : ''}
-        ${inv.assistance_covered ? `<div class="line"><span>Assistance programme</span><span>− ${UI.money(inv.assistance_covered)}</span></div>` : ''}
-        ${inv.tax ? `<div class="line"><span>Tax</span><span>${UI.money(inv.tax)}</span></div>` : ''}
-        <div class="line grand"><span>Net payable</span><span>${UI.money(inv.net)}</span></div>
-        <div class="line"><span>Paid</span><span>${UI.money(inv.paid)}</span></div>
-        <div class="line"><span>Balance</span><span>${UI.money(inv.balance)}</span></div>
-      </div>
-      <div class="sign"><div>Patient signature</div><div>For ${UI.esc(APP.clinic.name)}<br>Authorised signatory</div></div>
-      <div class="foot-note">This is a computer-generated invoice. Please retain it for your records and for
-        insurance reimbursement.</div>
-    </div>`;
-    UI.print(html, 'Invoice ' + inv.invoice_no);
+  async function printInvoice(inv, windowRef = null) {
+    // Claim the window on the click, before the QR is fetched: a browser only
+    // allows a popup while it can still see the gesture that asked for it.
+    const win = windowRef || UI.openPrintWindow();
+    let pay = null;
+    try { pay = await API.get(`/api/billing/invoices/${inv.id}/upi`); } catch { pay = null; }
+
+    const age = inv.age_years ? `${inv.age_years} yrs` : '—';
+    const concessions = [
+      ['Line discounts', inv.discount],
+      [`Discount${inv.bill_discount_reason ? ' — ' + inv.bill_discount_reason : ''}`, inv.bill_discount],
+      ['Sliding-scale concession', inv.sliding_discount],
+      ['Assistance programme', inv.assistance_covered],
+      ['Insurance', inv.insurance_covered],
+    ].filter(([, v]) => Number(v) > 0);
+
+    const html = `${UI.sheetStyles()}
+      <style>
+        .inv-tot { margin-top: 10px; margin-left: auto; width: 62mm; }
+        .inv-tot .line { display: flex; justify-content: space-between; padding: 2px 0; }
+        .inv-tot .line.off { color: #B06A00; }
+        .inv-tot .line.grand {
+          border-top: 1px solid #16232B; margin-top: 4px; padding-top: 5px;
+          font-size: 13px; font-weight: 700;
+        }
+        .inv-tot .line.due { font-weight: 700; color: #9E1B34; }
+        .inv-words { margin-top: 6px; font-size: 9px; color: #5A6B74; font-style: italic; }
+        /* Pay-by-phone panel. The square has to survive being printed small and
+           photographed off paper, so it is given room and a quiet border. */
+        .inv-pay { display: flex; gap: 10px; align-items: center; margin-top: 12px;
+                   border: 1px solid #E4EAED; border-radius: 4px; padding: 8px 10px; }
+        .inv-pay .qr { width: 27mm; height: 27mm; flex: none; }
+        .inv-pay .qr svg { width: 100%; height: 100%; display: block; }
+        .inv-pay .k { font-size: 7.5px; letter-spacing: .9px; text-transform: uppercase;
+                      color: #8B9AA2; font-weight: 600; }
+        .inv-pay .vpa { font-weight: 700; font-size: 11.5px; }
+        .inv-pay .amt { font-size: 13px; font-weight: 700; color: #9E1B34; }
+        .inv-pay .how { font-size: 8.5px; color: #5A6B74; margin-top: 3px; line-height: 1.5; }
+        .inv-paid { margin-top: 12px; text-align: center; font-weight: 700; color: #1B7A4B;
+                    border: 1px dashed #1B7A4B; border-radius: 4px; padding: 6px; letter-spacing: 2px; }
+      </style>
+      <div class="sheet">
+        ${UI.sheetHead('Tax Invoice')}
+
+        <div class="who">
+          <div style="grid-column:span 2">
+            <div class="k">Patient</div>
+            <div class="v lead">${UI.esc(inv.first_name)} ${UI.esc(inv.last_name || '')}</div>
+          </div>
+          <div><div class="k">Age / Sex</div>
+            <div class="v">${UI.esc(age)} · ${UI.esc(UI.titleise(inv.gender || '—'))}</div></div>
+          <div><div class="k">UHID</div><div class="v">${UI.esc(inv.uhid || '—')}</div></div>
+          <div><div class="k">Invoice</div><div class="v">${UI.esc(inv.invoice_no)}</div></div>
+          <div><div class="k">Date</div><div class="v">${UI.esc(UI.date(inv.created_at))}</div></div>
+          <div><div class="k">Mobile</div><div class="v">${UI.esc(inv.phone || '—')}</div></div>
+          <div><div class="k">Aadhaar</div><div class="v">${aadhaarDigits(inv.aadhaar_number)}</div></div>
+          ${inv.visit_no || inv.ip_no
+            ? `<div><div class="k">${inv.ip_no ? 'Admission' : 'Visit'}</div>
+                 <div class="v">${UI.esc(inv.ip_no || inv.visit_no)}</div></div>` : ''}
+          ${inv.doctor_code ? `<div><div class="k">Doctor code</div>
+            <div class="v">${UI.esc(inv.doctor_code)}</div></div>` : ''}
+          <div><div class="k">Bill type</div><div class="v">${UI.esc(UI.titleise(inv.kind))}</div></div>
+        </div>
+
+        <table class="mt"><thead><tr>
+          <th style="width:16px">#</th><th>Particulars</th>
+          <th class="num">Qty</th><th class="num">Rate</th><th class="num">Amount</th>
+        </tr></thead><tbody>
+          ${inv.items.map((i, n) => `<tr><td>${n + 1}</td>
+            <td>${UI.esc(i.description)}</td>
+            <td class="num">${UI.esc(i.qty)}</td>
+            <td class="num">${UI.money(i.unit_price)}</td>
+            <td class="num">${UI.money(i.amount)}</td></tr>`).join('')
+            || '<tr><td colspan="5">No charges on this bill.</td></tr>'}
+        </tbody></table>
+
+        <div class="inv-tot">
+          <div class="line"><span>Gross</span><span>${UI.money(inv.gross)}</span></div>
+          ${concessions.map(([label, v]) =>
+            `<div class="line off"><span>${UI.esc(label)}</span><span>− ${UI.money(v)}</span></div>`).join('')}
+          ${inv.tax ? `<div class="line"><span>Tax</span><span>${UI.money(inv.tax)}</span></div>` : ''}
+          <div class="line grand"><span>Net payable</span><span>${UI.money(inv.net)}</span></div>
+          ${inv.paid ? `<div class="line"><span>Paid</span><span>${UI.money(inv.paid)}</span></div>` : ''}
+          ${inv.balance > 0.009
+            ? `<div class="line due"><span>Balance due</span><span>${UI.money(inv.balance)}</span></div>` : ''}
+        </div>
+        <div class="inv-words">Rupees ${UI.esc(rupeesInWords(inv.net))} only.</div>
+
+        ${inv.balance > 0.009 && pay && pay.svg ? `
+          <div class="inv-pay">
+            <div class="qr">${pay.svg}</div>
+            <div>
+              <div class="k">Scan to pay by UPI</div>
+              <div class="amt">${UI.money(pay.amount)}</div>
+              <div class="vpa">${UI.esc(pay.upiId)}</div>
+              <div class="how">Open any UPI app — GPay, PhonePe, Paytm, BHIM — scan this code and
+                confirm. The amount and the invoice number ${UI.esc(inv.invoice_no)} are already in it.
+                <br>Payable to ${UI.esc(pay.payee || '')}.</div>
+            </div>
+          </div>` : ''}
+        ${inv.balance <= 0.009 && inv.net > 0 ? '<div class="inv-paid">PAID IN FULL</div>' : ''}
+
+        ${inv.payments && inv.payments.length ? `
+          <div class="block"><div class="k">Payments received</div>
+            <table><tbody>
+              ${inv.payments.map((p) => `<tr>
+                <td>${UI.esc(UI.date(p.paid_at))} · ${UI.esc(UI.titleise(p.mode))}${
+                  p.reference ? ' · ' + UI.esc(p.reference) : ''}</td>
+                <td class="num">${UI.money(p.amount)}</td>
+                <td class="num">${UI.esc(p.receipt_no)}</td></tr>`).join('')}
+            </tbody></table></div>` : ''}
+
+        <div class="stamp-row">
+          <div class="stamp"><div class="box"></div>
+            <div class="cap">For ${UI.esc((APP.clinic || {}).name || '')}</div></div>
+        </div>
+
+        <div class="note">Computer-generated invoice — valid without a signature.
+          Please keep it for your records and for any insurance reimbursement.
+          ${(APP.clinic || {}).gstin ? `GSTIN ${UI.esc(APP.clinic.gstin)}.` : ''}</div>
+      </div>`;
+
+    UI.printSheet(html, 'Invoice ' + inv.invoice_no, win);
+  }
+
+  /** Aadhaar as it is written on the card: four, four, four. */
+  function aadhaarDigits(value) {
+    const digits = String(value || '').replace(/\D/g, '');
+    if (digits.length !== 12) return '—';
+    return `${digits.slice(0, 4)} ${digits.slice(4, 8)} ${digits.slice(8)}`;
+  }
+
+  /**
+   * The amount in words, which an invoice carries so a figure cannot be
+   * altered after it is printed. Indian numbering: lakh and crore, not million.
+   */
+  function rupeesInWords(amount) {
+    const ONES = ['', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten',
+      'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen',
+      'nineteen'];
+    const TENS = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'];
+    const under100 = (n) => (n < 20 ? ONES[n] : `${TENS[Math.floor(n / 10)]}${n % 10 ? '-' + ONES[n % 10] : ''}`);
+    const under1000 = (n) => [
+      n >= 100 ? `${ONES[Math.floor(n / 100)]} hundred` : '',
+      n % 100 ? under100(n % 100) : '',
+    ].filter(Boolean).join(' ');
+
+    const whole = Math.floor(Math.abs(Number(amount) || 0));
+    const paise = Math.round((Math.abs(Number(amount) || 0) - whole) * 100);
+    if (!whole && !paise) return 'zero';
+
+    const parts = [];
+    const groups = [[10000000, 'crore'], [100000, 'lakh'], [1000, 'thousand']];
+    let left = whole;
+    for (const [size, label] of groups) {
+      if (left >= size) {
+        parts.push(`${under1000(Math.floor(left / size))} ${label}`);
+        left %= size;
+      }
+    }
+    if (left) parts.push(under1000(left));
+    const words = parts.join(' ').replace(/\s+/g, ' ').trim();
+    const capped = words.charAt(0).toUpperCase() + words.slice(1);
+    return paise ? `${capped || 'Zero'} and ${under100(paise)} paise` : capped;
   }
 
   /**

@@ -8,6 +8,8 @@ const { generate } = require('../lib/ids');
 const billing = require('../services/billing');
 const whatsapp = require('../services/whatsapp');
 const audit = require('../lib/audit');
+const clinic = require('../services/clinic');
+const upi = require('../services/upi');
 
 const router = express.Router();
 const cashRoles = requireRole('cashier', 'reception');
@@ -130,6 +132,37 @@ router.get('/invoices/:id', viewRoles, wrap((req, res) => {
   const inv = billing.fullInvoice(int(req.params.id));
   if (!inv) throw notFound('Invoice not found');
   res.json(inv);
+}));
+
+/**
+ * The bill as a UPI request: the link a patient's app understands, and the
+ * square that goes on the printed invoice.
+ *
+ * It asks for what is still owed, not what the bill came to, so a patient who
+ * has already part-paid scans a code for the remainder. Nothing is returned
+ * when the clinic has not set a collection account — a QR pointing nowhere is
+ * worse on a bill than no QR at all.
+ */
+router.get('/invoices/:id/upi', viewRoles, wrap((req, res) => {
+  const inv = billing.fullInvoice(int(req.params.id));
+  if (!inv) throw notFound('Invoice not found');
+
+  const profile = clinic.profile();
+  const amount = billing.round2(Math.max(inv.balance, 0));
+  const uri = amount > 0 ? upi.link({
+    upiId: profile.upiId, payeeName: profile.upiName, amount,
+    invoiceNo: inv.invoice_no, note: `${inv.invoice_no} ${profile.name || ''}`.trim(),
+  }) : null;
+
+  res.json({
+    configured: Boolean(profile.upiId),
+    invoiceNo: inv.invoice_no,
+    payee: profile.upiName || profile.name,
+    upiId: profile.upiId || null,
+    amount,
+    uri,
+    svg: uri ? upi.qrSvg(uri) : null,
+  });
 }));
 
 router.post('/invoices', cashRoles, wrap((req, res) => {

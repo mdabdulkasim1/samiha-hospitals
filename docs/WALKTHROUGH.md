@@ -131,13 +131,37 @@ pharmacy.
 **Complete check-out** issues the exit pass. An uncollected prescription does
 not hold it up; the desk is told what is still to collect.
 
-### A bill with no visit behind it
+### Raising a bill from scratch
 
-Somebody walks in for a dressing, or comes back for a report they paid for.
-**Billing → + New bill**: search the patient, and the same charge board opens
-against a fresh bill. Add, remove, discount, collect, print. It is the same
-screen an invoice opens in, so any bill in the list can be picked up and worked
-on.
+**Billing → Raise a bill** is the counter's own screen, and the fastest way to
+work: every service the clinic charges for, laid out as buttons with the rate
+on each. Press what the patient had — consultation, then a blood test, then a
+dressing — and it goes onto the bill on the right, quantities and all. Name the
+patient, give a discount if one is due, choose how they are paying, and one
+press raises the invoice, takes the money and offers the print.
+
+Nothing is typed except the discount and the reference. Press the same button
+twice and the quantity goes to two.
+
+**+ New bill** at the top does the same thing the other way round — patient
+first, then the board — and opens the bill in a screen any invoice in the list
+can be reopened in, to add to, discount or collect against later.
+
+### What the patient takes home
+
+The invoice prints as an A5 sheet on the clinic's letterhead, laid out like the
+prescription: name, age and sex, UHID, Aadhaar, mobile, the invoice number and
+date, then the charges line by line, the concessions, the net, and the amount
+in words.
+
+If anything is still owed, it carries a **UPI QR code** for exactly that
+amount. The patient opens any UPI app, scans, and confirms — the account, the
+sum and the invoice number are already in the code, so the payment that lands
+names the bill it paid. Settled bills print `PAID IN FULL` instead.
+
+The account it points at is set once, by an administrator, under **Account &
+System → Clinic & payments**. Until it is set, bills print without a code —
+never with a guessed one.
 
 ## 8 · Pharmacy
 

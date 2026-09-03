@@ -50,6 +50,17 @@ module.exports = {
     code: (env.CLINIC_CODE || 'SPC').toUpperCase(),
     state: env.CLINIC_STATE || 'Tamil Nadu',
     stateCode: env.CLINIC_STATE_CODE || '33',
+    /*
+     * Where a patient's UPI payment goes. A bill printed with a QR code is
+     * paid from the chair, so this is the clinic's own collection VPA and the
+     * name that will show in the payer's app before they confirm.
+     *
+     * Left empty until somebody sets it, here or under Account & System: a QR
+     * pointing at the wrong account is worse than no QR at all, so nothing is
+     * guessed and no code prints until there is an ID to print.
+     */
+    upiId: env.CLINIC_UPI_ID || '',
+    upiName: env.CLINIC_UPI_NAME || env.CLINIC_NAME || 'SAMIHA POLYCLINIC & DIAGNOSTICS',
   },
 
   /**

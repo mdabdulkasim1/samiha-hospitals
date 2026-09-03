@@ -7,10 +7,56 @@ const { requireRole } = require('../lib/auth');
 const { str, int } = require('../lib/validate');
 const backup = require('../services/backup');
 const mailer = require('../services/mailer');
+const clinic = require('../services/clinic');
+const upi = require('../services/upi');
 const audit = require('../lib/audit');
 
 const router = express.Router();
 const adminOnly = requireRole('admin');
+
+/**
+ * The clinic's own particulars — what prints on every document, and the UPI
+ * account a patient's payment lands in.
+ *
+ * Each row says what is stored and what the deployment would fall back to if
+ * it were cleared, so nobody has to guess whether a blank box means "empty" or
+ * "using the default".
+ */
+router.get('/clinic', adminOnly, wrap((_req, res) => {
+  const profile = clinic.profile();
+  const uri = upi.link({
+    upiId: profile.upiId, payeeName: profile.upiName, amount: 1,
+    invoiceNo: 'SAMPLE', note: 'Sample',
+  });
+  res.json({
+    fields: clinic.editable(),
+    profile,
+    upi: {
+      configured: Boolean(profile.upiId),
+      // A sample code for ₹1, so whoever sets the ID can scan it with their own
+      // phone and see the right account name before a patient ever does.
+      sampleSvg: uri ? upi.qrSvg(uri) : null,
+    },
+  });
+}));
+
+router.patch('/clinic', adminOnly, wrap((req, res) => {
+  const patch = req.body && typeof req.body === 'object' ? req.body : {};
+  const unknown = Object.keys(patch).filter((k) => !Object.prototype.hasOwnProperty.call(clinic.EDITABLE, k));
+  if (unknown.length) throw badRequest(`Not a clinic setting: ${unknown.join(', ')}`);
+
+  // A UPI ID is checked for shape before it is saved. Money sent to a VPA that
+  // does not exist simply fails, but money sent to one that exists and is not
+  // ours is gone, so a typo is worth catching at the point it is typed.
+  const vpa = patch['clinic.upiId'];
+  if (vpa !== undefined && String(vpa).trim() !== '' && !/^[\w.\-]{2,64}@[A-Za-z]{2,64}$/.test(String(vpa).trim())) {
+    throw badRequest('A UPI ID looks like name@bank — for example samiha@okicici.');
+  }
+
+  const changed = clinic.save(patch);
+  audit.log(req, 'update', 'settings', null, { keys: changed });
+  res.json({ changed, profile: clinic.profile() });
+}));
 
 /** Where recovery and backups are pointed, and whether they actually work. */
 router.get('/system', adminOnly, wrap(async (_req, res) => {

@@ -124,3 +124,28 @@ separate alert — a backup that quietly stops working is worse than none.
 6. Take a manual backup, download it, and confirm it opens.
 7. Serve over HTTPS and set `NODE_ENV=production` — session cookies are marked `Secure` only
    in production.
+
+## Collecting by UPI
+
+Every printed bill can carry a QR code for whatever is still owed. A patient
+scans it with any UPI app and confirms; the payee, the amount and the invoice
+number are already in the code, so the money that lands names the bill it paid.
+
+Set the collection account once, under **Account & System → Clinic & payments**:
+
+- **UPI ID** — the clinic's own collection VPA, `samiha@okicici` or
+  `7200750420@ybl`. It is checked for shape before it is saved.
+- **Payee name** — what shows in the patient's app before they confirm.
+
+The settings screen draws a sample code for ₹1 from whatever is saved. Scan it
+with your own phone before the first patient does: the account name your app
+offers to pay is the one everybody will see.
+
+A deployment can also supply these as `CLINIC_UPI_ID` and `CLINIC_UPI_NAME`,
+which is what a fresh install starts with; anything set in the app wins, so a
+clinic can move its collections to another account without a redeploy. The same
+screen sets the clinic name, address, phone, email and GSTIN that print on the
+letterhead of every document.
+
+Until an ID is set, bills simply print without a payment code. Nothing is
+guessed — a QR pointing at the wrong account is worse than no QR at all.

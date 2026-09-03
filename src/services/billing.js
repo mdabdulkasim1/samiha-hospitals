@@ -131,6 +131,7 @@ function fullInvoice(invoiceId) {
    */
   const invoice = db.prepare(
     `SELECT i.*, p.uhid, p.first_name, p.last_name, p.phone, p.address,
+            p.age_years, p.gender, p.aadhaar_number,
             dp.doctor_code, u.name AS doctor_name, v.visit_no, adm.ip_no
        FROM invoices i
        JOIN patients p ON p.id = i.patient_id

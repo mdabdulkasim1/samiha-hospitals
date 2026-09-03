@@ -79,10 +79,21 @@
         if (!item.price) {
           return UI.warn(`${item.name} has no rate set. Set one under Services & Rates first.`);
         }
+        /*
+         * Held down only while the charge is being put on the bill, so a slow
+         * network cannot be double-pressed into two of the same line. It comes
+         * back either way: a desk billing four dressings presses the same
+         * button four times, and a button that stayed dead after the first
+         * would look broken.
+         */
         b.disabled = true;
         try {
           await onAdd(item);
-        } catch (err) { UI.err(err.message); b.disabled = false; }
+        } catch (err) {
+          UI.err(err.message);
+        } finally {
+          b.disabled = false;
+        }
       }));
     };
 

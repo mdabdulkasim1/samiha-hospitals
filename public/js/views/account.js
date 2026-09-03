@@ -11,6 +11,7 @@
       el.innerHTML = `
         <div class="tabs" id="ac-tabs">
           <button class="active" data-tab="password">My password</button>
+          ${isAdmin ? '<button data-tab="clinic">Clinic &amp; payments</button>' : ''}
           ${isAdmin ? '<button data-tab="system">Recovery &amp; email</button>' : ''}
           ${isAdmin ? '<button data-tab="backups">Backups</button>' : ''}
           ${isAdmin ? '<button data-tab="staff">Staff access</button>' : ''}
@@ -18,7 +19,8 @@
         <div id="ac-body"></div>`;
 
       const body = el.querySelector('#ac-body');
-      const tabs = { password: passwordTab, system: systemTab, backups: backupTab, staff: staffTab };
+      const tabs = { password: passwordTab, clinic: clinicTab, system: systemTab,
+        backups: backupTab, staff: staffTab };
       el.querySelectorAll('#ac-tabs button').forEach((b) => b.addEventListener('click', () => {
         el.querySelectorAll('#ac-tabs button').forEach((x) => x.classList.toggle('active', x === b));
         body.innerHTML = UI.loading();
@@ -27,6 +29,97 @@
       await passwordTab(body);
     },
   });
+
+  /**
+   * What the clinic calls itself on paper, and where a patient's money goes.
+   *
+   * The UPI ID is the one thing here a patient acts on: it is drawn as the QR
+   * code on every printed bill, and whatever it points at is where the money
+   * lands. So it is checked for shape, and shown back as a live code to scan —
+   * whoever sets it can hold their own phone to the screen and read the
+   * account name before a single patient ever does.
+   */
+  async function clinicTab(body) {
+    const draw = async () => {
+      const data = await API.get('/api/admin/clinic');
+      const field = (key) => data.fields.find((f) => f.key === key) || { value: '', fallback: '' };
+      const box = (key, label, hint) => {
+        const f = field(key);
+        return UI.field({
+          name: key, label, value: f.value,
+          placeholder: f.fallback ? f.fallback : '',
+          hint: hint || (f.fallback && !f.value ? `Leaving this blank uses “${f.fallback}”.` : ''),
+        });
+      };
+
+      body.innerHTML = `
+        <div class="grid c2">
+          <div class="card">
+            <div class="card-head"><h3>Collecting by UPI</h3>
+              <span class="muted small">Printed as a QR code on every bill</span></div>
+            <div class="card-body">
+              ${data.upi.configured
+                ? '<div class="alert ok">Bills print a scannable code for whatever is still to collect.</div>'
+                : `<div class="alert warn">No UPI account is set, so bills print without a payment code.
+                     Enter the clinic's collection ID below.</div>`}
+              <form id="upi-form">
+                ${box('clinic.upiId', 'UPI ID', 'The clinic\'s own collection ID — samiha@okicici, 7200750420@ybl.')}
+                ${box('clinic.upiName', 'Payee name', 'What shows in the patient\'s app before they confirm.')}
+                <button class="btn block" type="submit">Save</button>
+              </form>
+              ${data.upi.sampleSvg ? `
+                <div class="mt" style="display:flex;gap:14px;align-items:center">
+                  <div style="width:130px;flex:none">${data.upi.sampleSvg}</div>
+                  <div class="muted small">A sample code for <b>₹1</b>. Scan it with your own phone:
+                    the account name it offers to pay is the one every patient will see.
+                    <div class="mt">Paying to <b>${UI.esc(data.profile.upiId)}</b></div></div>
+                </div>` : ''}
+              <div id="upi-out"></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h3>On every document</h3>
+              <span class="muted small">Letterhead of the prescription, report and bill</span></div>
+            <div class="card-body">
+              <form id="cl-form">
+                ${box('clinic.name', 'Clinic name')}
+                ${box('clinic.address', 'Address')}
+                ${box('clinic.phone', 'Phone')}
+                ${box('clinic.email', 'Email')}
+                ${box('clinic.gstin', 'GSTIN', 'Printed on the tax invoice when set.')}
+                <button class="btn block" type="submit">Save</button>
+              </form>
+              <div class="alert info mt">Changes show on documents printed from a fresh sign-in.</div>
+              <div id="cl-out"></div>
+            </div>
+          </div>
+        </div>`;
+
+      const save = async (formId, outId) => {
+        const form = body.querySelector(formId);
+        form.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const btn = form.querySelector('button[type=submit]');
+          btn.disabled = true;
+          try {
+            const patch = {};
+            form.querySelectorAll('input, textarea').forEach((i) => { patch[i.name] = i.value; });
+            await API.patch('/api/admin/clinic', patch);
+            UI.ok('Saved.');
+            await draw();
+          } catch (err) {
+            body.querySelector(outId).innerHTML = `<div class="alert danger mt">${UI.esc(err.message)}</div>`;
+            btn.disabled = false;
+          }
+        });
+      };
+      await save('#upi-form', '#upi-out');
+      await save('#cl-form', '#cl-out');
+    };
+
+    await draw();
+  }
 
   function passwordTab(body) {
     body.innerHTML = `

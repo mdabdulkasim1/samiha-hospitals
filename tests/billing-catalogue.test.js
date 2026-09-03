@@ -547,3 +547,73 @@ test('a formulary item gets its price from the pack that arrives', async () => {
   const priced = db.prepare('SELECT mrp FROM drugs WHERE id = ?').get(drug.id).mrp;
   assert.strictEqual(priced, 1.6);
 });
+
+// ------------------------------------------------------------- paying by UPI
+test('a bill carries a UPI code for what is still owed', async () => {
+  const set = await api('PATCH', '/api/admin/clinic', {
+    'clinic.upiId': 'samiha@okicici', 'clinic.upiName': 'SAMIHA POLYCLINIC',
+  }, 'admin');
+  assert.strictEqual(set.status, 200, JSON.stringify(set.body));
+
+  const patient = db.prepare('SELECT id FROM patients ORDER BY id LIMIT 1').get();
+  const inv = (await api('POST', '/api/billing/invoices',
+    { patientId: patient.id, kind: 'opd' }, 'cashier')).body;
+  await api('POST', `/api/billing/invoices/${inv.id}/items`,
+    { refType: 'service', description: 'Dressing', qty: 1, unitPrice: 250 }, 'cashier');
+
+  const pay = (await api('GET', `/api/billing/invoices/${inv.id}/upi`, undefined, 'cashier')).body;
+  assert.strictEqual(pay.configured, true);
+  assert.strictEqual(pay.amount, 250);
+  assert.ok(pay.uri.startsWith('upi://pay?'));
+  const q = new URLSearchParams(pay.uri.slice('upi://pay?'.length));
+  assert.strictEqual(q.get('pa'), 'samiha@okicici', 'the clinic’s own account');
+  assert.strictEqual(q.get('pn'), 'SAMIHA POLYCLINIC');
+  assert.strictEqual(q.get('am'), '250.00', 'to the paisa, as a UPI app reads it');
+  assert.strictEqual(q.get('cu'), 'INR');
+  assert.strictEqual(q.get('tr'), inv.invoice_no, 'so the money that lands names the bill it paid');
+  assert.ok(pay.svg.startsWith('<svg'), 'and it is drawn ready for the printed bill');
+
+  // Part-paid: the code asks for the remainder, not the whole bill again.
+  await api('POST', `/api/billing/invoices/${inv.id}/payments`,
+    { amount: 100, mode: 'cash' }, 'cashier');
+  const rest = (await api('GET', `/api/billing/invoices/${inv.id}/upi`, undefined, 'cashier')).body;
+  assert.strictEqual(rest.amount, 150);
+  assert.strictEqual(new URLSearchParams(rest.uri.slice(10)).get('am'), '150.00');
+
+  // Settled: nothing left to ask for, so no code is drawn.
+  await api('POST', `/api/billing/invoices/${inv.id}/payments`,
+    { amount: 150, mode: 'cash' }, 'cashier');
+  const done = (await api('GET', `/api/billing/invoices/${inv.id}/upi`, undefined, 'cashier')).body;
+  assert.strictEqual(done.amount, 0);
+  assert.strictEqual(done.uri, null);
+  assert.strictEqual(done.svg, null);
+});
+
+test('a UPI ID that is not one is refused, and only an administrator sets it', async () => {
+  for (const bad of ['nonsense', 'no-at-sign', '@bank', 'name@', 'name @bank']) {
+    const res = await api('PATCH', '/api/admin/clinic', { 'clinic.upiId': bad }, 'admin');
+    assert.strictEqual(res.status, 400, `"${bad}" should not be accepted`);
+  }
+  // Still the good one from the previous test — a refusal changes nothing.
+  assert.strictEqual(
+    db.prepare("SELECT value FROM settings WHERE key = 'clinic.upiId'").get().value,
+    'samiha@okicici');
+
+  assert.strictEqual((await api('PATCH', '/api/admin/clinic',
+    { 'clinic.upiId': 'other@bank' }, 'cashier')).status, 403);
+  assert.strictEqual((await api('PATCH', '/api/admin/clinic',
+    { 'clinic.nonsense': 'x' }, 'admin')).status, 400, 'and only the clinic’s own settings');
+});
+
+test('what the clinic sets for itself beats what it was deployed with', async () => {
+  const config = require('../src/config');
+  const clinic = require('../src/services/clinic');
+  assert.strictEqual(clinic.profile().phone, config.clinic.phone, 'the deployment’s, until set');
+
+  await api('PATCH', '/api/admin/clinic', { 'clinic.phone': '+91 90000 11111' }, 'admin');
+  assert.strictEqual(clinic.profile().phone, '+91 90000 11111');
+
+  // Cleared, it falls back rather than printing a blank letterhead.
+  await api('PATCH', '/api/admin/clinic', { 'clinic.phone': '   ' }, 'admin');
+  assert.strictEqual(clinic.profile().phone, config.clinic.phone);
+});

@@ -2,6 +2,7 @@
 const express = require('express');
 const { db } = require('../db');
 const config = require('../config');
+const clinic = require('../services/clinic');
 const auth = require('../lib/auth');
 const { wrap, unauthorized, badRequest } = require('../lib/http');
 const { required, str } = require('../lib/validate');
@@ -66,7 +67,7 @@ router.get('/me', wrap((req, res) => {
       staffCode: req.user.staff_code, email: req.user.email,
       departmentId: req.user.department_id, departmentName: dept ? dept.name : null,
     },
-    clinic: config.clinic,
+    clinic: clinic.profile(),
     whatsappProvider: config.whatsapp.provider,
   });
 }));
