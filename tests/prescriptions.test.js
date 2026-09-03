@@ -71,6 +71,17 @@ test.before(async () => {
   });
 });
 
+/*
+ * Diagnostics are paid for before the bench touches them. These tests are
+ * about what a report says, not about the till, so the counter waves the order
+ * through the way it would a STAT sample — one call, recorded as a waiver.
+ */
+async function releaseForBench(orderId, as = 'admin') {
+  const r = await api('POST', `/api/billing/diagnostics/${orderId}/release`,
+    { reason: 'Released for a report-content test' }, as);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+}
+
 test.after(() => {
   if (server) server.close();
   fs.rmSync(tmp, { recursive: true, force: true });
@@ -448,6 +459,7 @@ test('printed sheets carry the code and never the doctor', async () => {
     patientId: ids.patient, doctorId: ids.imran,
     tests: [{ testId: (await api('GET', '/api/masters/lab-tests')).body[0].id }],
   }, 'imran')).body;
+  await releaseForBench(order.id);
   await api('POST', `/api/lab/orders/${order.id}/collect`, { sampleType: 'blood' }, 'admin');
   const items = (await api('GET', `/api/lab/orders/${order.id}`, undefined, 'admin')).body.items;
   await api('POST', `/api/lab/orders/${order.id}/results`,
@@ -529,6 +541,7 @@ test('an X-ray or scan is reported in words, and still carries the code', async 
     clinicalNotes: 'Cough with fever',
     tests: [{ testId: xray.id }, { testId: usg.id }],
   }, 'imran')).body;
+  await releaseForBench(order.id);
   await api('POST', `/api/lab/orders/${order.id}/collect`, { sampleType: 'imaging' }, 'admin');
 
   const items = (await api('GET', `/api/lab/orders/${order.id}`, undefined, 'admin')).body.items;
@@ -564,6 +577,7 @@ test('an ECG is reported like an imaging study but is not called imaging', async
     patientId: ids.patient, doctorId: ids.imran,
     clinicalNotes: 'Palpitations on exertion', tests: [{ testId: ecg.id }],
   }, 'imran')).body;
+  await releaseForBench(order.id);
   await api('POST', `/api/lab/orders/${order.id}/collect`, { sampleType: 'tracing' }, 'admin');
 
   const item = (await api('GET', `/api/lab/orders/${order.id}`, undefined, 'admin')).body.items[0];

@@ -134,6 +134,14 @@ orders. Signing the note routes the patient to
 diagnostics, pharmacy or the check-out desk depending on what is outstanding. The **results
 page** is the printable sheet the patient carries forward.
 
+**Diagnostics** — A doctor orders tests from the whole catalogue with no rates on the form,
+for a patient in the queue or for anyone found by search — a review patient needing a repeat
+panel has no visit open, and used to mean a request on paper. The order goes to the cashier,
+who sees the patient and the tests, sets a rate against each line and takes the payment. Only
+then does it appear on the lab technician's worklist; until it does, the bench sees it listed
+as waiting at the cash counter and cannot start it. Diagnostics never appear on the
+prescription — that sheet is medicines for the pharmacy, and nothing else.
+
 **Check out** — Assembling the bill pulls the consultation fee, every diagnostic ordered and
 any pharmacy charge onto one invoice, then applies the sliding-scale discount and assistance
 coverage from the completed screening. All four branches of the chart are supported and
@@ -176,6 +184,18 @@ These are enforced in the API, not just the interface:
   share — and any settlement **shortfall returns to their balance** rather than being
   silently written off.
 - Discharge posts bed-day charges automatically and blocks on an unsettled bill.
+- **A diagnostic order is paid for before the bench touches it.** The doctor orders
+  what the patient needs and names no price; the cashier prices each line — from the
+  tariff where the clinic has set one, by hand where it has not — and posts it to the
+  bill; settling the bill is what releases the order to the lab. Every hands-on step
+  (collect, start, result, verify) refuses an unreleased order, so it is a gate and not
+  a screen. Two things pass without paying first: an in-patient's tests, which go on the
+  stay and settle at discharge, and an order the cashier waves through deliberately —
+  a STAT troponin does not queue at a till — recorded as a waiver with a reason.
+- **What one unit of stock is worth is the administrator's to set.** The stock register
+  carries a unit rate per medicine and values the shelf at rate × quantity. Only an
+  admin can set or clear it; everyone else who may see prices reads it. A medicine
+  nobody has rated is still valued, at what its batches cost, and the row says so.
 - **Money is scoped server-side.** Two lists in `src/lib/auth.js` decide it:
   `MONEY_ROLES` (admin, cashier, counsellor) may see what the clinic *collected* —
   takings, balances, ledgers; `PRICE_ROLES` adds pharmacy, ward, nurse station and

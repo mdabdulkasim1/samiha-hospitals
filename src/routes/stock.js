@@ -9,7 +9,7 @@
 const express = require('express');
 const { db } = require('../db');
 const { wrap, notFound, badRequest, conflict } = require('../lib/http');
-const { requireRole } = require('../lib/auth');
+const { requireRole, seesPrices } = require('../lib/auth');
 const { required, str, int, num, money, oneOf, paging } = require('../lib/validate');
 const { generate } = require('../lib/ids');
 const pharmacy = require('../services/pharmacy');
@@ -391,7 +391,7 @@ router.get('/register', readRoles, wrap((req, res) => {
 
   const rows = db.prepare(
     `SELECT d.id AS drug_id, d.code, d.name, d.form, d.strength, d.schedule_type, d.barcode,
-            d.reorder_level, d.mrp, d.purchase_price,
+            d.reorder_level, d.mrp, d.purchase_price, d.unit_rate,
             COALESCE((SELECT SUM(l.qty_delta) FROM stock_ledger l
                        WHERE l.drug_id = d.id AND date(l.created_at) < date(?)), 0) AS opening,
             COALESCE((SELECT SUM(l.qty_delta) FROM stock_ledger l
@@ -411,21 +411,80 @@ router.get('/register', readRoles, wrap((req, res) => {
       ORDER BY d.name`
   ).all(from, from, to, from, to, drugId, drugId, q, like, like, like);
 
-  for (const r of rows) r.closing = round2(r.opening + r.inward - r.outward);
+  /*
+   * What the shelf is worth.
+   *
+   * Where an administrator has set a unit rate — what one strip, bottle or
+   * pack is worth — the row is valued at that, times what is on hand, because
+   * that is the number the clinic actually stands behind. Where nobody has set
+   * one, the register falls back to what the batches were bought at, which is
+   * what it has always shown. `rate_source` says which of the two a row is,
+   * so a valuation can be read without having to guess where it came from.
+   */
+  for (const r of rows) {
+    r.closing = round2(r.opening + r.inward - r.outward);
+    r.rate_source = r.unit_rate > 0 ? 'set' : 'purchase';
+    r.value = r.unit_rate > 0 ? round2(r.on_hand * r.unit_rate) : round2(r.stock_value);
+  }
 
   const totals = rows.reduce((a, r) => ({
     medicines: a.medicines + 1,
     inward: round2(a.inward + r.inward),
     outward: round2(a.outward + r.outward),
     onHand: round2(a.onHand + r.on_hand),
-    stockValue: round2(a.stockValue + r.stock_value),
+    stockValue: round2(a.stockValue + r.value),
     expiredQty: round2(a.expiredQty + r.expired_qty),
-  }), { medicines: 0, inward: 0, outward: 0, onHand: 0, stockValue: 0, expiredQty: 0 });
+    unrated: a.unrated + (r.unit_rate > 0 ? 0 : 1),
+  }), { medicines: 0, inward: 0, outward: 0, onHand: 0, stockValue: 0, expiredQty: 0, unrated: 0 });
 
-  res.json({ from, to, rows, totals });
+  // A rate is a price, and the register is read by the bench as well as the
+  // counter — see src/lib/auth.js.
+  if (!seesPrices(req.user)) {
+    for (const r of rows) {
+      r.unit_rate = null; r.value = null; r.stock_value = null;
+      r.mrp = null; r.purchase_price = null;
+    }
+    totals.stockValue = null;
+  }
+
+  res.json({ from, to, rows, totals, mayEditRate: req.user.role === 'admin' });
 }));
 
 /** Every movement of one medicine, newest first, for the drill-down. */
+/**
+ * Set what one unit of a medicine is worth.
+ *
+ * The administrator's alone — not the pharmacist's, not the cashier's. A rate
+ * that anyone at the counter can edit is not a valuation, it is a suggestion,
+ * and the figure this one feeds is the value of the clinic's whole shelf. So
+ * the route is admin-only, the previous rate is kept in the audit entry, and
+ * nothing else in the app writes this column.
+ *
+ * It is deliberately separate from `mrp` (what the patient pays) and from a
+ * batch's `purchase_price` (what that particular delivery cost). Those two are
+ * facts about a transaction; this is what the clinic says a unit is worth.
+ */
+router.patch('/drugs/:id/rate', requireRole('admin'), wrap((req, res) => {
+  const id = int(req.params.id);
+  const drug = db.prepare('SELECT * FROM drugs WHERE id = ?').get(id);
+  if (!drug) throw notFound('Medicine not found');
+
+  const rate = num(req.body.unitRate, -1);
+  if (!(rate >= 0)) throw badRequest('Give a rate of zero or more. Zero clears it.');
+  if (rate > 1000000) throw badRequest('That rate looks like a typing slip — check it.');
+
+  db.prepare('UPDATE drugs SET unit_rate = ? WHERE id = ?').run(round2(rate), id);
+  audit.log(req, 'set_unit_rate', 'drug', id, { from: drug.unit_rate, to: round2(rate) });
+
+  const onHand = db.prepare(
+    'SELECT COALESCE(SUM(qty_available), 0) AS q FROM drug_batches WHERE drug_id = ?'
+  ).get(id).q;
+  res.json({
+    id, code: drug.code, name: drug.name,
+    unit_rate: round2(rate), on_hand: onHand, value: round2(onHand * rate),
+  });
+}));
+
 router.get('/register/:drugId/movements', readRoles, wrap((req, res) => {
   const drugId = int(req.params.drugId);
   const drug = db.prepare('SELECT * FROM drugs WHERE id = ?').get(drugId);

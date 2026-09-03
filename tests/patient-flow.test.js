@@ -74,7 +74,7 @@ test.after(() => {
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
-test('a patient walks the lanes in order, and the lab hands them to the cashier', async () => {
+test('a patient walks the lanes in order: doctor orders, cashier collects, lab runs', async () => {
   const p = (await api('POST', '/api/patients', {
     firstName: 'Flow', lastName: 'Patient', phone: '9849001122', gender: 'male',
     age: 39, consentTreatment: true,
@@ -115,8 +115,27 @@ test('a patient walks the lanes in order, and the lab hands them to the cashier'
   assert.strictEqual(await stage(ids.visit), 'labs_pending',
     'diagnostics were ordered, so the lab is next — not the pharmacy');
 
-  // Lab: the last report hands the patient to the cashier.
-  await api('POST', `/api/lab/orders/${ids.order}/collect`, { sampleType: 'blood' }, 'lab');
+  /*
+   * The counter comes before the bench. The doctor has ordered a test and said
+   * nothing about the price; the cashier prices it and takes the money, and
+   * only then can the lab lay a hand on it.
+   */
+  const held = await api('POST', `/api/lab/orders/${ids.order}/collect`, { sampleType: 'blood' }, 'lab');
+  assert.strictEqual(held.status, 409, 'the bench cannot start an unpaid order');
+
+  const queued = (await api('GET', '/api/billing/diagnostics/pending', undefined, 'cashier')).body;
+  const waiting = queued.rows.find((r) => r.id === ids.order);
+  assert.ok(waiting, 'it is waiting at the cash counter');
+  const dxBill = await api('POST', `/api/billing/diagnostics/${ids.order}/bill`, {
+    prices: waiting.items.map((it) => ({ itemId: it.id, unitPrice: it.suggested_price || 200 })),
+  }, 'cashier');
+  assert.strictEqual(dxBill.status, 200, JSON.stringify(dxBill.body));
+  await api('POST', `/api/billing/invoices/${dxBill.body.invoice.id}/payments`,
+    { amount: dxBill.body.invoice.balance, mode: 'cash' }, 'cashier');
+
+  // Lab: the last report hands the patient to the cashier for the rest.
+  const collect = await api('POST', `/api/lab/orders/${ids.order}/collect`, { sampleType: 'blood' }, 'lab');
+  assert.strictEqual(collect.status, 200, JSON.stringify(collect.body));
   const full = (await api('GET', `/api/lab/orders/${ids.order}`, undefined, 'lab')).body;
   await api('POST', `/api/lab/orders/${ids.order}/results`,
     { results: full.items.map((i) => ({ itemId: i.id, value: '12' })) }, 'lab');

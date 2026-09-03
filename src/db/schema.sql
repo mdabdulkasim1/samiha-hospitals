@@ -421,7 +421,17 @@ CREATE TABLE IF NOT EXISTS lab_orders (
                    CHECK (status IN ('ordered','sample_collected','in_process','result_entered','verified','reported','cancelled')),
   clinical_notes TEXT,
   ordered_at     TEXT NOT NULL DEFAULT (datetime('now')),
-  reported_at    TEXT
+  reported_at    TEXT,
+  -- Where the order stands with the counter. A doctor orders a test; the
+  -- cashier prices it and takes the money; only then does the bench see it.
+  billing_status TEXT NOT NULL DEFAULT 'pending'
+                   CHECK (billing_status IN ('pending','billed','paid','waived')),
+  invoice_id     INTEGER REFERENCES invoices(id),
+  -- The gate itself. Null means the order has not been let through to the
+  -- bench; every hands-on step checks this one column.
+  released_at    TEXT,
+  released_by    INTEGER REFERENCES users(id),
+  release_note   TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_lab_orders_status ON lab_orders(status);
 
@@ -466,6 +476,10 @@ CREATE TABLE IF NOT EXISTS drugs (
   tax_pct        REAL NOT NULL DEFAULT 12,
   mrp            REAL NOT NULL DEFAULT 0,
   purchase_price REAL NOT NULL DEFAULT 0,
+  -- What one unit is worth on the shelf: a strip, a bottle, a pack, whatever
+  -- this medicine is counted in. Only an administrator sets it, and the stock
+  -- register values the shelf by it. Zero means nobody has set one yet.
+  unit_rate      REAL NOT NULL DEFAULT 0,
   reorder_level  REAL NOT NULL DEFAULT 10,
   schedule_type  TEXT,          -- H, H1, OTC ...
   barcode        TEXT,          -- the EAN/UPC printed on the pack

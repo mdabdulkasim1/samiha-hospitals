@@ -15,10 +15,15 @@
         { id: 'daybook', label: 'Day book', onClick: openDaybook },
       ]);
 
-      const [invoices, plans, pending] = await Promise.all([
+      const [invoices, plans, pending, diagnostics] = await Promise.all([
         API.get('/api/billing/invoices' + API.qs({ status: params.status })),
         API.get('/api/billing/payment-plans?status=active'),
         API.get('/api/billing/pending').catch(() => ({ rows: [], totals: {} })),
+        // Only the cashier prices diagnostics; a counsellor reading this
+        // screen is not offered the queue at all.
+        APP.can(['cashier'])
+          ? API.get('/api/billing/diagnostics/pending').catch(() => ({ rows: [], count: 0 }))
+          : { rows: [], count: 0 },
       ]);
 
       el.innerHTML = `
@@ -26,9 +31,11 @@
           <div class="stat crimson"><div class="label">To collect today</div>
             <div class="value">${UI.money(pending.totals.amountToCollect || 0)}</div>
             <div class="foot">${UI.num(pending.totals.toCollect || 0)} patient(s) with a bill to settle</div></div>
-          <div class="stat orange"><div class="label">Waiting for a bill</div>
-            <div class="value">${UI.num(pending.totals.awaitingBill || 0)}</div>
-            <div class="foot">In the clinic, nothing raised yet</div></div>
+          <div class="stat orange"><div class="label">Tests to price</div>
+            <div class="value">${UI.num(diagnostics.count || 0)}</div>
+            <div class="foot">${diagnostics.count
+              ? 'The lab cannot start until these are paid'
+              : 'Nothing waiting at this counter'}</div></div>
           <div class="stat ok"><div class="label">Collected (all time)</div>
             <div class="value">${UI.money(invoices.totals.collected)}</div></div>
           <div class="stat teal"><div class="label">Outstanding (all time)</div>
@@ -40,6 +47,8 @@
           <button class="active" data-tab="today">Today's collections${
             pending.totals.toCollect ? ` <span class="pill">${UI.num(pending.totals.toCollect)}</span>` : ''}</button>
           <button data-tab="raise">Raise a bill</button>
+          ${APP.can(['cashier']) ? `<button data-tab="diagnostics">Tests to price${
+            diagnostics.count ? ` <span class="pill">${UI.num(diagnostics.count)}</span>` : ''}</button>` : ''}
           <button data-tab="invoices">Invoices</button>
           <button data-tab="plans">Payment plans</button>
         </div>
@@ -106,6 +115,49 @@
         },
 
         raise() { return renderCounterDesk(body); },
+
+        /**
+         * Diagnostics ordered but not yet paid for.
+         *
+         * The doctor's order arrives here as names — what the patient needs,
+         * with no figure attached, because the rate is this desk's to set. The
+         * cashier puts a price against each line, posts it to the bill and
+         * takes the money; the lab sees the order only once that is done.
+         */
+        diagnostics() {
+          const rows = diagnostics.rows;
+          body.innerHTML = `
+            ${rows.length
+              ? `<div class="alert warn"><b>${UI.num(rows.length)} order(s)</b> are waiting to be
+                   priced. Nothing reaches the lab bench until the bill is settled.</div>`
+              : '<div class="alert ok">No diagnostic order is waiting to be priced.</div>'}
+            <div class="card"><div class="card-head"><h3>Ordered, not yet paid</h3>
+              <span class="muted small">Newest urgent first</span></div>
+              <div class="card-body tight" id="dx-list"></div></div>`;
+
+          const host = body.querySelector('#dx-list');
+          host.innerHTML = UI.table([
+            { label: 'Order', render: (r) => `<code>${UI.esc(r.order_no)}</code>` +
+              (r.priority !== 'routine'
+                ? ' ' + UI.badge(r.priority.toUpperCase(), r.priority === 'stat' ? 'danger' : 'warn') : '') },
+            { label: 'Patient', render: (r) => `<b>${UI.esc(r.patient_name)}</b>` +
+              `<div class="muted small">${UI.esc(r.uhid)} · ${UI.esc(r.age_years || '—')}${
+                UI.esc((r.gender || '').charAt(0).toUpperCase())}${r.phone ? ' · ' + UI.esc(r.phone) : ''}</div>` },
+            { label: 'Ordered by', render: (r) => UI.esc(r.doctor_code || r.doctor_name || '—') },
+            { label: 'Tests', render: (r) => `<div class="small">${
+              UI.esc(r.items.map((i) => i.test_name).join(', '))}</div>` },
+            { label: 'Ordered', render: (r) => UI.esc(UI.ago(r.ordered_at)) },
+            { label: 'Rate so far', num: true, render: (r) => UI.money(r.total) +
+              (r.unpriced ? `<div class="muted small">${UI.num(r.unpriced)} to set</div>` : '') },
+            { label: 'State', render: (r) => (r.billing_status === 'billed'
+              ? UI.badge('On ' + (r.invoice_no || 'a bill'), 'warn') : UI.badge('Not billed', 'danger')) },
+            { label: '', render: (r) => `<button class="btn sm" data-price="${r.id}">Price &amp; bill</button>` },
+          ], rows, { emptyText: 'Nothing ordered is waiting on payment.' });
+
+          host.querySelectorAll('[data-price]').forEach((b) => b.addEventListener('click', () =>
+            priceDiagnostics(rows.find((r) => r.id === Number(b.dataset.price)))));
+          UI.bindRows(host, rows, (r) => priceDiagnostics(r));
+        },
 
         invoices() {
           body.innerHTML = `
@@ -308,6 +360,112 @@
    * changes their mind mid-bill and a half-made invoice nobody finished is
    * worse than no invoice at all. It reaches the server once, complete.
    */
+  /* ------------------------------------------- pricing a doctor's test order
+   *
+   * The rate box per line is the whole point of this dialog. Where the clinic
+   * has set a tariff the box arrives filled in and the cashier just presses
+   * on; where it has not — and much of the formulary is deliberately unpriced
+   * for now — the box is empty and orange, and the desk types what was agreed.
+   *
+   * The two are kept visibly apart. A rate the clinic published and a rate a
+   * cashier invented on a Tuesday are not the same fact, and the person
+   * signing the bill should be able to see which is which.
+   */
+  function priceDiagnostics(order) {
+    if (!order) return;
+    const lines = order.items.map((it) => ({
+      ...it,
+      rate: Number(it.price || it.suggested_price || 0),
+      fromTariff: Number(it.suggested_price || 0) > 0,
+    }));
+
+    const rowsHtml = () => lines.map((l, i) => `
+      <tr>
+        <td><b>${UI.esc(l.test_name)}</b>
+          <div class="muted small">${UI.esc(l.sample_type || UI.titleise(l.category || ''))}${
+            l.bill_group ? ' · ' + UI.esc(l.bill_group) : ''}</div></td>
+        <td style="width:150px">
+          <input type="number" min="0" step="0.01" data-rate="${i}" value="${l.rate || ''}"
+                 placeholder="0.00" style="width:100%;text-align:right"
+                 class="${l.fromTariff ? '' : 'needs-rate'}"></td>
+        <td class="num" style="width:120px">${l.fromTariff
+          ? `<span class="muted small">Tariff ${UI.money(l.suggested_price)}</span>`
+          : '<span class="badge warn">No tariff</span>'}</td>
+      </tr>`).join('');
+
+    UI.modal({
+      title: `Price ${order.order_no} — ${order.patient_name}`,
+      size: 'wide',
+      body: `
+        <div class="alert info">
+          <b>${UI.esc(order.patient_name)}</b> · ${UI.esc(order.uhid)} ·
+          ${UI.esc(order.age_years || '—')}${UI.esc((order.gender || '').charAt(0).toUpperCase())}
+          ${order.visit_no ? ' · ' + UI.esc(order.visit_no) : ''}
+          ${order.doctor_code ? ' · ordered by ' + UI.esc(order.doctor_code) : ''}
+          ${order.priority !== 'routine'
+            ? ` · <b style="color:var(--danger)">${UI.esc(order.priority.toUpperCase())}</b>` : ''}
+          ${order.clinical_notes ? `<div class="muted small mt">${UI.esc(order.clinical_notes)}</div>` : ''}
+        </div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Test</th><th class="num">Rate</th><th></th></tr></thead>
+          <tbody id="dxp-rows">${rowsHtml()}</tbody>
+        </table></div>
+        <div class="row-between mt" style="font-size:16px">
+          <b>Total to bill</b><b id="dxp-total">${UI.money(lines.reduce((t, l) => t + l.rate, 0))}</b>
+        </div>
+        <div class="muted small mt">These lines go onto the patient's bill. The lab sees the
+          order once the bill is settled — take the payment on the next screen.</div>
+        <div id="dxp-out"></div>`,
+      footer: `<button class="btn ghost" data-act="__close">Cancel</button>
+        <button class="btn ghost" data-act="waive">Send through unpaid…</button>
+        <button class="btn" data-act="bill">Put on the bill</button>`,
+      onMount(modal) {
+        const total = modal.querySelector('#dxp-total');
+        modal.querySelectorAll('[data-rate]').forEach((inp) => inp.addEventListener('input', () => {
+          lines[Number(inp.dataset.rate)].rate = Number(inp.value) || 0;
+          total.textContent = UI.money(lines.reduce((t, l) => t + l.rate, 0));
+        }));
+      },
+      async onAction(act, modal) {
+        const out = modal.querySelector('#dxp-out');
+
+        if (act === 'waive') {
+          const reason = window.prompt(
+            'Why is this going to the lab before it is paid for?\n'
+            + '(An emergency, or a rate still to be agreed. It stays on the bill.)');
+          if (!reason) return 'keep';
+          try {
+            await API.post(`/api/billing/diagnostics/${order.id}/release`, { reason });
+            UI.ok(`${order.order_no} sent to the lab — recorded as a waiver.`);
+            APP.navigate('billing');
+            APP.refreshBadges();
+            return;
+          } catch (err) { out.innerHTML = `<div class="alert danger mt">${UI.esc(err.message)}</div>`; return 'keep'; }
+        }
+
+        if (act !== 'bill') return;
+        if (!lines.some((l) => l.rate > 0)) {
+          out.innerHTML = '<div class="alert warn mt">Put a rate against at least one test.</div>';
+          return 'keep';
+        }
+        const blank = lines.filter((l) => !(l.rate > 0));
+        if (blank.length && !window.confirm(
+          `${blank.length} test(s) have no rate and will not go on the bill:\n`
+          + blank.map((l) => '· ' + l.test_name).join('\n')
+          + '\n\nBill the rest?')) return 'keep';
+
+        try {
+          const res = await API.post(`/api/billing/diagnostics/${order.id}/bill`, {
+            prices: lines.map((l) => ({ itemId: l.id, unitPrice: l.rate })),
+          });
+          UI.closeAllModals();
+          UI.ok(`${order.order_no} is on ${res.invoice.invoice_no} — collect and the lab gets it.`);
+          APP.navigate('billing', { invoiceId: res.invoice.id });
+        } catch (err) { out.innerHTML = `<div class="alert danger mt">${UI.esc(err.message)}</div>`; return 'keep'; }
+      },
+    });
+  }
+
   async function renderCounterDesk(body) {
     const draft = [];          // { kind, id, name, price, taxPct, qty }
     let patient = null;

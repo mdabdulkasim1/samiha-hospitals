@@ -16,6 +16,7 @@ process.env.BACKUP_HOUR = '';
 process.env.SESSION_SECRET = 'test-secret';
 
 require('../src/db/seed');
+const { db } = require('../src/db');
 const app = require('../src/server');
 
 let server;
@@ -42,7 +43,8 @@ test.before(async () => {
   await new Promise((r) => server.once('listening', r));
   base = `http://127.0.0.1:${server.address().port}`;
   for (const [as, email] of [['admin', 'admin@samiha.local'], ['pharmacy', 'pharmacy@samiha.local'],
-    ['reception', 'reception@samiha.local']]) {
+    ['reception', 'reception@samiha.local'], ['cashier', 'cashier@samiha.local'],
+    ['doctor', 'imran@samiha.local']]) {
     const r = await api('POST', '/api/auth/login', { username: email, password: 'samiha@123' }, null);
     assert.strictEqual(r.status, 200, `login failed for ${email}`);
     tokens[as] = r.body.token;
@@ -337,4 +339,73 @@ test('only the pharmacy may take stock in; everyone at the desk may scan', async
 
   const admin = await api('GET', '/api/stock/scan?code=8901234567894', undefined, 'admin');
   assert.strictEqual(admin.status, 200, 'the administrator always gets through');
+});
+
+/* ------------------------------------------------------- valuing the shelf */
+test('what a unit is worth is the administrator\'s to set, and nobody else\'s', async () => {
+  const drug = db.prepare("SELECT id, code FROM drugs WHERE code = 'PARA500'").get();
+
+  // Not the pharmacist who orders it, not the cashier who sells it.
+  for (const as of ['pharmacy', 'cashier', 'reception']) {
+    const r = await api('PATCH', `/api/stock/drugs/${drug.id}/rate`, { unitRate: 99 }, as);
+    assert.strictEqual(r.status, 403, `${as} must not set a stock rate`);
+  }
+
+  const set = await api('PATCH', `/api/stock/drugs/${drug.id}/rate`, { unitRate: 12.5 }, 'admin');
+  assert.strictEqual(set.status, 200, JSON.stringify(set.body));
+  assert.strictEqual(set.body.unit_rate, 12.5);
+  assert.strictEqual(set.body.value, Math.round(set.body.on_hand * 12.5 * 100) / 100,
+    'the value is simply what is on the shelf times the rate');
+
+  // A slip of the keyboard is refused rather than valuing the shelf at a crore.
+  assert.strictEqual((await api('PATCH', `/api/stock/drugs/${drug.id}/rate`, { unitRate: -1 }, 'admin')).status, 400);
+  assert.strictEqual((await api('PATCH', `/api/stock/drugs/${drug.id}/rate`, { unitRate: 9e9 }, 'admin')).status, 400);
+});
+
+test('the register values the shelf by that rate, and says when it could not', async () => {
+  const drug = db.prepare("SELECT id, code FROM drugs WHERE code = 'PARA500'").get();
+  await api('PATCH', `/api/stock/drugs/${drug.id}/rate`, { unitRate: 12.5 }, 'admin');
+
+  const reg = await api('GET', '/api/stock/register', undefined, 'admin');
+  assert.strictEqual(reg.status, 200);
+  assert.strictEqual(reg.body.mayEditRate, true, 'the admin gets the editable column');
+
+  const row = reg.body.rows.find((r) => r.drug_id === drug.id);
+  assert.strictEqual(row.unit_rate, 12.5);
+  assert.strictEqual(row.rate_source, 'set');
+  assert.strictEqual(row.value, Math.round(row.on_hand * 12.5 * 100) / 100);
+
+  // A medicine nobody has rated is still valued — at what its batches cost —
+  // and says so, rather than quietly reading as worth nothing.
+  const unrated = reg.body.rows.find((r) => r.drug_id !== drug.id && !(r.unit_rate > 0));
+  if (unrated) {
+    assert.strictEqual(unrated.rate_source, 'purchase');
+    assert.strictEqual(unrated.value, unrated.stock_value);
+  }
+  assert.ok(reg.body.totals.unrated >= 0);
+
+  // The pharmacist reads the column but is not given a box to type in.
+  const asPharmacy = await api('GET', '/api/stock/register', undefined, 'pharmacy');
+  assert.strictEqual(asPharmacy.body.mayEditRate, false);
+  assert.strictEqual(asPharmacy.body.rows.find((r) => r.drug_id === drug.id).unit_rate, 12.5);
+
+  // Clearing it puts the row back on cost.
+  await api('PATCH', `/api/stock/drugs/${drug.id}/rate`, { unitRate: 0 }, 'admin');
+  const cleared = (await api('GET', '/api/stock/register', undefined, 'admin')).body
+    .rows.find((r) => r.drug_id === drug.id);
+  assert.strictEqual(cleared.unit_rate, 0);
+  assert.strictEqual(cleared.rate_source, 'purchase');
+});
+
+test('a rate is a price, so a prescriber is not sent one', async () => {
+  // A doctor reads the register to see what is on the shelf before writing
+  // for it. What any of it is worth is not part of that question.
+  const reg = await api('GET', '/api/stock/register', undefined, 'doctor');
+  assert.strictEqual(reg.status, 200, JSON.stringify(reg.body));
+  assert.ok(reg.body.rows.length, 'the shelf is still listed');
+  assert.ok(reg.body.rows.every((r) => typeof r.on_hand === 'number'), 'with what is on it');
+  assert.ok(reg.body.rows.every((r) => r.unit_rate === null && r.value === null),
+    'no figure reaches a role that may not see prices');
+  assert.strictEqual(reg.body.totals.stockValue, null);
+  assert.strictEqual(reg.body.mayEditRate, false);
 });

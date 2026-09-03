@@ -58,6 +58,23 @@ function recalc(invoiceId) {
       WHERE id = ?`
   ).run(gross, discount, tax, net, paid, balance, status, status, invoiceId);
 
+  /*
+   * Settling the bill is what lets a diagnostic order through to the bench.
+   *
+   * It happens here rather than in the payment route because a bill reaches
+   * zero by more than one road — a payment, a full concession, an insurer
+   * carrying it, a write-off — and every one of them lands in this function.
+   * Hooking the payment alone would have left a fully-covered patient's tests
+   * stuck at a counter with nothing left to pay.
+   */
+  if (status === 'paid') {
+    db.prepare(
+      `UPDATE lab_orders
+          SET released_at = datetime('now'), billing_status = 'paid'
+        WHERE invoice_id = ? AND released_at IS NULL AND status != 'cancelled'`
+    ).run(invoiceId);
+  }
+
   return db.prepare('SELECT * FROM invoices WHERE id = ?').get(invoiceId);
 }
 

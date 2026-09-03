@@ -487,6 +487,21 @@ legend { font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-
 }
 .modal.wide { width: min(1060px, 100%); }
 .modal.narrow { width: min(460px, 100%); }
+
+/* A rate box the clinic has no tariff for: the cashier has to type this one,
+   so it should not look like the ones that arrived filled in. */
+input.needs-rate {
+  border-color: var(--orange);
+  background: color-mix(in srgb, var(--orange) 7%, transparent);
+}
+input.needs-rate:focus { border-color: var(--orange-dark); }
+
+/* The inline rate box in the stock register: narrow, right-aligned, and quiet
+   until it needs something typed into it. */
+input.rate-box {
+  width: 92px; text-align: right; padding: 3px 6px;
+  font-size: 13px; border-radius: 5px;
+}
 .modal > header { padding: 15px 18px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 12px; }
 .modal > header h2 { flex: 1; }
 .modal > header button.x { background: none; border: 0; font-size: 22px; line-height: 1; color: var(--ink-3); cursor: pointer; padding: 0 4px; }

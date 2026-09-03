@@ -12,8 +12,12 @@
 
       el.innerHTML = `
         <div class="grid c4 mb">
-          <div class="stat crimson"><div class="label">Awaiting sample</div><div class="value">${UI.num(c.ordered || 0)}</div>
-            <div class="foot">Collect and label</div></div>
+          <div class="stat ${c.awaiting_payment ? 'orange' : 'crimson'}">
+            <div class="label">${c.awaiting_payment ? 'Waiting at the counter' : 'Awaiting sample'}</div>
+            <div class="value">${UI.num(c.awaiting_payment ? c.awaiting_payment : (c.ordered || 0))}</div>
+            <div class="foot">${c.awaiting_payment
+              ? 'Ordered, not yet paid for'
+              : 'Collect and label'}</div></div>
           <div class="stat orange"><div class="label">In process</div>
             <div class="value">${UI.num((c.sample_collected || 0) + (c.in_process || 0))}</div><div class="foot">On the analyser</div></div>
           <div class="stat teal"><div class="label">Awaiting verification</div><div class="value">${UI.num(c.result_entered || 0)}</div>
@@ -37,10 +41,21 @@
           </div>
 
           <div class="card"><div class="card-body tight" id="lo-list"></div></div>
+          <div id="lo-held"></div>
         </div>`;
 
       const body = el.querySelector('#l-body');
       const ordersHtml = body.innerHTML;
+
+      /*
+       * The bench's list is what has been paid for. What has not appears
+       * below it as a count and a set of names, greyed and unopenable: the
+       * technician should know work is coming — a STAT sample may need a tube
+       * ready — without being able to start it before the counter has been
+       * paid. Clicking one says where it is, rather than doing nothing.
+       */
+      const waiting = res.rows.filter((o) => !o.released);
+      const work = res.rows.filter((o) => o.released);
 
       const drawOrders = (into) => { into.innerHTML = UI.table([
         { label: 'Order', render: (o) => `<code>${UI.esc(o.order_no)}</code>` +
@@ -54,8 +69,28 @@
         { label: 'Status', render: (o) => UI.statusBadge(o.status) },
         { label: 'Ordered', render: (o) => UI.esc(UI.ago(o.ordered_at)) },
         ...(APP.seesPrices() ? [{ label: 'Amount', num: true, render: (o) => UI.money(o.total_price) }] : []),
-      ], res.rows, { emptyText: 'No diagnostic orders match this filter.' });
-        UI.bindRows(into, res.rows, (o) => openOrder(o.id));
+      ], work, { emptyText: 'Nothing paid for is waiting to be run.' });
+        UI.bindRows(into, work, (o) => openOrder(o.id));
+
+        const heldHost = body.querySelector('#lo-held');
+        if (!heldHost) return;
+        if (!waiting.length) { heldHost.innerHTML = ''; return; }
+        heldHost.innerHTML = `
+          <div class="card">
+          <div class="card-head"><h3>At the cash counter</h3>
+            <span class="muted small">${UI.num(waiting.length)} order(s) ordered but not yet paid —
+              the bench cannot start these</span></div>
+          <div class="card-body tight" style="opacity:.62">${UI.table([
+            { label: 'Order', render: (o) => `<code>${UI.esc(o.order_no)}</code>` +
+              (o.priority !== 'routine'
+                ? ' ' + UI.badge(o.priority.toUpperCase(), o.priority === 'stat' ? 'danger' : 'warn') : '') },
+            { label: 'Patient', render: (o) => `<b>${UI.esc(o.patient_name)}</b>` +
+              `<div class="muted small">${UI.esc(o.uhid)}</div>` },
+            { label: 'Tests', render: (o) => `<div class="small">${UI.esc(o.tests || '')}</div>` },
+            { label: 'Ordered by', render: (o) => UI.esc(o.doctor_code || o.doctor_name || '—') },
+            { label: 'Ordered', render: (o) => UI.esc(UI.ago(o.ordered_at)) },
+            { label: '', render: () => UI.badge('Awaiting payment', 'warn') },
+          ], waiting, {})}</div></div>`;
       };
 
       const showOrders = () => {

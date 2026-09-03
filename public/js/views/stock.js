@@ -543,7 +543,11 @@
           <div class="stat teal"><div class="label">Medicines</div><div class="value">${UI.num(data.totals.medicines)}</div></div>
           <div class="stat ok"><div class="label">Received</div><div class="value">${UI.num(data.totals.inward)}</div></div>
           <div class="stat orange"><div class="label">Issued</div><div class="value">${UI.num(data.totals.outward)}</div></div>
-          <div class="stat crimson"><div class="label">Stock value</div><div class="value">${money(data.totals.stockValue)}</div></div>
+          <div class="stat crimson"><div class="label">Stock value</div>
+            <div class="value">${money(data.totals.stockValue)}</div>
+            ${data.mayEditRate && data.totals.unrated
+              ? `<div class="foot">${UI.num(data.totals.unrated)} medicine(s) have no unit rate — valued at cost</div>`
+              : ''}</div>
           <div class="stat"><div class="label">Expired on shelf</div><div class="value">${UI.num(data.totals.expiredQty)}</div></div>
         </div>`;
       body.querySelector('#sr-list').innerHTML = UI.table([
@@ -562,7 +566,23 @@
             ? `<b style="color:var(--danger)">${UI.num(r.on_hand)}</b>` : UI.num(r.on_hand))) },
         { label: 'Expired', num: true, render: (r) => r.expired_qty
           ? `<b style="color:var(--danger)">${UI.num(r.expired_qty)}</b>` : '—' },
-        { label: 'Value', num: true, render: (r) => money(r.stock_value) },
+        /*
+         * The unit rate — what one strip, bottle or pack is worth — and the
+         * value it gives when multiplied by what is on the shelf.
+         *
+         * Only an administrator may set it, so only an administrator gets a
+         * box to type in; everybody else reads the figure. A rate nobody has
+         * set shows as a dash, and the row falls back to what the batches
+         * cost, which the column heading says out loud.
+         */
+        { label: 'Unit rate', num: true, render: (r) => (data.mayEditRate
+          ? `<input type="number" min="0" step="0.01" class="rate-box${r.unit_rate > 0 ? '' : ' needs-rate'}"
+                 data-rate="${r.drug_id}" value="${r.unit_rate > 0 ? r.unit_rate : ''}"
+                 placeholder="—" title="What one ${UI.esc(r.form || 'unit')} is worth">`
+          : (r.unit_rate > 0 ? money(r.unit_rate) : '<span class="muted">—</span>')) },
+        { label: 'Value', num: true, render: (r) => `<span data-value="${r.drug_id}">${money(r.value)}</span>` +
+          (r.rate_source === 'purchase' && r.value
+            ? '<div class="muted small">at cost</div>' : '') },
         { label: '', render: (r) => `${APP.can(['pharmacy'])
           ? `<button class="btn ghost sm" data-set="${r.drug_id}">Set stock</button> ` : ''}` +
           `<button class="btn ghost sm" data-mv="${r.drug_id}">Movements</button>` },
@@ -572,6 +592,42 @@
       body.querySelectorAll('[data-set]').forEach((b) =>
         b.addEventListener('click', () => openSetStock(
           data.rows.find((r) => r.drug_id === Number(b.dataset.set)), load)));
+
+      /*
+       * Saving a rate on blur rather than behind a button: an administrator
+       * pricing a shelf types down a column and tabs between rows, and a
+       * dialog per medicine would make a hundred-line formulary unusable.
+       * The row's value updates in place so the arithmetic is visible, and a
+       * refusal puts the old figure back rather than leaving a number on
+       * screen that was never saved.
+       */
+      body.querySelectorAll('[data-rate]').forEach((inp) => {
+        const drugId = Number(inp.dataset.rate);
+        const row = data.rows.find((r) => r.drug_id === drugId);
+        const was = row.unit_rate > 0 ? String(row.unit_rate) : '';
+        inp.addEventListener('blur', async () => {
+          const typed = inp.value.trim();
+          if (typed === was) return;
+          try {
+            const saved = await API.patch(`/api/stock/drugs/${drugId}/rate`,
+              { unitRate: typed === '' ? 0 : Number(typed) });
+            row.unit_rate = saved.unit_rate;
+            row.value = saved.value;
+            row.rate_source = saved.unit_rate > 0 ? 'set' : 'purchase';
+            const cell = body.querySelector(`[data-value="${drugId}"]`);
+            if (cell) cell.textContent = money(saved.unit_rate > 0 ? saved.value : row.stock_value);
+            inp.classList.toggle('needs-rate', !(saved.unit_rate > 0));
+            UI.ok(`${saved.name} — ${saved.unit_rate > 0
+              ? UI.money(saved.unit_rate) + ' each, ' + UI.money(saved.value) + ' on the shelf'
+              : 'rate cleared'}.`);
+          } catch (err) {
+            UI.err(err.message);
+            inp.value = was;
+          }
+        });
+        // Enter moves on rather than reloading the page under them.
+        inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') inp.blur(); });
+      });
     };
 
     let t;

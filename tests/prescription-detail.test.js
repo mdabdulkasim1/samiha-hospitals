@@ -70,6 +70,17 @@ test.before(async () => {
   ids.para = db.prepare("SELECT id FROM drugs WHERE code = 'PARA500'").get().id;
 });
 
+/*
+ * Diagnostics are paid for before the bench touches them. These tests are
+ * about what a report says, not about the till, so the counter waves the order
+ * through the way it would a STAT sample — one call, recorded as a waiver.
+ */
+async function releaseForBench(orderId, as = 'admin') {
+  const r = await api('POST', `/api/billing/diagnostics/${orderId}/release`,
+    { reason: 'Released for a report-content test' }, as);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+}
+
 test.after(() => {
   if (server) server.close();
   fs.rmSync(tmp, { recursive: true, force: true });
@@ -316,6 +327,7 @@ test('a lab order and its report carry the Aadhaar and the measurements', async 
   assert.strictEqual(slip.vitals.weight_kg, 78);
 
   // Then results, and the report the patient takes home.
+  await releaseForBench(orderId);
   await api('POST', `/api/lab/orders/${orderId}/collect`, { sampleType: 'blood' }, 'lab');
   const full = (await api('GET', `/api/lab/orders/${orderId}`, undefined, 'lab')).body;
   await api('POST', `/api/lab/orders/${orderId}/results`, {

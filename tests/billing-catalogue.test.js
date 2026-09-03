@@ -727,8 +727,13 @@ test('the lab can record the tests it ran, priced or not', async () => {
   }, 'imran');
   assert.strictEqual(order.status, 201, JSON.stringify(order.body));
 
-  const full = (await api('GET', `/api/lab/orders/${order.body.id}`, undefined, 'imran')).body;
-  assert.strictEqual(full.items.length, 2, 'both were recorded');
+  // The doctor who ordered them sees the names and no rates at all.
+  const asDoctor = (await api('GET', `/api/lab/orders/${order.body.id}`, undefined, 'imran')).body;
+  assert.strictEqual(asDoctor.items.length, 2, 'both were recorded');
+  assert.ok(asDoctor.items.every((i) => i.price === null), 'and no price reaches the prescriber');
+
+  // The cashier, who has to bill them, sees which one still needs a rate.
+  const full = (await api('GET', `/api/lab/orders/${order.body.id}`, undefined, 'cashier')).body;
   assert.ok(full.items.some((i) => i.price === 0), 'including the one with no rate yet');
 });
 

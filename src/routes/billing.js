@@ -139,6 +139,161 @@ router.get('/pending', deskRoles, wrap((req, res) => {
   });
 }));
 
+/* ------------------------------------------------- diagnostics at the counter
+ * A doctor orders a test and says nothing about the price — quite deliberately,
+ * because a rate in front of someone choosing a treatment is a thumb on the
+ * scale. That leaves the pricing to this desk, which is also where it belongs:
+ * the cashier is the one who knows what was agreed, what the concession is and
+ * what the patient can pay today.
+ *
+ * So an order arrives here with names and no figures. The cashier sets a rate
+ * against each line — prefilled from the tariff where the clinic has set one,
+ * and typed in where it has not — posts them to the visit's bill, and takes the
+ * money. Settling the bill is what lets the order through to the bench.
+ */
+router.get('/diagnostics/pending', cashRoles, wrap((_req, res) => {
+  const rows = db.prepare(
+    `SELECT o.id, o.order_no, o.priority, o.ordered_at, o.clinical_notes, o.billing_status,
+            o.invoice_id, o.visit_id, o.patient_id,
+            p.uhid, (p.first_name || ' ' || COALESCE(p.last_name,'')) AS patient_name,
+            p.age_years, p.gender, p.phone,
+            u.name AS doctor_name, dp.doctor_code, v.visit_no,
+            i.invoice_no, i.balance AS invoice_balance, i.status AS invoice_status
+       FROM lab_orders o
+       JOIN patients p ON p.id = o.patient_id
+       LEFT JOIN users u ON u.id = o.doctor_id
+       LEFT JOIN doctor_profiles dp ON dp.user_id = o.doctor_id
+       LEFT JOIN visits v ON v.id = o.visit_id
+       LEFT JOIN invoices i ON i.id = o.invoice_id
+      WHERE o.released_at IS NULL AND o.status != 'cancelled'
+      ORDER BY CASE o.priority WHEN 'stat' THEN 0 WHEN 'urgent' THEN 1 ELSE 2 END, o.id`
+  ).all();
+
+  /*
+   * Each line carries the tariff rate as `suggested_price` and whatever has
+   * been keyed so far as `price`. They are kept apart on purpose: a zero the
+   * clinic never set and a zero the cashier deliberately typed are different
+   * things, and only the second should quietly pass.
+   */
+  const itemsOf = db.prepare(
+    `SELECT i.id, i.test_name, i.price, i.status, t.sample_type, t.category, t.bill_group,
+            t.price AS suggested_price
+       FROM lab_order_items i LEFT JOIN lab_tests t ON t.id = i.test_id
+      WHERE i.order_id = ? ORDER BY i.id`
+  );
+  for (const r of rows) {
+    r.items = itemsOf.all(r.id);
+    r.unpriced = r.items.filter((it) => !(it.price > 0) && !(it.suggested_price > 0)).length;
+    r.total = billing.round2(r.items.reduce((t, it) => t + Number(it.price || it.suggested_price || 0), 0));
+  }
+  res.json({ rows, count: rows.length });
+}));
+
+/** Price the lines and put them on the patient's bill. */
+router.post('/diagnostics/:orderId/bill', cashRoles, wrap((req, res) => {
+  const orderId = int(req.params.orderId);
+  const order = db.prepare('SELECT * FROM lab_orders WHERE id = ?').get(orderId);
+  if (!order) throw notFound('Diagnostic order not found');
+  if (order.status === 'cancelled') throw conflict('That order was cancelled.');
+  if (order.released_at) throw conflict(`${order.order_no} has already been released to the lab.`);
+
+  const items = db.prepare('SELECT * FROM lab_order_items WHERE order_id = ?').all(orderId);
+  if (!items.length) throw badRequest('That order has no tests on it.');
+
+  // Whatever the cashier typed, keyed by line. A line left out keeps the rate
+  // it already had, which for most tests is the one off the tariff.
+  const keyed = new Map();
+  for (const p of (req.body.prices || [])) keyed.set(int(p.itemId), num(p.unitPrice, 0));
+
+  const priced = items
+    .filter((it) => it.status !== 'cancelled')
+    .map((it) => ({ ...it, rate: keyed.has(it.id) ? keyed.get(it.id) : Number(it.price || 0) }));
+  if (priced.some((it) => it.rate < 0)) throw badRequest('A rate cannot be negative.');
+  if (!priced.some((it) => it.rate > 0)) {
+    throw badRequest('Set a rate against at least one test before billing it.');
+  }
+
+  const invoiceId = db.transaction(() => {
+    for (const it of priced) {
+      db.prepare('UPDATE lab_order_items SET price = ? WHERE id = ?').run(it.rate, it.id);
+    }
+
+    /*
+     * The hospital bill for this visit, not the pharmacy's — the pharmacy takes
+     * its own money at its own counter, and diagnostics must not land on a bill
+     * the patient has already settled there. A walk-in with no visit gets a
+     * bill of their own.
+     */
+    let invoice = order.invoice_id
+      ? db.prepare('SELECT * FROM invoices WHERE id = ?').get(order.invoice_id)
+      : null;
+    if (!invoice && order.visit_id) {
+      invoice = db.prepare(
+        `SELECT * FROM invoices
+          WHERE visit_id = ? AND status NOT IN ('cancelled') AND kind != 'pharmacy'
+          ORDER BY id DESC LIMIT 1`
+      ).get(order.visit_id);
+    }
+    if (!invoice || invoice.status === 'cancelled') {
+      invoice = billing.createInvoice({
+        patientId: order.patient_id, visitId: order.visit_id || null,
+        kind: 'opd', createdBy: req.user.id,
+      });
+    }
+
+    for (const it of priced) {
+      if (it.rate > 0 && !billing.hasItem(invoice.id, 'lab', it.id)) {
+        billing.addItem(invoice.id, {
+          refType: 'lab', refId: it.id,
+          description: `Diagnostic — ${it.test_name}`, qty: 1, unitPrice: it.rate,
+        });
+      }
+    }
+    db.prepare("UPDATE lab_orders SET invoice_id = ?, billing_status = 'billed' WHERE id = ?")
+      .run(invoice.id, orderId);
+    return invoice.id;
+  })();
+
+  audit.log(req, 'bill_diagnostics', 'lab_order', orderId, { invoiceId });
+  const invoice = billing.fullInvoice(invoiceId);
+  res.json({
+    order: db.prepare('SELECT * FROM lab_orders WHERE id = ?').get(orderId),
+    invoice,
+    // Paying can settle it outright — a fully-covered patient owes nothing, and
+    // the order goes straight through.
+    released: Boolean(db.prepare('SELECT released_at FROM lab_orders WHERE id = ?').get(orderId).released_at),
+  });
+}));
+
+/**
+ * Let an order through without the money.
+ *
+ * A STAT troponin does not queue at a till, and a patient on an assistance
+ * programme should not have a test held over a rate nobody has set yet. The
+ * cashier can open the gate by hand — but it is a waiver, not a discount: the
+ * charge stays on the bill, and the reason is recorded against their name.
+ */
+router.post('/diagnostics/:orderId/release', cashRoles, wrap((req, res) => {
+  required(req.body, ['reason']);
+  const orderId = int(req.params.orderId);
+  const order = db.prepare('SELECT * FROM lab_orders WHERE id = ?').get(orderId);
+  if (!order) throw notFound('Diagnostic order not found');
+  if (order.status === 'cancelled') throw conflict('That order was cancelled.');
+  if (order.released_at) throw conflict(`${order.order_no} is already with the lab.`);
+
+  const reason = str(req.body.reason);
+  if (reason.length < 4) throw badRequest('Say why this is going through unpaid.');
+
+  db.prepare(
+    `UPDATE lab_orders
+        SET released_at = datetime('now'), released_by = ?, release_note = ?,
+            billing_status = 'waived'
+      WHERE id = ?`
+  ).run(req.user.id, reason, orderId);
+  audit.log(req, 'release_diagnostics', 'lab_order', orderId, { reason });
+  res.json(db.prepare('SELECT * FROM lab_orders WHERE id = ?').get(orderId));
+}));
+
 router.get('/invoices/:id', viewRoles, wrap((req, res) => {
   const inv = billing.fullInvoice(int(req.params.id));
   if (!inv) throw notFound('Invoice not found');

@@ -19,6 +19,27 @@ const viewRoles = requireRole('lab', 'doctor', 'nurse', 'reception', 'cashier');
  *   ordered → sample_collected → in_process → result_entered → verified → reported
  */
 
+/*
+ * The counter gate.
+ *
+ * A doctor orders a test because the patient needs it, and says nothing about
+ * money. The cashier prices what was ordered, takes payment, and only then
+ * does the order reach the bench. `released_at` is the whole of that rule:
+ * every hands-on step checks it, so there is one place to be wrong.
+ *
+ * Two things pass without paying first. An in-patient's tests go on the
+ * running bill that is settled at discharge, so making a ward patient walk to
+ * the cash counter mid-stay would be nonsense. And the cashier can release an
+ * order deliberately — a STAT troponin does not wait behind a queue at the
+ * till — which is recorded as a waiver with a reason against their name.
+ */
+function assertReleased(order) {
+  if (order.released_at) return;
+  throw conflict(
+    `${order.order_no} has not been paid for yet — the cashier releases it once the bill is settled.`
+  );
+}
+
 function refRangeText(test) {
   if (test.ref_text) return test.ref_text;
   if (test.ref_low !== null && test.ref_high !== null) return `${test.ref_low} – ${test.ref_high}`;
@@ -43,6 +64,12 @@ router.get('/orders', viewRoles, wrap((req, res) => {
   const status = str(req.query.status);
   const visitId = req.query.visitId ? int(req.query.visitId) : null;
   const patientId = req.query.patientId ? int(req.query.patientId) : null;
+  /*
+   * `gate` splits the list by the counter rather than by the clinical status:
+   * "released" is the bench's worklist, "awaiting" is what is still at the
+   * cash desk. Left off, the caller gets both and reads the flag per row.
+   */
+  const gate = str(req.query.gate, '');
   const rows = db.prepare(
     `SELECT o.*, p.uhid, (p.first_name || ' ' || COALESCE(p.last_name,'')) AS patient_name,
             p.age_years, p.gender, u.name AS doctor_name, dp.doctor_code, v.visit_no, a.ip_no,
@@ -56,9 +83,11 @@ router.get('/orders', viewRoles, wrap((req, res) => {
        LEFT JOIN visits v ON v.id = o.visit_id
        LEFT JOIN admissions a ON a.id = o.admission_id
       WHERE (? IS NULL OR o.status = ?) AND (? IS NULL OR o.visit_id = ?) AND (? IS NULL OR o.patient_id = ?)
+        AND (? = '' OR (? = 'released' AND o.released_at IS NOT NULL)
+                    OR (? = 'awaiting' AND o.released_at IS NULL AND o.status != 'cancelled'))
       ORDER BY CASE o.priority WHEN 'stat' THEN 0 WHEN 'urgent' THEN 1 ELSE 2 END, o.id DESC
       LIMIT 300`
-  ).all(status, status, visitId, visitId, patientId, patientId);
+  ).all(status, status, visitId, visitId, patientId, patientId, gate, gate, gate);
 
   // What an order comes to is the counter's business. The bench reads this
   // list to know what to run and who for.
@@ -66,10 +95,15 @@ router.get('/orders', viewRoles, wrap((req, res) => {
   for (const r of rows) {
     r.total_price = prices ? r.total_price_raw : null;
     delete r.total_price_raw;
+    r.released = Boolean(r.released_at);
   }
 
   const counts = db.prepare('SELECT status, COUNT(*) AS c FROM lab_orders GROUP BY status').all()
     .reduce((acc, r) => ({ ...acc, [r.status]: r.c }), {});
+  // What the bench can actually start on, and what is still at the counter.
+  counts.awaiting_payment = db.prepare(
+    "SELECT COUNT(*) AS c FROM lab_orders WHERE released_at IS NULL AND status != 'cancelled'"
+  ).get().c;
   res.json({ rows, counts });
 }));
 
@@ -100,6 +134,8 @@ router.get('/orders/:id', viewRoles, wrap((req, res) => {
       WHERE i.order_id = ? ORDER BY i.id`
   ).all(id);
   order.samples = db.prepare('SELECT * FROM lab_samples WHERE order_id = ?').all(id);
+  order.released = Boolean(order.released_at);
+  if (!seesPrices(req.user)) for (const it of order.items) it.price = null;
   res.json(order);
 }));
 
@@ -111,12 +147,19 @@ router.post('/orders', requireRole('doctor', 'lab', 'nurse'), wrap((req, res) =>
 
   const orderNo = generate('labOrder');
   const created = db.transaction(() => {
+    const admissionId = int(req.body.admissionId) || null;
     const info = db.prepare(
-      `INSERT INTO lab_orders (order_no, visit_id, admission_id, patient_id, doctor_id, priority, clinical_notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
-    ).run(orderNo, int(req.body.visitId) || null, int(req.body.admissionId) || null,
+      `INSERT INTO lab_orders (order_no, visit_id, admission_id, patient_id, doctor_id, priority, clinical_notes,
+                               billing_status, released_at, release_note)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(orderNo, int(req.body.visitId) || null, admissionId,
           int(req.body.patientId), int(req.body.doctorId) || req.user.id,
-          str(req.body.priority, 'routine'), str(req.body.clinicalNotes));
+          str(req.body.priority, 'routine'), str(req.body.clinicalNotes),
+          // An in-patient's tests are charged to the stay and settled at
+          // discharge; an out-patient's wait for the cashier.
+          admissionId ? 'billed' : 'pending',
+          admissionId ? new Date().toISOString().slice(0, 19).replace('T', ' ') : null,
+          admissionId ? 'In-patient — charged to the running bill and settled at discharge' : null);
     const orderId = info.lastInsertRowid;
 
     for (const t of tests) {
@@ -145,6 +188,7 @@ router.post('/orders/:id/collect', requireRole('lab', 'nurse'), wrap((req, res) 
   const order = db.prepare('SELECT * FROM lab_orders WHERE id = ?').get(id);
   if (!order) throw notFound('Order not found');
   if (order.status !== 'ordered') throw conflict(`Order is already at "${order.status}".`);
+  assertReleased(order);
 
   const barcode = generate('sample');
   db.prepare('INSERT INTO lab_samples (order_id, barcode, sample_type, collected_by) VALUES (?, ?, ?, ?)')
@@ -157,6 +201,9 @@ router.post('/orders/:id/collect', requireRole('lab', 'nurse'), wrap((req, res) 
 
 router.post('/orders/:id/start', requireRole('lab'), wrap((req, res) => {
   const id = int(req.params.id);
+  const order = db.prepare('SELECT * FROM lab_orders WHERE id = ?').get(id);
+  if (!order) throw notFound('Order not found');
+  assertReleased(order);
   db.prepare("UPDATE lab_orders SET status = 'in_process' WHERE id = ? AND status = 'sample_collected'").run(id);
   db.prepare("UPDATE lab_order_items SET status = 'in_process' WHERE order_id = ? AND status = 'sample_collected'").run(id);
   res.json(db.prepare('SELECT * FROM lab_orders WHERE id = ?').get(id));
@@ -167,6 +214,7 @@ router.post('/orders/:id/results', requireRole('lab'), wrap((req, res) => {
   const id = int(req.params.id);
   const order = db.prepare('SELECT * FROM lab_orders WHERE id = ?').get(id);
   if (!order) throw notFound('Order not found');
+  assertReleased(order);
   const results = Array.isArray(req.body.results) ? req.body.results : [];
   if (!results.length) throw badRequest('Provide at least one result.');
 
@@ -202,6 +250,7 @@ router.post('/orders/:id/verify', requireRole('lab', 'doctor'), wrap((req, res) 
   const order = db.prepare('SELECT * FROM lab_orders WHERE id = ?').get(id);
   if (!order) throw notFound('Order not found');
 
+  assertReleased(order);
   const unentered = db.prepare(
     "SELECT COUNT(*) AS c FROM lab_order_items WHERE order_id = ? AND result_value IS NULL AND status != 'cancelled'"
   ).get(id).c;

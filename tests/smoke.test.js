@@ -234,9 +234,36 @@ test('full OPD journey: arrive → screen → check-in → vitals → consult �
     assert.strictEqual(resultsPage.body.labOrders.length, 1);
     assert.ok(resultsPage.body.timeline.length >= 4);
 
+    // ---- the cash counter, before the bench ------------------------------
+    // The doctor ordered the tests and named no price. The cashier prices them
+    // and takes the money; only a settled bill lets the lab start.
+    const barred = await api('POST', `/api/lab/orders/${orderId}/collect`, { sampleType: 'blood' }, 'lab');
+    assert.strictEqual(barred.status, 409, 'an unpaid order is not the bench\'s to start');
+
+    const dxQueue = (await api('GET', '/api/billing/diagnostics/pending', undefined, 'cashier')).body;
+    const dxOrder = dxQueue.rows.find((r) => r.id === orderId);
+    assert.ok(dxOrder, 'it is waiting at the counter, with its tests named');
+    const dxBilled = await api('POST', `/api/billing/diagnostics/${orderId}/bill`, {
+      prices: dxOrder.items.map((it) => ({ itemId: it.id, unitPrice: it.suggested_price || 150 })),
+    }, 'cashier');
+    assert.strictEqual(dxBilled.status, 200, JSON.stringify(dxBilled.body));
+    assert.strictEqual(dxBilled.body.released, false, 'on the bill is not the same as paid');
+
+    /*
+     * This patient is on a sliding-scale band and will settle the whole visit
+     * at check-out, half now and half on an agreement — which is the journey
+     * the rest of this test is about. So the counter sends the tests through
+     * on a recorded waiver rather than collecting for them separately. The
+     * paid-first path is walked end to end in diagnostics-gate.test.js.
+     */
+    const waived = await api('POST', `/api/billing/diagnostics/${orderId}/release`,
+      { reason: 'Band B patient — settling the whole visit at check-out' }, 'cashier');
+    assert.strictEqual(waived.status, 200, JSON.stringify(waived.body));
+    assert.strictEqual(waived.body.billing_status, 'waived');
+
     // ---- lab processing --------------------------------------------------
     const collect = await api('POST', `/api/lab/orders/${orderId}/collect`, { sampleType: 'blood' }, 'lab');
-    assert.strictEqual(collect.status, 200);
+    assert.strictEqual(collect.status, 200, JSON.stringify(collect.body));
     assert.ok(collect.body.barcode);
 
     await api('POST', `/api/lab/orders/${orderId}/start`, {}, 'lab');

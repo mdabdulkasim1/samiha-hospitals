@@ -53,9 +53,12 @@ function backfillDoctorCodes() {
   ).run(serial);
 }
 
+/** Adds the column if it is missing. Returns true when it actually added it. */
 function ensureColumn(table, column, definition) {
   const exists = db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
-  if (!exists) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  if (exists) return false;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  return true;
 }
 
 /** Run the schema file — safe to call repeatedly (everything is IF NOT EXISTS). */
@@ -211,6 +214,30 @@ function migrate() {
   ensureColumn('prescription_sheets', 'amended_at', 'TEXT');
   ensureColumn('prescription_sheets', 'amended_by', 'INTEGER');
 
+  /*
+   * The counter gate on a diagnostic order, for databases made before it.
+   *
+   * Orders already on the books were placed under the old rule, where the
+   * bench started work and the bill was assembled at check-out. Holding them
+   * at a counter that never asked for the money would strand real patients
+   * mid-test, so everything that already exists is let through once, on the
+   * day the column appears. The gate applies to what is ordered from here on.
+   */
+  ensureColumn('lab_orders', 'billing_status', "TEXT NOT NULL DEFAULT 'pending'");
+  ensureColumn('lab_orders', 'invoice_id', 'INTEGER REFERENCES invoices(id)');
+  ensureColumn('lab_orders', 'released_by', 'INTEGER REFERENCES users(id)');
+  ensureColumn('lab_orders', 'release_note', 'TEXT');
+  if (ensureColumn('lab_orders', 'released_at', 'TEXT')) {
+    const grandfathered = db.prepare(
+      `UPDATE lab_orders
+          SET released_at = COALESCE(ordered_at, datetime('now')),
+              billing_status = 'waived',
+              release_note = 'Ordered before diagnostics were billed up front'
+        WHERE released_at IS NULL`
+    ).run().changes;
+    if (grandfathered) console.log(`[migrate] ${grandfathered} existing diagnostic order(s) let through the new counter gate.`);
+  }
+  ensureColumn('drugs', 'unit_rate', 'REAL NOT NULL DEFAULT 0');
   ensureColumn('lab_tests', 'component_of', 'TEXT');
   ensureColumn('lab_tests', 'sort_order', 'INTEGER NOT NULL DEFAULT 0');
   backfillBillGroups();

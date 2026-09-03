@@ -99,7 +99,8 @@ status: `400` invalid input · `401` not signed in · `403` wrong role · `404` 
 ## Diagnostics
 | Method | Path | Roles |
 |---|---|---|
-| GET | `/lab/orders?status=&visitId=` · `/lab/orders/:id` | lab, doctor, nurse, reception, cashier |
+| GET | `/lab/orders?status=&visitId=&gate=released\|awaiting` | lab, doctor, nurse, reception, cashier |
+| GET | `/lab/orders/:id` | lab, doctor, nurse, reception, cashier |
 | POST | `/lab/orders` | doctor, lab, nurse |
 | POST | `/lab/orders/:id/collect` · `/start` | lab (collect: also nurse) |
 | POST | `/lab/orders/:id/results` | lab |
@@ -123,6 +124,7 @@ status: `400` invalid input · `401` not signed in · `403` wrong role · `404` 
 | GET | `/stock/labels/drugs?drugIds=` · `/stock/labels?batchIds=` | counter roles |
 | GET/POST | `/stock/purchases` · GET `/stock/purchases/:id` · POST `/stock/purchases/:id/pay` | pharmacy (read: counter roles) |
 | GET | `/stock/register` · `/stock/register/:drugId/movements` | counter roles |
+| PATCH | `/stock/drugs/:id/rate` | **admin only** — what one unit is worth for stock valuation |
 | GET/POST | `/stock/takes` · GET `/stock/takes/:id` · `/stock/takes/new/sheet` | pharmacy (read: counter roles) |
 | POST | `/stock/write-off-expired` | pharmacy |
 | GET | `/pharmacy/sales/:id/invoice` | any clinical / pharmacy |
@@ -156,6 +158,9 @@ on this table at all.
 | GET | `/billing/payment-plans` | cashier, counselor, ward |
 | POST | `/billing/payment-plans/:id/installments/:seq/pay` | cashier |
 | GET | `/billing/receipts/:receiptNo` | cashier, counselor, ward |
+| GET | `/billing/diagnostics/pending` | cashier — ordered tests waiting to be priced |
+| POST | `/billing/diagnostics/:orderId/bill` | cashier — set a rate per line and post to the bill |
+| POST | `/billing/diagnostics/:orderId/release` | cashier — send through unpaid, with a reason |
 
 ## In-patient
 | Method | Path | Roles |

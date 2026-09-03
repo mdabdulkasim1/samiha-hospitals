@@ -302,7 +302,72 @@
 
     async render(el, params) {
       if (params.visitId) return renderConsult(el, Number(params.visitId));
-      await pickVisit(el, ['vitals_done', 'with_provider', 'checked_in'], 'Patients ready to be seen',
+
+      /*
+       * The queue is the usual way in and not the only one.
+       *
+       * A review patient rings to say the sugars are up and needs a repeat
+       * panel; a film has to be repeated a week after the clinic; a colleague
+       * asks for a test on somebody who was seen yesterday. None of those is
+       * in today's queue, and an empty station used to mean the doctor had no
+       * way to order anything at all — so the request went on paper, or by
+       * phone to the lab, and nothing about it reached the record.
+       *
+       * Searching finds any registered patient. From there a doctor can order
+       * diagnostics or open the full record, both of which stand on their own
+       * without a visit.
+       */
+      el.innerHTML = `
+        <div class="card mb">
+          <div class="card-head"><h3>Anyone else</h3>
+            <span class="muted small">Search by name, UHID or mobile — order tests without a visit</span></div>
+          <div class="card-body">
+            <div class="search-row">
+              <input type="search" id="cs-q" placeholder="Name, UHID or mobile number…" autocomplete="off">
+            </div>
+            <div id="cs-results"></div>
+          </div>
+        </div>
+        <div id="cs-queue"></div>`;
+
+      let t;
+      const results = el.querySelector('#cs-results');
+      el.querySelector('#cs-q').addEventListener('input', (e) => {
+        clearTimeout(t);
+        t = setTimeout(async () => {
+          const q = e.target.value.trim();
+          if (q.length < 2) return void (results.innerHTML = '');
+          let rows = [];
+          try { rows = (await API.get('/api/patients' + API.qs({ q, limit: 8 }))).rows; }
+          catch (err) { return void (results.innerHTML = `<div class="alert warn">${UI.esc(err.message)}</div>`); }
+          results.innerHTML = rows.length ? rows.map((p) => `
+            <div class="row-between mb" style="gap:8px;align-items:center">
+              <span><b>${UI.esc(p.first_name)} ${UI.esc(p.last_name || '')}</b>
+                <span class="muted small"> ${UI.esc(p.uhid)} · ${UI.esc(p.age_years || '—')}${
+                  UI.esc((p.gender || '').charAt(0).toUpperCase())}${
+                  p.phone ? ' · ' + UI.esc(p.phone) : ''}</span>
+                ${p.allergies ? ' ' + UI.badge('⚠ Allergy', 'danger') : ''}</span>
+              <span style="flex:none">
+                <button class="btn sm" data-order="${p.id}"
+                  data-name="${UI.esc(p.first_name + ' ' + (p.last_name || ''))}">Order tests</button>
+                <button class="btn ghost sm" data-record="${p.id}">Record</button>
+              </span>
+            </div>`).join('')
+            : '<div class="muted small">Nobody matched. Register them at the front desk first.</div>';
+
+          results.querySelectorAll('[data-order]').forEach((b) => b.addEventListener('click', () =>
+            openLabOrder({
+              patientId: Number(b.dataset.order),
+              patientName: b.dataset.name.trim(),
+              onPlaced: () => APP.navigate('lab'),
+            })));
+          results.querySelectorAll('[data-record]').forEach((b) => b.addEventListener('click', () =>
+            APP.navigate('patients', { id: b.dataset.record })));
+        }, 220);
+      });
+
+      await pickVisit(el.querySelector('#cs-queue'),
+        ['vitals_done', 'with_provider', 'checked_in'], 'Patients ready to be seen',
         (id) => APP.navigate('consult', { visitId: id }));
     },
   });
@@ -530,60 +595,10 @@
     });
 
     // ---- lab ordering ----------------------------------------------------
-    el.querySelector('#order-labs').addEventListener('click', () => {
-      const chosen = new Set();
-      UI.modal({
-        title: 'Order diagnostics',
-        size: 'wide',
-        body: `<div class="search-row"><input type="search" id="lt-q" placeholder="Filter tests…" autofocus>
-            <select name="priority"><option value="routine">Routine</option>
-              <option value="urgent">Urgent</option><option value="stat">STAT</option></select></div>
-          <div id="lt-list" class="table-wrap" style="max-height:340px;overflow-y:auto"></div>
-          ${UI.field({ name: 'clinicalNotes', label: 'Clinical notes for the lab', placeholder: 'e.g. fasting sample, suspected anaemia' })}
-          <div id="lt-total" class="alert info" hidden></div>`,
-        footer: `<button class="btn ghost" data-act="__close">Cancel</button><button class="btn" data-act="order">Place order</button>`,
-        onMount(modal) {
-          // What a test costs is not part of deciding to order it: the
-          // prescriber picks the tests, the counter prices them.
-          const prices = APP.seesPrices();
-          const draw = (filter = '') => {
-            const rows = tests.filter((t) => !filter || t.name.toLowerCase().includes(filter) || t.code.toLowerCase().includes(filter));
-            modal.querySelector('#lt-list').innerHTML = `<table><thead><tr>
-              <th></th><th>Test</th><th>Category</th><th>Sample</th>${
-                prices ? '<th class="num">Price</th>' : ''}<th class="num">TAT</th></tr></thead><tbody>
-              ${rows.map((t) => `<tr><td><input type="checkbox" data-test="${t.id}"${chosen.has(t.id) ? ' checked' : ''}></td>
-                <td><b>${UI.esc(t.name)}</b><div class="muted small">${UI.esc(t.code)}</div></td>
-                <td>${UI.esc(UI.titleise(t.category))}</td><td>${UI.esc(t.sample_type || '—')}</td>
-                ${prices ? `<td class="num">${UI.money(t.price)}</td>` : ''}<td class="num">${UI.esc(t.tat_hours)}h</td></tr>`).join('')}
-              </tbody></table>`;
-            modal.querySelectorAll('[data-test]').forEach((cb) => cb.addEventListener('change', () => {
-              const id = Number(cb.dataset.test);
-              if (cb.checked) chosen.add(id); else chosen.delete(id);
-              const total = tests.filter((t) => chosen.has(t.id)).reduce((s, t) => s + (t.price || 0), 0);
-              const out = modal.querySelector('#lt-total');
-              out.hidden = !chosen.size;
-              out.innerHTML = prices
-                ? `${chosen.size} test(s) selected — <b>${UI.money(total)}</b> will be added to the bill.`
-                : `${chosen.size} test(s) selected — they go to the bill at the counter.`;
-            }));
-          };
-          draw();
-          modal.querySelector('#lt-q').addEventListener('input', (e) => draw(e.target.value.trim().toLowerCase()));
-        },
-        async onAction(act, modal) {
-          if (act !== 'order') return;
-          if (!chosen.size) { UI.err('Select at least one test.'); return 'keep'; }
-          const values = UI.formValues(modal);
-          const order = await API.post('/api/lab/orders', {
-            patientId: visit.patient_id, visitId,
-            tests: [...chosen].map((id) => ({ testId: id })),
-            priority: values.priority, clinicalNotes: values.clinicalNotes,
-          });
-          UI.ok(`Order ${order.order_no} placed.`);
-          APP.reload();
-        },
-      });
-    });
+    el.querySelector('#order-labs').addEventListener('click', () => openLabOrder({
+      patientId: visit.patient_id, visitId, patientName: visit.patient_name, tests,
+      onPlaced: () => APP.reload(),
+    }));
 
     // ---- save / sign -----------------------------------------------------
     const collect = () => ({ ...UI.formValues(el.querySelector('#c-form')), diagnoses, prescriptions });
@@ -608,6 +623,78 @@
     });
 
     el.querySelector('#print-rx').addEventListener('click', () => printPrescription(visit, diagnoses, prescriptions));
+  }
+
+  /**
+   * Order diagnostics for a patient.
+   *
+   * Shared by the consultation and by the "anyone else" search on the
+   * Consultation landing page, because ordering a test is not always part of
+   * writing a note: a patient rings up about a sugar reading, a review patient
+   * needs a repeat film, a colleague asks for a panel before the next clinic.
+   * None of those has a visit open, and a lab order does not need one.
+   *
+   * What is deliberately not here is a rate. The doctor picks what the patient
+   * needs; the cashier prices it and takes the money; the bench sees it after
+   * that. The dialog says so rather than letting the order look finished.
+   */
+  async function openLabOrder({ patientId, visitId = null, patientName = '', tests = null, onPlaced }) {
+    const catalogue = tests || await API.get('/api/masters/lab-tests');
+    const chosen = new Set();
+    // Prices only exist here for the desks that may see them; a doctor's copy
+    // of the catalogue arrives with them blanked by the server.
+    const prices = APP.seesPrices();
+
+    UI.modal({
+      title: `Order diagnostics${patientName ? ' — ' + patientName : ''}`,
+      size: 'wide',
+      body: `<div class="search-row"><input type="search" id="lt-q" placeholder="Filter tests…" autofocus>
+          <select name="priority"><option value="routine">Routine</option>
+            <option value="urgent">Urgent</option><option value="stat">STAT</option></select></div>
+        <div id="lt-list" class="table-wrap" style="max-height:340px;overflow-y:auto"></div>
+        ${UI.field({ name: 'clinicalNotes', label: 'Clinical notes for the lab', placeholder: 'e.g. fasting sample, suspected anaemia' })}
+        <div id="lt-total" class="alert info" hidden></div>`,
+      footer: `<button class="btn ghost" data-act="__close">Cancel</button><button class="btn" data-act="order">Place order</button>`,
+      onMount(modal) {
+        const draw = (filter = '') => {
+          const rows = catalogue.filter((t) => !filter
+            || t.name.toLowerCase().includes(filter) || t.code.toLowerCase().includes(filter));
+          modal.querySelector('#lt-list').innerHTML = `<table><thead><tr>
+            <th></th><th>Test</th><th>Category</th><th>Sample</th>${
+              prices ? '<th class="num">Price</th>' : ''}<th class="num">TAT</th></tr></thead><tbody>
+            ${rows.map((t) => `<tr><td><input type="checkbox" data-test="${t.id}"${chosen.has(t.id) ? ' checked' : ''}></td>
+              <td><b>${UI.esc(t.name)}</b><div class="muted small">${UI.esc(t.code)}</div></td>
+              <td>${UI.esc(UI.titleise(t.category))}</td><td>${UI.esc(t.sample_type || '—')}</td>
+              ${prices ? `<td class="num">${UI.money(t.price)}</td>` : ''}<td class="num">${UI.esc(t.tat_hours)}h</td></tr>`).join('')}
+            </tbody></table>`;
+          modal.querySelectorAll('[data-test]').forEach((cb) => cb.addEventListener('change', () => {
+            const id = Number(cb.dataset.test);
+            if (cb.checked) chosen.add(id); else chosen.delete(id);
+            const total = catalogue.filter((t) => chosen.has(t.id)).reduce((sum, t) => sum + (t.price || 0), 0);
+            const out = modal.querySelector('#lt-total');
+            out.hidden = !chosen.size;
+            out.innerHTML = prices
+              ? `${chosen.size} test(s) selected — <b>${UI.money(total)}</b> will be added to the bill.`
+              : `${chosen.size} test(s) selected. The cashier prices these and takes the payment;
+                 the lab starts once the bill is settled.`;
+          }));
+        };
+        draw();
+        modal.querySelector('#lt-q').addEventListener('input', (e) => draw(e.target.value.trim().toLowerCase()));
+      },
+      async onAction(act, modal) {
+        if (act !== 'order') return;
+        if (!chosen.size) { UI.err('Select at least one test.'); return 'keep'; }
+        const values = UI.formValues(modal);
+        const order = await API.post('/api/lab/orders', {
+          patientId, visitId,
+          tests: [...chosen].map((id) => ({ testId: id })),
+          priority: values.priority, clinicalNotes: values.clinicalNotes,
+        });
+        UI.ok(`Order ${order.order_no} placed — it goes to the cashier, then the lab.`);
+        if (onPlaced) onPlaced(order);
+      },
+    });
   }
 
   function printPrescription(visit, diagnoses, prescriptions) {
