@@ -545,8 +545,9 @@
           <div class="stat orange"><div class="label">Issued</div><div class="value">${UI.num(data.totals.outward)}</div></div>
           <div class="stat crimson"><div class="label">Stock value</div>
             <div class="value">${money(data.totals.stockValue)}</div>
-            ${data.mayEditRate && data.totals.unrated
-              ? `<div class="foot">${UI.num(data.totals.unrated)} medicine(s) have no unit rate — valued at cost</div>`
+            ${data.totals.unrated
+              ? `<div class="foot">${UI.num(data.totals.unrated)} medicine(s) have no unit rate${
+                  data.mayEditRate ? ' — set one to count them' : ''}</div>`
               : ''}</div>
           <div class="stat"><div class="label">Expired on shelf</div><div class="value">${UI.num(data.totals.expiredQty)}</div></div>
         </div>`;
@@ -580,9 +581,8 @@
                  data-rate="${r.drug_id}" value="${r.unit_rate > 0 ? r.unit_rate : ''}"
                  placeholder="—" title="What one ${UI.esc(r.form || 'unit')} is worth">`
           : (r.unit_rate > 0 ? money(r.unit_rate) : '<span class="muted">—</span>')) },
-        { label: 'Value', num: true, render: (r) => `<span data-value="${r.drug_id}">${money(r.value)}</span>` +
-          (r.rate_source === 'purchase' && r.value
-            ? '<div class="muted small">at cost</div>' : '') },
+        { label: 'Value', num: true, render: (r) =>
+          `<span data-value="${r.drug_id}">${r.value === null ? '' : money(r.value)}</span>` },
         { label: '', render: (r) => `${APP.can(['pharmacy'])
           ? `<button class="btn ghost sm" data-set="${r.drug_id}">Set stock</button> ` : ''}` +
           `<button class="btn ghost sm" data-mv="${r.drug_id}">Movements</button>` },
@@ -612,10 +612,11 @@
             const saved = await API.patch(`/api/stock/drugs/${drugId}/rate`,
               { unitRate: typed === '' ? 0 : Number(typed) });
             row.unit_rate = saved.unit_rate;
-            row.value = saved.value;
-            row.rate_source = saved.unit_rate > 0 ? 'set' : 'purchase';
+            // No rate, no value: the cell empties rather than falling back to
+            // a cost the clinic never claimed the stock was worth.
+            row.value = saved.unit_rate > 0 ? saved.value : null;
             const cell = body.querySelector(`[data-value="${drugId}"]`);
-            if (cell) cell.textContent = money(saved.unit_rate > 0 ? saved.value : row.stock_value);
+            if (cell) cell.textContent = row.value === null ? '' : money(row.value);
             inp.classList.toggle('needs-rate', !(saved.unit_rate > 0));
             UI.ok(`${saved.name} — ${saved.unit_rate > 0
               ? UI.money(saved.unit_rate) + ' each, ' + UI.money(saved.value) + ' on the shelf'

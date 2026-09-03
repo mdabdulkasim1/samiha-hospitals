@@ -68,11 +68,18 @@ test.before(async () => {
     tokens[as] = r.body.token;
   }
   ids.doctor = db.prepare("SELECT id FROM users WHERE email = 'imran@samiha.local'").get().id;
-  // Two tests: one the clinic has priced, one it has not.
+  // Two tests: one the tariff has priced, and one the department has started
+  // doing since, which nobody has put a rate to yet. Both reach the counter;
+  // the difference is whether the cashier is offered a figure or types one.
   ids.priced = db.prepare('SELECT id, name, price FROM lab_tests WHERE active = 1 AND price > 0 ORDER BY id LIMIT 1').get();
-  ids.unpriced = db.prepare("SELECT id, name FROM lab_tests WHERE active = 1 AND COALESCE(price,0) = 0 AND (component_of IS NULL OR component_of = '') ORDER BY id LIMIT 1").get();
-  assert.ok(ids.priced, 'the seed prices at least one test');
-  assert.ok(ids.unpriced, 'and leaves at least one for the clinic to price later');
+  assert.ok(ids.priced, 'the tariff prices the catalogue');
+
+  const made = await api('POST', '/api/masters/lab-tests', {
+    code: 'GATE-NEW', name: 'A test with no rate yet', category: 'lab',
+    billGroup: 'Blood tests', sampleType: 'Serum', price: 0, tatHours: 24,
+  }, 'admin');
+  assert.strictEqual(made.status, 201, JSON.stringify(made.body));
+  ids.unpriced = { id: made.body.id, name: 'A test with no rate yet' };
 });
 
 test.after(() => {

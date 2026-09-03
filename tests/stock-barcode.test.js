@@ -372,29 +372,38 @@ test('the register values the shelf by that rate, and says when it could not', a
 
   const row = reg.body.rows.find((r) => r.drug_id === drug.id);
   assert.strictEqual(row.unit_rate, 12.5);
-  assert.strictEqual(row.rate_source, 'set');
   assert.strictEqual(row.value, Math.round(row.on_hand * 12.5 * 100) / 100);
 
-  // A medicine nobody has rated is still valued — at what its batches cost —
-  // and says so, rather than quietly reading as worth nothing.
+  /*
+   * A medicine nobody has rated is left blank, not valued at what its batches
+   * happened to cost. The two are different claims, and a total that quietly
+   * mixed them would be one nobody could sign.
+   */
   const unrated = reg.body.rows.find((r) => r.drug_id !== drug.id && !(r.unit_rate > 0));
-  if (unrated) {
-    assert.strictEqual(unrated.rate_source, 'purchase');
-    assert.strictEqual(unrated.value, unrated.stock_value);
-  }
-  assert.ok(reg.body.totals.unrated >= 0);
+  assert.ok(unrated, 'the seed leaves plenty still to be rated');
+  assert.strictEqual(unrated.value, null, 'no rate, no value');
+  assert.ok(unrated.on_hand >= 0, 'the count on the shelf is still there');
+  assert.ok(reg.body.totals.unrated > 0, 'and the total says how many it left out');
+
+  // The total is exactly the rated rows, and nothing else.
+  const rated = reg.body.rows.filter((r) => r.value !== null);
+  const sum = Math.round(rated.reduce((t, r) => t + r.value, 0) * 100) / 100;
+  assert.strictEqual(reg.body.totals.stockValue, sum,
+    'the stock value is the sum of what has been rated');
+  assert.strictEqual(reg.body.totals.unrated, reg.body.rows.length - rated.length);
 
   // The pharmacist reads the column but is not given a box to type in.
   const asPharmacy = await api('GET', '/api/stock/register', undefined, 'pharmacy');
   assert.strictEqual(asPharmacy.body.mayEditRate, false);
   assert.strictEqual(asPharmacy.body.rows.find((r) => r.drug_id === drug.id).unit_rate, 12.5);
 
-  // Clearing it puts the row back on cost.
+  // Clearing it empties the value again.
   await api('PATCH', `/api/stock/drugs/${drug.id}/rate`, { unitRate: 0 }, 'admin');
   const cleared = (await api('GET', '/api/stock/register', undefined, 'admin')).body
     .rows.find((r) => r.drug_id === drug.id);
   assert.strictEqual(cleared.unit_rate, 0);
-  assert.strictEqual(cleared.rate_source, 'purchase');
+  assert.strictEqual(cleared.value, null);
+  assert.ok(cleared.stock_value >= 0, 'what the batches cost is still on the row, just not the valuation');
 });
 
 test('a rate is a price, so a prescriber is not sent one', async () => {

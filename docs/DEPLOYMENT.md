@@ -15,6 +15,28 @@ first boot** and logs what it did. You will see this in the deploy log:
 Set `AUTO_SEED=false` once you are past first boot. Seeding only ever runs when the users
 table is empty, so it can never overwrite a live clinic's data.
 
+## The catalogue keeps itself in step
+
+Because seeding runs once, a clinic that has been live for months would never receive a
+test added to the app afterwards. So the **billable catalogue** — services, diagnostics
+and the tariff — is synced on every boot, seeded or not, and logs what it did:
+
+```
+[catalogue] 158 diagnostic(s) added, 158 rate(s) set from the tariff.
+```
+
+Every write is an upsert: a row the catalogue does not have is inserted, a row it does
+is left exactly as the clinic has it. Rates are a three-way merge — see `src/db/rates.js`
+— so one an administrator set by hand is kept and named in the log:
+
+```
+[catalogue]   kept CBC at 999 — the tariff says 110
+```
+
+Staff, patients, wards, beds, stock, insurers and ICD codes are **not** touched by this.
+They are the clinic's state, not reference data, and nothing about them should change
+because the app restarted.
+
 ## SQLite needs a persistent disk
 
 The whole database is one file. On a platform with an ephemeral filesystem (Railway, Render,

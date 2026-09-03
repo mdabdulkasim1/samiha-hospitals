@@ -655,7 +655,7 @@ test('what the clinic sets for itself beats what it was deployed with', async ()
 });
 
 // ------------------------------------------------- the diagnostic catalogue
-test('the clinic’s diagnostic panels are loaded with their analytes, unpriced', async () => {
+test('the clinic’s diagnostic panels are loaded with their analytes, and priced', async () => {
   const diagnostics = require('../src/db/diagnostics');
   const codes = [...diagnostics.PANELS, ...diagnostics.SINGLES, ...diagnostics.COMPONENTS]
     .map((r) => r[0]);
@@ -667,7 +667,7 @@ test('the clinic’s diagnostic panels are loaded with their analytes, unpriced'
     assert.strictEqual(row.name, name);
     assert.strictEqual(row.component_of, panel, 'and knows the panel it belongs to');
     assert.strictEqual(row.unit, unit === undefined ? null : unit);
-    assert.strictEqual(row.price, 0, 'no rate is invented for it');
+    assert.ok(row.price > 0, `${code} carries a rate from the published tariff`);
     // The panel it points at is a real one.
     assert.ok(db.prepare('SELECT 1 FROM lab_tests WHERE code = ?').get(panel), `${panel} exists`);
   }
@@ -676,7 +676,7 @@ test('the clinic’s diagnostic panels are loaded with their analytes, unpriced'
     const row = db.prepare('SELECT * FROM lab_tests WHERE code = ?').get(code);
     assert.ok(row, `${code} reached the catalogue`);
     assert.strictEqual(row.component_of, null, 'a panel is not part of another panel');
-    assert.strictEqual(row.price, 0, 'and is priced by the clinic, not by us');
+    assert.ok(row.price > 0, 'and carries the tariff rate');
   }
 
   // The report's own ranges came across, not a rounded version of them.
@@ -690,6 +690,10 @@ test('the clinic’s diagnostic panels are loaded with their analytes, unpriced'
 
 test('an analyte is reported, not sold — until the clinic prices it', async () => {
   const mchc = db.prepare("SELECT * FROM lab_tests WHERE code = 'CBC-MCHC'").get();
+
+  // The tariff prices the whole catalogue, so this rule has to be set up
+  // rather than found: clear the rate and watch the analyte leave the form.
+  await api('PATCH', `/api/masters/lab-tests/${mchc.id}`, { price: 0 }, 'admin');
 
   // Off the order form and off the charge board while it has no rate.
   const orderable = (await api('GET', '/api/masters/lab-tests', undefined, 'imran')).body;
@@ -711,14 +715,25 @@ test('an analyte is reported, not sold — until the clinic prices it', async ()
   const nowBoard = (await api('GET', '/api/masters/catalogue', undefined, 'cashier')).body;
   assert.ok(nowBoard.some((g) => g.items.some((i) => i.code === 'CBC-MCHC')), 'and billed');
 
-  // Put it back, so the rest of the suite sees the catalogue it expects.
-  await api('PATCH', `/api/masters/lab-tests/${mchc.id}`, { price: 0 }, 'admin');
+  // Put the tariff rate back, so the rest of the suite sees the real catalogue.
+  await api('PATCH', `/api/masters/lab-tests/${mchc.id}`, { price: mchc.price }, 'admin');
 });
 
 test('the lab can record the tests it ran, priced or not', async () => {
   const patient = db.prepare('SELECT id FROM patients ORDER BY id LIMIT 1').get();
-  const unpriced = db.prepare("SELECT id, name FROM lab_tests WHERE code = 'IRONPROF'").get();
   const priced = db.prepare("SELECT id FROM lab_tests WHERE code = 'CBC'").get();
+
+  /*
+   * A test the clinic has not priced yet. The published tariff covers the
+   * whole catalogue, so this is a test the department has started doing since
+   * — which is the case that matters: the work happened, the record should
+   * say so, and the cashier puts a rate to it at the counter.
+   */
+  const unpriced = (await api('POST', '/api/masters/lab-tests', {
+    code: 'NEWASSAY', name: 'A test started since the tariff', category: 'lab',
+    billGroup: 'Blood tests', sampleType: 'Serum', price: 0, tatHours: 24,
+  }, 'admin')).body;
+  assert.ok(unpriced.id, 'the new test is on the catalogue');
 
   const order = await api('POST', '/api/lab/orders', {
     patientId: patient.id,
@@ -799,10 +814,19 @@ test('the screening packages are sold as one line, naming what they cover', asyn
   const { PACKAGES } = require('../src/db/diagnostics');
   assert.strictEqual(PACKAGES.length, 3);
 
+  /*
+   * The posters priced all three at 500. The September 2026 tariff prices them
+   * separately — two below the poster and one above — so the rate a patient is
+   * charged is the tariff's, not the poster's, and this checks the tariff.
+   */
+  const { TARIFF } = require('../src/db/rates');
+  const tariffRate = (code) => (TARIFF.find((r) => r[0] === code) || [])[2];
+
   for (const [code, title, price, covers] of PACKAGES) {
     const row = db.prepare('SELECT * FROM lab_tests WHERE code = ?').get(code);
     assert.ok(row, `${code} reached the catalogue`);
-    assert.strictEqual(row.price, price, 'at the price on the poster');
+    assert.strictEqual(row.price, tariffRate(code), 'at the tariff rate');
+    assert.strictEqual(price, 500, 'and the poster figure it was loaded with is still on record');
     assert.strictEqual(row.bill_group, 'Health packages', 'in their own group');
     assert.ok(row.name.startsWith(title));
     assert.ok(row.name.endsWith(`(${covers})`), 'with the tests in brackets');
@@ -814,7 +838,8 @@ test('the screening packages are sold as one line, naming what they cover', asyn
   const group = board.find((g) => g.group === 'Health packages');
   assert.ok(group, 'the group is on the board');
   assert.strictEqual(group.items.length, 3);
-  assert.ok(group.items.every((i) => i.price === 500));
+  assert.ok(group.items.every((i) => i.price === tariffRate(i.code)));
+  assert.ok(group.items.every((i) => i.price > 0), 'every package is pressable at a real rate');
 
   // Health packages come early, where a walk-in asks for one.
   const order = board.map((g) => g.group);
@@ -830,5 +855,6 @@ test('the screening packages are sold as one line, naming what they cover', asyn
   }, 'cashier');
   assert.strictEqual(added.status, 201, JSON.stringify(added.body));
   assert.strictEqual(added.body.items.length, 1);
-  assert.strictEqual(added.body.net, 500, 'the package price, not the sum of its tests');
+  assert.strictEqual(added.body.net, tariffRate('PKG-MAN'),
+    'the package price, not the sum of its tests');
 });

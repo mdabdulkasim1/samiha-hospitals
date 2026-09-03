@@ -412,19 +412,20 @@ router.get('/register', readRoles, wrap((req, res) => {
   ).all(from, from, to, from, to, drugId, drugId, q, like, like, like);
 
   /*
-   * What the shelf is worth.
+   * What the shelf is worth: the unit rate an administrator has set, times
+   * what is on hand.
    *
-   * Where an administrator has set a unit rate — what one strip, bottle or
-   * pack is worth — the row is valued at that, times what is on hand, because
-   * that is the number the clinic actually stands behind. Where nobody has set
-   * one, the register falls back to what the batches were bought at, which is
-   * what it has always shown. `rate_source` says which of the two a row is,
-   * so a valuation can be read without having to guess where it came from.
+   * A medicine nobody has rated is worth no stated amount, and the column is
+   * left blank rather than filled with what the batches happened to cost. The
+   * two are different claims — one is what the clinic says a unit is worth,
+   * the other is what one delivery was invoiced at — and a valuation that
+   * silently mixes them is a valuation nobody can sign. A blank says plainly
+   * that the rate is still to be set; the total below counts only the rows
+   * that have one, and says how many it left out.
    */
   for (const r of rows) {
     r.closing = round2(r.opening + r.inward - r.outward);
-    r.rate_source = r.unit_rate > 0 ? 'set' : 'purchase';
-    r.value = r.unit_rate > 0 ? round2(r.on_hand * r.unit_rate) : round2(r.stock_value);
+    r.value = r.unit_rate > 0 ? round2(r.on_hand * r.unit_rate) : null;
   }
 
   const totals = rows.reduce((a, r) => ({
@@ -432,7 +433,7 @@ router.get('/register', readRoles, wrap((req, res) => {
     inward: round2(a.inward + r.inward),
     outward: round2(a.outward + r.outward),
     onHand: round2(a.onHand + r.on_hand),
-    stockValue: round2(a.stockValue + r.value),
+    stockValue: round2(a.stockValue + (r.value || 0)),
     expiredQty: round2(a.expiredQty + r.expired_qty),
     unrated: a.unrated + (r.unit_rate > 0 ? 0 : 1),
   }), { medicines: 0, inward: 0, outward: 0, onHand: 0, stockValue: 0, expiredQty: 0, unrated: 0 });

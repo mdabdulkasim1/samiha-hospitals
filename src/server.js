@@ -127,8 +127,22 @@ function startBackgroundJobs() {
  * install without ever touching an existing one.
  */
 function seedIfEmpty() {
-  if (!config.autoSeed) return;
   const users = db.prepare('SELECT COUNT(*) AS c FROM users').get().c;
+
+  /*
+   * The catalogue is synced on every boot, seeded or not, and before the check
+   * below returns. A clinic that has been running for months is exactly the
+   * one that needs it: seeding never runs again once there are accounts, so
+   * without this, a test or a tariff added to the app would never reach the
+   * install that has been using it the longest. Every write is an upsert, so
+   * nothing the clinic has set is touched.
+   */
+  if (users > 0) {
+    try { require('./db/catalogue').sync(); }
+    catch (err) { console.error('[catalogue] sync failed:', err.message); }
+  }
+
+  if (!config.autoSeed) return;
   if (users > 0) return;
   console.log('[setup] No accounts found — creating the starter data.');
   try {

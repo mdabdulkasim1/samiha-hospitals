@@ -184,6 +184,18 @@ These are enforced in the API, not just the interface:
   share — and any settlement **shortfall returns to their balance** rather than being
   silently written off.
 - Discharge posts bed-day charges automatically and blocks on an unsettled bill.
+- **The catalogue reaches a clinic that is already running.** Seeding happens once,
+  when an install has no accounts; after that it never runs again, so a test the
+  department starts doing or a rate card agreed post-launch would otherwise sit in the
+  repository forever. `src/db/catalogue.js` syncs services, diagnostics and the tariff
+  on every boot instead — every write is an upsert, so nothing the clinic has set is
+  touched, and staff, patients, beds, stock and insurers are deliberately left alone.
+- **The tariff is a merge, not an overwrite.** `src/db/rates.js` holds the clinic's
+  rate card as `[code, what it was, what it is now]`. Publishing it moves a rate on
+  only while it still stands at the old figure — a rate an administrator has since set
+  by hand is kept and reported, never silently replaced. Once published, the card only
+  fills in items that carry no rate at all, so a test added next month still gets
+  priced while nothing the clinic has decided is revisited.
 - **A diagnostic order is paid for before the bench touches it.** The doctor orders
   what the patient needs and names no price; the cashier prices each line — from the
   tariff where the clinic has set one, by hand where it has not — and posts it to the
@@ -195,7 +207,9 @@ These are enforced in the API, not just the interface:
 - **What one unit of stock is worth is the administrator's to set.** The stock register
   carries a unit rate per medicine and values the shelf at rate × quantity. Only an
   admin can set or clear it; everyone else who may see prices reads it. A medicine
-  nobody has rated is still valued, at what its batches cost, and the row says so.
+  nobody has rated is left blank rather than valued at what its batches cost — the two
+  are different claims — and the total counts only the rated rows, saying how many it
+  left out.
 - **Money is scoped server-side.** Two lists in `src/lib/auth.js` decide it:
   `MONEY_ROLES` (admin, cashier, counsellor) may see what the clinic *collected* —
   takings, balances, ledgers; `PRICE_ROLES` adds pharmacy, ward, nurse station and
