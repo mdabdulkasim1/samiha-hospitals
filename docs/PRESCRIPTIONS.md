@@ -228,3 +228,36 @@ tracing recorded at the time. Neither is a diagnosis on its own.
 Everything else is the same as any other report — the polyclinic's name and
 address, the referring doctor's code, and a blank box for the reporting doctor
 to stamp and sign.
+
+## Correcting a prescription
+
+A consultation is not filled in one pass. The dose is revised when the weight
+comes back from the nurse, a medicine is dropped when the patient says what
+they are already taking, a duration typed as 5 was meant as 15. Cancelling the
+sheet and writing it again loses the number the pharmacy is holding and leaves
+two prescriptions in the record for one consultation.
+
+**My Clinic → My prescriptions → Correct** reopens the pad on the sheet itself:
+complaints, findings, coded diagnoses, advice, review date and every medicine
+come back as they were written. `PATCH /api/prescriptions/:id` saves it. The Rx
+number does not change, and the sheet records `amended_at` and `amended_by`.
+
+Three rules hold.
+
+**What the pharmacy has handed over cannot be rewritten.** A line with any
+quantity dispensed, or one the patient filled elsewhere, is locked: it comes
+back disabled on the pad, refuses a change with 409, and survives an edit that
+leaves it out. The medicine is in the patient's hand and the record has to say
+what they were actually given. The response names those lines in
+`lockedLines`.
+
+**A signed sheet loses its signature.** The paper the patient is carrying no
+longer matches the record, so the doctor signs and prints again; the response
+says so in `signatureCleared`. A signature is a statement about a particular
+set of medicines.
+
+**Only the prescriber may correct their own prescription**, and not once it is
+cancelled — the same rule signing and cancelling already follow.
+
+The allergy check runs against what the sheet will say afterwards, untouched
+lines included: a medicine kept is still a medicine given.

@@ -182,12 +182,20 @@
         { label: 'Diagnosis', render: (r) => UI.esc(r.diagnosis || '—') },
         { label: 'Medicines', render: (r) => `<div class="small">${UI.esc(r.medicines || '')}</div>` },
         { label: 'Status', render: (r) => UI.statusBadge(r.status) },
-        { label: '', render: (r) => `<button class="btn ghost sm" data-print="${r.id}">Print</button>` },
+        { label: '', render: (r) => (r.status === 'cancelled' ? '' :
+          `<button class="btn ghost sm" data-edit="${r.id}">Correct</button> `) +
+          `<button class="btn ghost sm" data-print="${r.id}">Print</button>` },
       ], rows, { emptyText: 'You have not written a prescription yet.' }),
       footer: '<button class="btn ghost" data-act="__close">Close</button>',
       onMount(modal) {
         modal.querySelectorAll('[data-print]').forEach((b) =>
           b.addEventListener('click', () => Prescribe.reprint(Number(b.dataset.print))));
+        // Correcting opens the pad on the sheet itself; the list behind is
+        // refreshed on the way out so the change shows.
+        modal.querySelectorAll('[data-edit]').forEach((b) =>
+          b.addEventListener('click', () => Prescribe.edit(Number(b.dataset.edit), {
+            onDone: () => { UI.closeAllModals(); openMyPrescriptions(); },
+          })));
       },
     });
   }

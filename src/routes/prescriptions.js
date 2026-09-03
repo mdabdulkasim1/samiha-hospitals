@@ -120,6 +120,77 @@ function assertMayRead(req, sheet) {
   }
 }
 
+/**
+ * The coded diagnosis list for a sheet.
+ *
+ * The term is copied onto the sheet rather than left to a join: the wording
+ * behind a code can be revised, and a prescription already in a patient's hand
+ * must not quietly change afterwards.
+ *
+ * Exactly one is primary. If the doctor marks none, the first is taken as the
+ * primary, because a claim and a bill both have to know what the visit was
+ * actually for and "none of them" is not an answer.
+ */
+function writeDiagnoses(sheetId, list) {
+  const diagnoses = Array.isArray(list) ? list : [];
+  const isPrimary = (d) => String(d.rank || '').toLowerCase() === 'primary';
+  const primaryAt = diagnoses.findIndex(isPrimary);
+  const primaryIdx = primaryAt === -1 ? 0 : primaryAt;
+
+  diagnoses.forEach((d, i) => {
+    const code = str(d.code) || null;
+    let title = str(d.title);
+    if (code && !title) {
+      const known = db.prepare('SELECT title FROM icd_codes WHERE code = ?').get(code);
+      title = known ? known.title : '';
+    }
+    if (!title) throw badRequest('A diagnosis needs a term, or a code we know the term for.');
+    db.prepare(
+      `INSERT INTO prescription_diagnoses (sheet_id, code, title, rank, sort_order)
+       VALUES (?, ?, ?, ?, ?)`
+    ).run(sheetId, code, title, i === primaryIdx ? 'primary' : 'secondary', i);
+  });
+}
+
+/**
+ * One line of a prescription, worked out from what the doctor ticked.
+ *
+ * Written once and used both by the first draft and by every correction after
+ * it, so a dose amended on Tuesday reads exactly as it would have on Monday.
+ */
+function buildItem(it) {
+  let drug = null;
+  if (it.drugId) {
+    drug = db.prepare('SELECT * FROM drugs WHERE id = ? AND active = 1').get(int(it.drugId));
+    if (!drug) throw notFound(`Medicine #${it.drugId} is not in the formulary.`);
+  }
+  const name = drug ? drugLabel(drug) : str(it.drugName);
+  if (!name) throw badRequest('Every line needs a medicine.');
+
+  const { slots, perDay, frequency } = doseSchedule(it);
+  const days = int(it.durationDays, 0);
+  const unit = str(it.doseUnit)
+    || (drug && UNIT_BY_FORM[String(drug.form || '').toLowerCase()])
+    || 'dose';
+  const qty = it.quantity !== undefined && it.quantity !== ''
+    ? num(it.quantity)
+    : Math.ceil(perDay * (days || 1));
+  const food = FOOD_RELATIONS.includes(str(it.foodRelation)) ? str(it.foodRelation) : null;
+
+  // `dose` stays readable on its own, because the pharmacy queue and the ward
+  // chart show that single line and nothing else.
+  const dose = str(it.dose) || (slots.morning + slots.afternoon + slots.night > 0
+    ? `${[slots.morning, slots.afternoon, slots.night].join('-')} ${unit}`
+    : `1 ${unit}`);
+
+  return {
+    drugId: drug ? drug.id : null, name, dose, frequency,
+    route: str(it.route, 'oral'), days: days || null, qty,
+    instructions: str(it.instructions),
+    morning: slots.morning, afternoon: slots.afternoon, night: slots.night, unit, food,
+  };
+}
+
 // ------------------------------------------------------------------ listing
 router.get('/', readerRoles, wrap((req, res) => {
   const { limit, offset } = paging(req.query, 30);
@@ -204,61 +275,19 @@ router.post('/', prescriberRoles, wrap((req, res) => {
      * the primary, because a claim and a bill both have to know what the visit
      * was actually for and "none of them" is not an answer.
      */
-    const diagnoses = Array.isArray(req.body.diagnoses) ? req.body.diagnoses : [];
-    const isPrimary = (d) => String(d.rank || '').toLowerCase() === 'primary';
-    // Whichever the doctor marked, or the first if they marked none.
-    const primaryAt = diagnoses.findIndex(isPrimary);
-    const primaryIdx = primaryAt === -1 ? 0 : primaryAt;
-
-    diagnoses.forEach((d, i) => {
-      const code = str(d.code) || null;
-      let title = str(d.title);
-      if (code && !title) {
-        const known = db.prepare('SELECT title FROM icd_codes WHERE code = ?').get(code);
-        title = known ? known.title : '';
-      }
-      if (!title) throw badRequest('A diagnosis needs a term, or a code we know the term for.');
-      db.prepare(
-        `INSERT INTO prescription_diagnoses (sheet_id, code, title, rank, sort_order)
-         VALUES (?, ?, ?, ?, ?)`
-      ).run(sheetId, code, title, i === primaryIdx ? 'primary' : 'secondary', i);
-    });
+    writeDiagnoses(sheetId, req.body.diagnoses);
 
     for (const it of items) {
-      let drug = null;
-      if (it.drugId) {
-        drug = db.prepare('SELECT * FROM drugs WHERE id = ? AND active = 1').get(int(it.drugId));
-        if (!drug) throw notFound(`Medicine #${it.drugId} is not in the formulary.`);
-      }
-      const name = drug ? drugLabel(drug) : str(it.drugName);
-      if (!name) throw badRequest('Every line needs a medicine.');
-
-      const { slots, perDay, frequency } = doseSchedule(it);
-      const days = int(it.durationDays, 0);
-      const unit = str(it.doseUnit)
-        || (drug && UNIT_BY_FORM[String(drug.form || '').toLowerCase()])
-        || 'dose';
-      const qty = it.quantity !== undefined && it.quantity !== ''
-        ? num(it.quantity)
-        : Math.ceil(perDay * (days || 1));
-      const food = FOOD_RELATIONS.includes(str(it.foodRelation)) ? str(it.foodRelation) : null;
-
-      // `dose` stays readable on its own, because the pharmacy queue and the
-      // ward chart show that single line and nothing else.
-      const dose = str(it.dose) || (slots.morning + slots.afternoon + slots.night > 0
-        ? `${[slots.morning, slots.afternoon, slots.night].join('-')} ${unit}`
-        : `1 ${unit}`);
-
+      const row = buildItem(it);
       db.prepare(
         `INSERT INTO prescriptions
            (sheet_id, doctor_id, visit_id, patient_id, drug_id, drug_name, dose, frequency,
             route, duration_days, quantity, instructions,
             dose_morning, dose_afternoon, dose_night, dose_unit, food_relation, status)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      ).run(sheetId, req.user.id, visitId, patient.id, drug ? drug.id : null, name,
-            dose, frequency, str(it.route, 'oral'), days || null, qty,
-            str(it.instructions),
-            slots.morning, slots.afternoon, slots.night, unit, food,
+      ).run(sheetId, req.user.id, visitId, patient.id, row.drugId, row.name,
+            row.dose, row.frequency, row.route, row.days, row.qty, row.instructions,
+            row.morning, row.afternoon, row.night, row.unit, row.food,
             /*
              * Pending, with or without a visit behind it.
              *
@@ -279,6 +308,128 @@ router.post('/', prescriberRoles, wrap((req, res) => {
   sheet.items = db.prepare('SELECT * FROM prescriptions WHERE sheet_id = ? ORDER BY id').all(out);
   sheet.warnings = warnings;
   res.status(201).json(sheet);
+}));
+
+/**
+ * Correcting a prescription the doctor has already written.
+ *
+ * A consultation is not a form filled in one pass. The dose is revised when
+ * the weight comes back from the nurse, a medicine is dropped when the patient
+ * says what they are already taking, a duration was typed as 5 and meant 15.
+ * Until now the only way to fix any of that was to cancel the sheet and write
+ * it again, which loses the number the pharmacy is holding and puts a second
+ * prescription in the record for one consultation.
+ *
+ * What cannot be changed is what has already been acted on. A line the
+ * pharmacy has dispensed, in part or in full, or one the patient filled
+ * elsewhere, is left exactly as it was: the medicine is in their hand, and the
+ * record has to say what they were actually given. Those lines survive an edit
+ * untouched and the response says which they were.
+ *
+ * A signed sheet loses its signature when it changes. The paper the patient is
+ * carrying no longer matches the record, so the doctor signs again and prints
+ * again — a signature is a statement about a particular set of medicines.
+ */
+router.patch('/:id', prescriberRoles, wrap((req, res) => {
+  const sheet = sheetOr404(int(req.params.id));
+  if (sheet.doctor_id !== req.user.id) throw forbidden('Only the prescriber can change their prescription.');
+  if (sheet.status === 'cancelled') throw conflict('This prescription was cancelled.');
+
+  const existing = db.prepare('SELECT * FROM prescriptions WHERE sheet_id = ? ORDER BY id').all(sheet.id);
+  const locked = existing.filter((l) => l.dispensed_qty > 0 || l.status === 'external');
+  const editable = existing.filter((l) => !locked.includes(l));
+
+  const items = Array.isArray(req.body.items) ? req.body.items : [];
+  if (!items.length && !locked.length) {
+    throw badRequest('A prescription needs at least one medicine. Cancel it instead of emptying it.');
+  }
+
+  // A line the caller names must be one of this sheet's, and must still be
+  // the doctor's to change.
+  for (const it of items) {
+    if (!it.id) continue;
+    const line = existing.find((l) => l.id === int(it.id));
+    if (!line) throw badRequest(`Line #${it.id} is not on this prescription.`);
+    if (locked.includes(line)) {
+      throw conflict(`${line.drug_name} has already been dispensed and cannot be changed.`);
+    }
+  }
+
+  // The allergy check runs against what the sheet will say afterwards, the
+  // untouched lines included — a medicine kept is still a medicine given.
+  const drugIds = [...locked.map((l) => l.drug_id), ...items.map((i) => int(i.drugId))].filter(Boolean);
+  const warnings = pharmacy.safetyCheck(sheet.patient_id, drugIds);
+  if (warnings.length && !req.body.acknowledgeWarnings) {
+    throw conflict(`Safety check: ${warnings.join(' ')} Resend with acknowledgeWarnings=true to prescribe anyway.`);
+  }
+
+  db.transaction(() => {
+    const set = (field, value) => db.prepare(
+      `UPDATE prescription_sheets SET ${field} = ? WHERE id = ?`
+    ).run(value, sheet.id);
+    for (const [key, column] of [['complaints', 'complaints'], ['findings', 'findings'],
+      ['diagnosis', 'diagnosis'], ['advice', 'advice'], ['followUpDate', 'follow_up_date']]) {
+      if (Object.prototype.hasOwnProperty.call(req.body, key)) set(column, str(req.body[key]) || null);
+    }
+
+    if (Array.isArray(req.body.diagnoses)) {
+      db.prepare('DELETE FROM prescription_diagnoses WHERE sheet_id = ?').run(sheet.id);
+      writeDiagnoses(sheet.id, req.body.diagnoses);
+    }
+
+    // Lines the doctor took off the sheet. Only ever the untouched ones —
+    // anything dispensed was filtered out above.
+    const kept = items.map((i) => int(i.id)).filter(Boolean);
+    for (const line of editable) {
+      if (!kept.includes(line.id)) {
+        db.prepare('DELETE FROM prescriptions WHERE id = ?').run(line.id);
+      }
+    }
+
+    for (const it of items) {
+      const row = buildItem(it, sheet.patient_id, sheet.visit_id, req.user.id);
+      if (it.id) {
+        db.prepare(
+          `UPDATE prescriptions
+              SET drug_id = ?, drug_name = ?, dose = ?, frequency = ?, route = ?,
+                  duration_days = ?, quantity = ?, instructions = ?,
+                  dose_morning = ?, dose_afternoon = ?, dose_night = ?, dose_unit = ?,
+                  food_relation = ?
+            WHERE id = ?`
+        ).run(row.drugId, row.name, row.dose, row.frequency, row.route, row.days, row.qty,
+              row.instructions, row.morning, row.afternoon, row.night, row.unit, row.food,
+              int(it.id));
+      } else {
+        db.prepare(
+          `INSERT INTO prescriptions
+             (sheet_id, doctor_id, visit_id, patient_id, drug_id, drug_name, dose, frequency,
+              route, duration_days, quantity, instructions,
+              dose_morning, dose_afternoon, dose_night, dose_unit, food_relation, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`
+        ).run(sheet.id, req.user.id, sheet.visit_id, sheet.patient_id, row.drugId, row.name,
+              row.dose, row.frequency, row.route, row.days, row.qty, row.instructions,
+              row.morning, row.afternoon, row.night, row.unit, row.food);
+      }
+    }
+
+    db.prepare(
+      `UPDATE prescription_sheets
+          SET amended_at = datetime('now'), amended_by = ?,
+              signed_at = NULL, signature_image = NULL
+        WHERE id = ?`
+    ).run(req.user.id, sheet.id);
+  })();
+
+  audit.log(req, 'amend', 'prescription_sheet', sheet.id,
+    { rxNo: sheet.rx_no, locked: locked.map((l) => l.drug_name) });
+
+  const updated = sheetOr404(sheet.id);
+  updated.items = db.prepare('SELECT * FROM prescriptions WHERE sheet_id = ? ORDER BY id').all(sheet.id);
+  updated.warnings = warnings;
+  // Named so the screen can say why the signature went, and what it left alone.
+  updated.lockedLines = locked.map((l) => l.drug_name);
+  updated.signatureCleared = Boolean(sheet.signed_at);
+  res.json(updated);
 }));
 
 /**

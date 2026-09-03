@@ -132,16 +132,70 @@
    */
   async function open(patient, context = {}) {
     const drugs = await API.get('/api/pharmacy/drugs?limit=500');
-    const lines = [];
+
+    /*
+     * Correcting a prescription already written.
+     *
+     * A consultation is not filled in one pass: the dose is revised when the
+     * weight comes back, a medicine is dropped when the patient says what they
+     * already take, a duration typed as 5 was meant as 15. The pad reopens on
+     * the sheet rather than starting a second one for the same consultation.
+     *
+     * A line the pharmacy has already dispensed comes back locked. The
+     * medicine is in the patient's hand and the record has to say what they
+     * were actually given.
+     */
+    const editing = context.sheet || null;
+    const lockedOf = (item) => item.dispensed_qty > 0 || item.status === 'external';
+
+    const allergyHit = (drug) => {
+      const terms = (patient.allergies || '').split(/[,;]/).map((a) => a.trim().toLowerCase()).filter(Boolean);
+      const hay = `${drug.name} ${drug.generic_name || ''}`.toLowerCase();
+      return terms.some((t) => t.length > 2 && hay.includes(t));
+    };
+
+    const lines = editing ? (editing.items || []).map((it) => {
+      const drug = drugs.find((d) => d.id === it.drug_id) || null;
+      return {
+        id: it.id,
+        locked: lockedOf(it),
+        dispensedQty: it.dispensed_qty,
+        drugId: it.drug_id,
+        drugName: it.drug_name,
+        form: drug ? drug.form : null,
+        scheduleType: drug ? drug.schedule_type : null,
+        allergy: drug ? allergyHit(drug) : false,
+        unit: it.dose_unit || (drug ? unitFor(drug.form) : 'dose'),
+        doseMorning: it.dose_morning || 0,
+        doseAfternoon: it.dose_afternoon || 0,
+        doseNight: it.dose_night || 0,
+        foodRelation: it.food_relation || 'after_food',
+        frequency: it.frequency || 'SOS',
+        route: it.route || 'oral',
+        durationDays: it.duration_days || 1,
+        quantity: it.quantity || 0,
+        // Deliberately not marked as hand-set: the stored total stands until
+        // something changes, and then it follows the new dose or duration —
+        // a line changed to fifteen days should not still dispense ten days'
+        // worth.
+        instructions: it.instructions || '',
+      };
+    }) : [];
+
     // Coded diagnoses, in order; the first is the primary.
-    const diagnoses = [];
+    const diagnoses = editing
+      ? (editing.diagnoses || []).map((d) => ({ code: d.code, title: d.title }))
+      : [];
+
     // The sheet, once saved. Signing and printing act on this rather than
     // creating a second prescription for the same consultation.
     let saved = null;
     let needsRefresh = false;
 
     UI.modal({
-      title: `Prescription — ${patient.first_name} ${patient.last_name || ''}`.trim(),
+      title: editing
+        ? `Correcting ${editing.rx_no} — ${patient.first_name} ${patient.last_name || ''}`.trim()
+        : `Prescription — ${patient.first_name} ${patient.last_name || ''}`.trim(),
       size: 'wide',
       body: `
         <div class="row-between mb">
@@ -155,12 +209,24 @@
         </div>
         ${patient.allergies ? `<div class="alert danger mb">
           <b>Recorded allergies:</b> ${UI.esc(patient.allergies)}</div>` : ''}
+        ${editing ? `<div class="alert ${lines.some((l) => l.locked) ? 'warn' : 'info'} mb">
+          Correcting <b>${UI.esc(editing.rx_no)}</b>, written
+          ${UI.esc(UI.dateTime(editing.created_at))}. It keeps its number.
+          ${lines.some((l) => l.locked)
+            ? `<b>${UI.esc(lines.filter((l) => l.locked).map((l) => l.drugName).join(', '))}</b>
+               ${lines.filter((l) => l.locked).length > 1 ? 'have' : 'has'} already left the pharmacy
+               and cannot be changed.`
+            : 'Nothing has been dispensed yet, so every line is still yours to change.'}
+          ${editing.signed_at ? ' Saving clears the signature — sign and print it again.' : ''}
+        </div>` : ''}
 
         <form id="rx-head">
           <div class="grid c2">
-            ${UI.field({ name: 'complaints', label: 'Complaints', placeholder: 'Fever 3 days, dry cough' })}
+            ${UI.field({ name: 'complaints', label: 'Complaints', placeholder: 'Fever 3 days, dry cough',
+              value: editing ? editing.complaints || '' : '' })}
             ${UI.field({ name: 'findings', label: 'Examination findings',
-              placeholder: 'Throat congested, chest clear' })}
+              placeholder: 'Throat congested, chest clear',
+              value: editing ? editing.findings || '' : '' })}
           </div>
         </form>
 
@@ -192,8 +258,10 @@
         <form id="rx-foot">
           <div class="grid c2">
             ${UI.field({ name: 'advice', label: 'Advice', rows: 2,
-              placeholder: 'Plenty of fluids, steam inhalation, rest' })}
-            ${UI.field({ name: 'followUpDate', label: 'Review on', type: 'date' })}
+              placeholder: 'Plenty of fluids, steam inhalation, rest',
+              value: editing ? editing.advice || '' : '' })}
+            ${UI.field({ name: 'followUpDate', label: 'Review on', type: 'date',
+              value: editing ? editing.follow_up_date || '' : '' })}
           </div>
         </form>`,
       onClose() { if (needsRefresh && context.onDone) context.onDone(); },
@@ -272,12 +340,6 @@
         });
         drawDx();
 
-        const allergyHit = (drug) => {
-          const terms = (patient.allergies || '').split(/[,;]/).map((a) => a.trim().toLowerCase()).filter(Boolean);
-          const hay = `${drug.name} ${drug.generic_name || ''}`.toLowerCase();
-          return terms.some((t) => t.length > 2 && hay.includes(t));
-        };
-
         const draw = () => {
           if (!lines.length) {
             linesHost.innerHTML = UI.empty('Search above and add the medicines you are prescribing.', '℞');
@@ -299,7 +361,9 @@
                       ? UI.badge('Schedule ' + l.scheduleType, 'warn') : ''}
                     ${l.allergy ? UI.badge('⚠ allergy', 'danger') : ''}</span>
                 </span>
-                <button type="button" class="btn ghost sm" data-rm="${i}" title="Remove">×</button>
+                ${l.locked
+                  ? `<span class="badge ok" title="Already handed over — the record has to say what the patient was given">dispensed</span>`
+                  : `<button type="button" class="btn ghost sm" data-rm="${i}" title="Remove">×</button>`}
               </div>
 
               <div class="rx-line-grid">
@@ -360,6 +424,7 @@
             </div>`).join('');
 
           linesHost.querySelectorAll('[data-f]').forEach((input) => {
+            if (lines[Number(input.dataset.i)].locked) input.disabled = true;
             input.addEventListener('change', () => {
               const line = lines[Number(input.dataset.i)];
               line[input.dataset.f] = input.value;
@@ -453,7 +518,7 @@
           ? UI.openPrintWindow({ width: 620, height: 900 }) : null;
 
         const save = async () => {
-          if (saved) return saved;
+          if (saved && !editing) return saved;
           const payload = {
             patientId: patient.id,
             visitId: context.visitId || undefined,
@@ -468,7 +533,7 @@
               code: d.code, title: d.title, rank: i === 0 ? 'primary' : 'secondary',
             })),
             items: lines.map((l) => ({
-              drugId: l.drugId, route: l.route, durationDays: l.durationDays,
+              id: l.id, drugId: l.drugId, route: l.route, durationDays: l.durationDays,
               quantity: l.quantity, instructions: l.instructions,
               doseMorning: l.doseMorning, doseAfternoon: l.doseAfternoon, doseNight: l.doseNight,
               doseUnit: l.unit, foodRelation: l.foodRelation,
@@ -476,13 +541,19 @@
               frequency: l.frequency,
             })),
           };
+          const send = (body) => (editing
+            ? API.patch(`/api/prescriptions/${editing.id}`, body)
+            : API.post('/api/prescriptions', body));
           try {
-            saved = await API.post('/api/prescriptions', payload);
+            saved = await send(payload);
           } catch (err) {
             if (err.status === 409 && /Safety check/.test(err.message)) {
               if (!(await UI.confirm(err.message, { title: 'Allergy warning', danger: true }))) return null;
-              saved = await API.post('/api/prescriptions', { ...payload, acknowledgeWarnings: true });
+              saved = await send({ ...payload, acknowledgeWarnings: true });
             } else throw err;
+          }
+          if (editing && saved.signatureCleared) {
+            UI.warn('The signature was cleared — sign and print it again.');
           }
           // The caller usually refreshes the screen behind us, which would tear
           // this modal down mid-flow — so it is told once, on the way out.
@@ -497,8 +568,10 @@
         }
 
         if (act === 'save') {
-          UI.ok(`Prescription ${sheet.rx_no} saved — the pharmacy can see it now.`);
-          markSaved(modal, sheet);
+          UI.ok(editing
+            ? `Prescription ${sheet.rx_no} corrected — the pharmacy sees the new version.`
+            : `Prescription ${sheet.rx_no} saved — the pharmacy can see it now.`);
+          markSaved(modal, sheet, Boolean(editing));
           return 'keep';
         }
 
@@ -517,21 +590,25 @@
           }
           saved = signed;
           UI.ok(`Prescription ${signed.rx_no} signed.`);
-          markSaved(modal, signed);
+          markSaved(modal, signed, Boolean(editing));
           return 'keep';
         }
 
         printSheet(saved, printWindow);
-        markSaved(modal, saved);
+        markSaved(modal, saved, Boolean(editing));
         return 'keep';
       },
     });
   }
 
   /** Once saved, the sheet has a number and a state the doctor can see. */
-  function markSaved(modal, sheet) {
+  function markSaved(modal, sheet, editing = false) {
     const saveBtn = document.querySelector('[data-act=save]');
-    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saved'; }
+    // A new sheet is written once. A correction can be made twice — a doctor
+    // who fixes the dose and then spots the duration should not have to close
+    // the pad and open it again.
+    if (saveBtn && !editing) { saveBtn.disabled = true; saveBtn.textContent = 'Saved'; }
+    if (saveBtn && editing) { saveBtn.disabled = false; saveBtn.textContent = 'Save'; }
     const cancelBtn = document.querySelector('[data-act=__close]');
     if (cancelBtn && cancelBtn.textContent === 'Cancel') cancelBtn.textContent = 'Close';
     const signBtn = document.querySelector('[data-act=sign]');
@@ -545,7 +622,8 @@
       bar.className = 'alert ok mb';
       head.parentNode.insertBefore(bar, head);
     }
-    bar.innerHTML = `<b>${UI.esc(sheet.rx_no)}</b> saved — the pharmacy can see it.
+    bar.innerHTML = `<b>${UI.esc(sheet.rx_no)}</b> ${editing ? 'corrected' : 'saved'}
+      — the pharmacy can see it.
       ${sheet.signed_at
         ? `Signed ${UI.esc(UI.dateTime(sheet.signed_at))}.`
         : 'Not signed yet — press <b>Sign</b> to add your signature, or stamp the printed sheet by hand.'}`;
@@ -784,5 +862,20 @@
     printSheet(await API.get(`/api/prescriptions/${sheetId}`));
   }
 
-  window.Prescribe = { open, printSheet, reprint };
+  /**
+   * Reopen a prescription to correct it. The patient comes off the sheet, so
+   * the caller needs nothing but its id.
+   */
+  async function edit(sheetId, context = {}) {
+    const sheet = await API.get(`/api/prescriptions/${sheetId}`);
+    if (sheet.status === 'cancelled') return UI.err('This prescription was cancelled.');
+    return open({
+      id: sheet.patient_id,
+      first_name: sheet.first_name, last_name: sheet.last_name,
+      uhid: sheet.uhid, age_years: sheet.age_years, gender: sheet.gender,
+      allergies: sheet.allergies,
+    }, { ...context, sheet, visitId: sheet.visit_id });
+  }
+
+  window.Prescribe = { open, printSheet, reprint, edit };
 })();

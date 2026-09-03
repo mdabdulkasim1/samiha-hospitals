@@ -207,6 +207,9 @@ function migrate() {
    */
   ensureColumn('vitals', 'amended_at', 'TEXT');
   ensureColumn('vitals', 'amended_by', 'INTEGER');
+  // The same for a prescription a doctor went back and corrected.
+  ensureColumn('prescription_sheets', 'amended_at', 'TEXT');
+  ensureColumn('prescription_sheets', 'amended_by', 'INTEGER');
 
   ensureColumn('lab_tests', 'component_of', 'TEXT');
   ensureColumn('lab_tests', 'sort_order', 'INTEGER NOT NULL DEFAULT 0');

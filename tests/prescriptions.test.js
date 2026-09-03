@@ -600,3 +600,137 @@ test('colleague-by-colleague reporting is management\'s, not a doctor\'s', async
   // Their own day is theirs.
   assert.strictEqual((await api('GET', '/api/appointments/my-day', undefined, 'imran')).status, 200);
 });
+
+// ------------------------------------------------ correcting a prescription
+test('a doctor can correct their own prescription without writing a second one', async () => {
+  const patient = db.prepare('SELECT id FROM patients ORDER BY id LIMIT 1').get();
+  const para = db.prepare("SELECT id FROM drugs WHERE code = 'PARA500'").get();
+  const other = db.prepare("SELECT id FROM drugs WHERE code = 'CETZ10'").get();
+
+  const sheet = (await api('POST', '/api/prescriptions', {
+    patientId: patient.id, complaints: 'Fever 3 days', findings: 'Throat congested',
+    advice: 'Rest', diagnoses: [{ code: 'E11.9' }],
+    items: [{ drugId: para.id, doseMorning: 1, doseNight: 1, durationDays: 5 },
+      { drugId: other.id, doseNight: 1, durationDays: 5 }],
+    acknowledgeWarnings: true,
+  }, 'imran')).body;
+  assert.strictEqual(sheet.items.length, 2);
+
+  // Revise a duration, drop a line, add one, and change the notes.
+  const kept = sheet.items[0];
+  const amended = await api('PATCH', `/api/prescriptions/${sheet.id}`, {
+    complaints: 'Fever 5 days', advice: 'Rest and fluids',
+    diagnoses: [{ code: 'E11.65' }, { code: 'I10' }],
+    items: [
+      { id: kept.id, drugId: kept.drug_id, doseMorning: 1, doseNight: 1, durationDays: 15 },
+      { drugId: other.id, doseMorning: 1, durationDays: 3 },
+    ],
+    acknowledgeWarnings: true,
+  }, 'imran');
+  assert.strictEqual(amended.status, 200, JSON.stringify(amended.body));
+
+  // Same prescription, corrected — not a second one for the same consultation.
+  assert.strictEqual(amended.body.rx_no, sheet.rx_no);
+  assert.strictEqual(amended.body.id, sheet.id);
+  assert.ok(amended.body.amended_at, 'the sheet says it was changed');
+  assert.ok(amended.body.amended_by, 'and by whom');
+
+  assert.strictEqual(amended.body.complaints, 'Fever 5 days');
+  assert.strictEqual(amended.body.items.length, 2, 'one dropped, one added');
+  const line = amended.body.items.find((i) => i.id === kept.id);
+  assert.strictEqual(line.duration_days, 15);
+  assert.strictEqual(line.quantity, 30, 'and the total to dispense follows the duration');
+
+  // The coded diagnoses are replaced, and exactly one stays primary.
+  const dx = amended.body.diagnoses;
+  assert.deepStrictEqual(dx.map((d) => d.code), ['E11.65', 'I10']);
+  assert.strictEqual(dx.filter((d) => d.rank === 'primary').length, 1);
+
+  // And the pharmacy is looking at the corrected sheet, not the old one.
+  const queue = (await api('GET', `/api/pharmacy/sheet/${sheet.id}`, undefined, 'pharmacy')).body;
+  assert.strictEqual(queue.prescriptions.length, 2);
+  assert.ok(queue.prescriptions.some((l) => l.duration_days === 15));
+});
+
+test('what the pharmacy has handed over cannot be rewritten', async () => {
+  const patient = db.prepare('SELECT id FROM patients ORDER BY id LIMIT 1').get();
+  const para = db.prepare("SELECT id FROM drugs WHERE code = 'PARA500'").get();
+  const other = db.prepare("SELECT id FROM drugs WHERE code = 'CETZ10'").get();
+
+  const sheet = (await api('POST', '/api/prescriptions', {
+    patientId: patient.id,
+    items: [{ drugId: para.id, doseMorning: 1, durationDays: 5 },
+      { drugId: other.id, doseNight: 1, durationDays: 5 }],
+    acknowledgeWarnings: true,
+  }, 'imran')).body;
+  const [dispensedLine, freeLine] = sheet.items;
+
+  // Mark the first as handed over, the way the counter does.
+  db.prepare("UPDATE prescriptions SET dispensed_qty = 5, status = 'dispensed' WHERE id = ?")
+    .run(dispensedLine.id);
+
+  const refused = await api('PATCH', `/api/prescriptions/${sheet.id}`, {
+    items: [{ id: dispensedLine.id, drugId: para.id, durationDays: 30 }],
+    acknowledgeWarnings: true,
+  }, 'imran');
+  assert.strictEqual(refused.status, 409);
+  assert.match(refused.body.error, /already been dispensed/i);
+
+  // It also survives an edit that simply leaves it out — the medicine is in
+  // the patient's hand, and the record has to say what they were given.
+  const amended = (await api('PATCH', `/api/prescriptions/${sheet.id}`, {
+    items: [{ id: freeLine.id, drugId: other.id, doseNight: 1, durationDays: 7 }],
+    acknowledgeWarnings: true,
+  }, 'imran')).body;
+  assert.ok(amended.items.some((i) => i.id === dispensedLine.id), 'the dispensed line is still there');
+  assert.strictEqual(amended.items.find((i) => i.id === dispensedLine.id).duration_days, 5,
+    'and unchanged');
+  assert.deepStrictEqual(amended.lockedLines, [dispensedLine.drug_name]);
+});
+
+test('correcting a signed prescription takes the signature off it', async () => {
+  const patient = db.prepare('SELECT id FROM patients ORDER BY id LIMIT 1').get();
+  const para = db.prepare("SELECT id FROM drugs WHERE code = 'PARA500'").get();
+  db.prepare("UPDATE doctor_profiles SET signature_image = 'data:image/png;base64,AAAA' WHERE user_id = ?")
+    .run(ids.imran);
+
+  const sheet = (await api('POST', '/api/prescriptions', {
+    patientId: patient.id,
+    items: [{ drugId: para.id, doseMorning: 1, durationDays: 3 }],
+    acknowledgeWarnings: true,
+  }, 'imran')).body;
+  const signed = (await api('POST', `/api/prescriptions/${sheet.id}/sign`, {}, 'imran')).body;
+  assert.ok(signed.signed_at, 'signed');
+
+  const amended = (await api('PATCH', `/api/prescriptions/${sheet.id}`, {
+    advice: 'Take with food',
+    items: [{ id: sheet.items[0].id, drugId: para.id, doseMorning: 1, durationDays: 3 }],
+    acknowledgeWarnings: true,
+  }, 'imran')).body;
+
+  // The paper in the patient's hand no longer matches, so the signature goes.
+  assert.strictEqual(amended.signed_at, null);
+  assert.strictEqual(amended.signature_image, null);
+  assert.strictEqual(amended.signatureCleared, true, 'and the screen is told why');
+});
+
+test('a prescription is only its own prescriber\'s to correct', async () => {
+  const patient = db.prepare('SELECT id FROM patients ORDER BY id LIMIT 1').get();
+  const para = db.prepare("SELECT id FROM drugs WHERE code = 'PARA500'").get();
+  const sheet = (await api('POST', '/api/prescriptions', {
+    patientId: patient.id,
+    items: [{ drugId: para.id, doseMorning: 1, durationDays: 3 }],
+    acknowledgeWarnings: true,
+  }, 'imran')).body;
+
+  assert.strictEqual((await api('PATCH', `/api/prescriptions/${sheet.id}`,
+    { advice: 'mine now' }, 'sara')).status, 403);
+  assert.strictEqual((await api('PATCH', `/api/prescriptions/${sheet.id}`,
+    { advice: 'ours now' }, 'pharmacy')).status, 403);
+
+  // A cancelled sheet is closed to everybody, its own prescriber included.
+  await api('POST', `/api/prescriptions/${sheet.id}/cancel`, {}, 'imran');
+  const closed = await api('PATCH', `/api/prescriptions/${sheet.id}`,
+    { advice: 'too late' }, 'imran');
+  assert.strictEqual(closed.status, 409);
+});
