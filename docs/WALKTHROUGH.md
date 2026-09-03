@@ -104,9 +104,20 @@ straight to the cashier.
 
 ## 6 · Lab
 
-*lab@samiha.local · Laboratory*
+*lab@samiha.local · Diagnostics*
 
-Collect the sample, enter the results, verify the report. Out-of-range values
+Collect the sample, enter the results, verify the report.
+
+**Diagnostics → Record tests done** is the bench's own board for work that
+arrives without an order — a walk-in for a sugar, a repeat somebody asked for
+over the counter. Every test the department does is a button showing its name
+and sample type; there are no rates on it, because the technician is not
+pricing anything. Pick the patient, press what was run, and the order is
+raised for results to be entered against.
+
+A test the clinic has not priced yet is still on the board and still recorded:
+the work happened. It simply does not reach the bill until a rate is set, and
+the screen says so rather than leaving the counter to find out. Out-of-range values
 are flagged on the printed report against the reference range.
 
 Verifying the **last** open order moves the patient on to the cashier by itself.

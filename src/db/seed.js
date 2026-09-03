@@ -288,6 +288,39 @@ for (const [code, name, category, bill_group, sample_type, unit, ref_low, ref_hi
   });
 }
 
+/*
+ * The clinic's own diagnostic catalogue, taken from a health-checkup report it
+ * runs — the panels, the tests it reports on their own, and every analyte
+ * inside each panel with the units and reference ranges the report is issued
+ * against.
+ *
+ * None of it is priced. A tariff is the clinic's to set and a guessed rate
+ * would put a wrong figure on a real patient's bill, so these show under
+ * Services & Rates as "no rate set" until somebody prices them — and upsert
+ * leaves a price alone once it is set, so re-seeding never undoes that.
+ */
+const diagnostics = require('./diagnostics');
+for (const [code, name, bill_group, sample_type, ref_text, tat_hours] of diagnostics.PANELS) {
+  upsert('lab_tests', 'code', {
+    code, name, category: 'lab', bill_group, sample_type, ref_text, price: 0, tat_hours,
+  });
+}
+for (const [code, name, bill_group, sample_type, unit, ref_low, ref_high, ref_text, tat_hours]
+  of diagnostics.SINGLES) {
+  upsert('lab_tests', 'code', {
+    code, name, category: 'lab', bill_group, sample_type, unit, ref_low, ref_high, ref_text,
+    price: 0, tat_hours,
+  });
+}
+diagnostics.COMPONENTS.forEach(([code, name, panel, sample_type, unit, ref_low, ref_high, ref_text], i) => {
+  const parent = db.prepare('SELECT bill_group FROM lab_tests WHERE code = ?').get(panel);
+  upsert('lab_tests', 'code', {
+    code, name, category: 'lab', bill_group: parent ? parent.bill_group : 'Blood tests',
+    sample_type, unit, ref_low, ref_high, ref_text, price: 0, tat_hours: 24,
+    component_of: panel, sort_order: i + 1,
+  });
+});
+
 const seedToday = new Date();
 const openingExpiry = (months) =>
   new Date(seedToday.getFullYear(), seedToday.getMonth() + months, 28).toISOString().slice(0, 10);

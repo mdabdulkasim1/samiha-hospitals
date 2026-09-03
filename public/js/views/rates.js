@@ -7,7 +7,10 @@
     subtitle: 'What the clinic charges, group by group',
 
     async render(el) {
-      const groups = await API.get('/api/masters/catalogue');
+      // The whole catalogue, panel analytes included: this is the one screen
+      // where a clinic decides which of them it also offers on its own, and it
+      // decides that by giving one a rate.
+      const groups = await API.get('/api/masters/catalogue?all=1');
       // Only management sets a rate. Everyone else at the counter needs to be
       // able to look one up, which is a different thing from changing it.
       const mayEdit = APP.can(['admin']);
@@ -33,7 +36,10 @@
           The rates below are starting figures, not the clinic's tariff — set your own.
           A rate takes effect on the next bill; bills already raised keep the rate they were
           charged at. ${unpriced ? `<b>${UI.num(unpriced)} item(s) have no rate</b> and will add
-          nothing to a bill until you give them one.` : ''}</div>`
+          nothing to a bill until you give them one.` : ''}
+          <div class="small mt">An item marked <b>Reported</b> is one analyte inside a panel —
+            it prints on the report but is not sold on its own. Give it a rate and it becomes a
+            test the clinic offers, on the order form and on the charge board.</div></div>`
         : '<div class="alert info mb">Rates are set by management. This is the current tariff.</div>'}
 
         <div class="search-row">
@@ -56,9 +62,13 @@
               <span class="muted small">${UI.num(g.items.length)} item(s)</span></div>
             <div class="card-body tight">${UI.table([
               { label: 'Code', render: (i) => `<code>${UI.esc(i.code)}</code>` },
-              { label: 'Item', render: (i) => `<b>${UI.esc(i.name)}</b>` },
-              { label: 'Kind', render: (i) => UI.badge(i.kind === 'test' ? 'Diagnostic' : 'Service',
-                i.kind === 'test' ? 'teal' : 'info') },
+              { label: 'Item', render: (i) => `<b>${UI.esc(i.name)}</b>` +
+                (i.component_of ? `<div class="muted small">part of ${UI.esc(
+                  panelName(groups, i.component_of))}</div>` : '') },
+              { label: 'Kind', render: (i) => (i.component_of && !i.price
+                ? UI.badge('Reported', 'warn')
+                : UI.badge(i.kind === 'test' ? 'Diagnostic' : 'Service',
+                  i.kind === 'test' ? 'teal' : 'info')) },
               { label: 'Rate', num: true, render: (i) => (mayEdit
                 ? `<input class="rate-input" type="number" min="0" step="1"
                      value="${i.price != null ? i.price : ''}" placeholder="not set"
@@ -75,6 +85,15 @@
       draw('');
     },
   });
+
+  /** The panel an analyte belongs to, by name rather than by code. */
+  function panelName(groups, code) {
+    for (const g of groups) {
+      const hit = g.items.find((i) => i.kind === 'test' && i.code === code);
+      if (hit) return hit.name;
+    }
+    return code;
+  }
 
   function rateOf(groups, code) {
     for (const g of groups) {

@@ -22,21 +22,27 @@
             <div class="foot">Released to the patient</div></div>
         </div>
 
-        <div class="search-row">
-          <select id="l-status">
-            <option value="">All statuses</option>
-            ${['ordered','sample_collected','in_process','result_entered','reported','cancelled'].map((s) =>
-              `<option value="${s}"${params.status === s ? ' selected' : ''}>${UI.titleise(s)}</option>`).join('')}
-          </select>
+        <div class="tabs" id="l-tabs">
+          <button class="active" data-tab="orders">Orders</button>
+          ${APP.can(['lab', 'nurse', 'doctor'])
+            ? '<button data-tab="record">Record tests done</button>' : ''}
         </div>
+        <div id="l-body">
+          <div class="search-row">
+            <select id="l-status">
+              <option value="">All statuses</option>
+              ${['ordered','sample_collected','in_process','result_entered','reported','cancelled'].map((s) =>
+                `<option value="${s}"${params.status === s ? ' selected' : ''}>${UI.titleise(s)}</option>`).join('')}
+            </select>
+          </div>
 
-        <div class="card"><div class="card-body tight" id="lo-list"></div></div>`;
+          <div class="card"><div class="card-body tight" id="lo-list"></div></div>
+        </div>`;
 
-      el.querySelector('#l-status').addEventListener('change', (e) =>
-        APP.navigate('lab', { status: e.target.value }));
+      const body = el.querySelector('#l-body');
+      const ordersHtml = body.innerHTML;
 
-      const host = el.querySelector('#lo-list');
-      host.innerHTML = UI.table([
+      const drawOrders = (into) => { into.innerHTML = UI.table([
         { label: 'Order', render: (o) => `<code>${UI.esc(o.order_no)}</code>` +
           (o.priority !== 'routine' ? ' ' + UI.badge(o.priority.toUpperCase(), o.priority === 'stat' ? 'danger' : 'warn') : '') },
         { label: 'Patient', render: (o) => `<b>${UI.esc(o.patient_name)}</b><div class="muted small">${UI.esc(o.uhid)} · ${UI.esc(o.age_years || '—')}${UI.esc((o.gender || '').charAt(0).toUpperCase())}</div>` },
@@ -49,9 +55,221 @@
         { label: 'Ordered', render: (o) => UI.esc(UI.ago(o.ordered_at)) },
         { label: 'Amount', num: true, render: (o) => UI.money(o.total_price) },
       ], res.rows, { emptyText: 'No diagnostic orders match this filter.' });
-      UI.bindRows(host, res.rows, (o) => openOrder(o.id));
+        UI.bindRows(into, res.rows, (o) => openOrder(o.id));
+      };
+
+      const showOrders = () => {
+        body.innerHTML = ordersHtml;
+        body.querySelector('#l-status').addEventListener('change', (e) =>
+          APP.navigate('lab', { status: e.target.value }));
+        drawOrders(body.querySelector('#lo-list'));
+      };
+
+      el.querySelectorAll('#l-tabs button').forEach((b) => b.addEventListener('click', () => {
+        el.querySelectorAll('#l-tabs button').forEach((x) => x.classList.toggle('active', x === b));
+        if (b.dataset.tab === 'record') return renderRecord(body);
+        return showOrders();
+      }));
+
+      showOrders();
     },
   });
+
+  // ------------------------------------------------------ recording the work
+  /**
+   * The technician's own board: every test the department does, as a button.
+   *
+   * A lab records what it ran, and the way to record it is to press it. What
+   * is deliberately not on these buttons is the rate — the technician is not
+   * pricing anything and the patient may be standing at the bench, so the
+   * money belongs on the cashier's screen and nowhere near this one.
+   *
+   * A test the clinic has not priced yet still appears: the work happened and
+   * the record should say so. It simply will not reach the bill until somebody
+   * gives it a rate, which the screen says out loud rather than leaving the
+   * counter to discover.
+   */
+  async function renderRecord(body) {
+    body.innerHTML = UI.loading();
+
+    let tests;
+    try { tests = await API.get('/api/masters/lab-tests'); }
+    catch (err) { body.innerHTML = `<div class="alert warn">${UI.esc(err.message)}</div>`; return; }
+
+    // Grouped the way the department works rather than alphabetically: the
+    // bench first, then the couch, then the scanner.
+    const ORDER = ['Blood tests', 'Urine & stool', 'X-ray', 'Ultrasound & Doppler', 'ECG & heart'];
+    const groups = [];
+    for (const t of tests) {
+      const label = t.bill_group || 'Other';
+      let g = groups.find((x) => x.group === label);
+      if (!g) groups.push((g = { group: label, items: [] }));
+      g.items.push(t);
+    }
+    const rank = (name) => { const i = ORDER.indexOf(name); return i === -1 ? ORDER.length : i; };
+    groups.sort((a, b) => rank(a.group) - rank(b.group) || a.group.localeCompare(b.group));
+
+    const picked = [];
+    let patient = null;
+    let open = groups.length ? groups[0].group : null;
+
+    body.innerHTML = `
+      <div class="grid sidebar-right">
+        <div>
+          <div class="card">
+            <div class="card-head"><h3>What did you run?</h3>
+              <span class="muted small">Press a test to add it — press again for another</span></div>
+            <div class="card-body" id="lr-board"></div>
+          </div>
+        </div>
+        <div>
+          <div class="card"><div class="card-head"><h3>This order</h3>
+              <button class="btn ghost sm" id="lr-clear">Clear</button></div>
+            <div class="card-body tight" id="lr-picked"></div>
+            <div class="card-body">
+              <div id="lr-who"></div>
+              ${UI.field({ name: 'priority', label: 'Priority', value: 'routine',
+                options: [{ value: 'routine', label: 'Routine' }, { value: 'urgent', label: 'Urgent' },
+                  { value: 'stat', label: 'STAT' }] })}
+              ${UI.field({ name: 'clinicalNotes', label: 'Note', rows: 2,
+                placeholder: 'Fasting sample, repeat, sample haemolysed…' })}
+              <button class="btn block mt" id="lr-save" disabled>Record these tests</button>
+              <div id="lr-out"></div>
+            </div>
+          </div>
+        </div>
+      </div>`;
+
+    // ---- the board
+    const paintBoard = () => {
+      const g = groups.find((x) => x.group === open) || groups[0];
+      body.querySelector('#lr-board').innerHTML = groups.length ? `
+        <div class="chip-row mb">
+          ${groups.map((x) => `<button type="button" class="chip${x.group === open ? ' on' : ''}"
+            data-group="${UI.esc(x.group)}">${UI.esc(x.group)}
+            <span class="chip-n">${UI.num(x.items.length)}</span></button>`).join('')}
+        </div>
+        <div class="item-grid">
+          ${g.items.map((t) => `<button type="button" class="item-btn" data-test="${t.id}">
+            <span class="item-name">${UI.esc(t.name)}</span>
+            <span class="item-rate">${UI.esc(t.sample_type || UI.titleise(t.category))}${
+              t.price ? '' : ' · no rate set'}</span>
+          </button>`).join('')}
+        </div>`
+        : UI.empty('No diagnostics are set up yet.', '🧪');
+
+      body.querySelectorAll('[data-group]').forEach((b) => b.addEventListener('click', () => {
+        open = b.dataset.group;
+        paintBoard();
+      }));
+      body.querySelectorAll('[data-test]').forEach((b) => b.addEventListener('click', () => {
+        const t = tests.find((x) => x.id === Number(b.dataset.test));
+        if (t && !picked.some((p) => p.id === t.id)) picked.push(t);
+        paintPicked();
+      }));
+    };
+
+    // ---- what has been picked
+    const paintPicked = () => {
+      body.querySelector('#lr-picked').innerHTML = UI.table([
+        { label: 'Test', render: (t) => `<b>${UI.esc(t.name)}</b>` +
+          (t.price ? '' : '<div class="muted small">no rate set — will not reach the bill</div>') },
+        { label: '', render: (t, i) => `<button class="btn ghost sm" data-rm="${i}">Remove</button>` },
+      ], picked, { emptyText: 'Nothing picked yet.' });
+
+      body.querySelectorAll('[data-rm]').forEach((b) => b.addEventListener('click', () => {
+        picked.splice(Number(b.dataset.rm), 1);
+        paintPicked();
+      }));
+      body.querySelector('#lr-save').disabled = !(picked.length && patient);
+    };
+
+    // ---- whose tests they are
+    const paintWho = () => {
+      const who = body.querySelector('#lr-who');
+      who.innerHTML = patient
+        ? `<div class="alert ok"><b>${UI.esc(patient.first_name)} ${UI.esc(patient.last_name || '')}</b>
+             · ${UI.esc(patient.uhid)}
+             <button class="btn ghost sm" id="lr-unpick" style="float:right">Change</button></div>`
+        : `<div class="search-row">
+             <input type="search" id="lr-q" placeholder="Whose sample? Name, UHID or mobile…"
+               autocomplete="off"></div>
+           <div id="lr-hits"></div>`;
+
+      const un = who.querySelector('#lr-unpick');
+      if (un) un.addEventListener('click', () => { patient = null; paintWho(); paintPicked(); });
+
+      const input = who.querySelector('#lr-q');
+      if (!input) return;
+      let timer;
+      input.addEventListener('input', () => {
+        clearTimeout(timer);
+        timer = setTimeout(async () => {
+          const q = input.value.trim();
+          const hits = who.querySelector('#lr-hits');
+          if (q.length < 2) return void (hits.innerHTML = '');
+          let rows = [];
+          try { rows = (await API.get('/api/patients' + API.qs({ q, limit: 6 }))).rows; }
+          catch (err) { return void (hits.innerHTML = `<div class="alert warn">${UI.esc(err.message)}</div>`); }
+          hits.innerHTML = rows.length ? rows.map((p) => `
+            <button type="button" class="btn ghost sm block mb" data-pt="${p.id}"
+              style="justify-content:space-between">
+              <span><b>${UI.esc(p.first_name)} ${UI.esc(p.last_name || '')}</b>
+                <span class="muted small"> ${UI.esc(p.uhid)}</span></span>
+              <span class="muted small">${UI.esc(p.phone || '')}</span></button>`).join('')
+            : '<div class="muted small">Nobody matched. The front desk registers a new patient.</div>';
+          hits.querySelectorAll('[data-pt]').forEach((b) => b.addEventListener('click', () => {
+            patient = rows.find((r) => r.id === Number(b.dataset.pt));
+            paintWho();
+            paintPicked();
+          }));
+        }, 220);
+      });
+    };
+
+    body.querySelector('#lr-clear').addEventListener('click', () => {
+      picked.length = 0;
+      paintPicked();
+    });
+
+    body.querySelector('#lr-save').addEventListener('click', async (e) => {
+      e.target.disabled = true;
+      try {
+        const order = await API.post('/api/lab/orders', {
+          patientId: patient.id,
+          tests: picked.map((t) => ({ testId: t.id })),
+          priority: body.querySelector('[name=priority]').value,
+          clinicalNotes: body.querySelector('[name=clinicalNotes]').value || undefined,
+        });
+        const unpriced = picked.filter((t) => !t.price);
+        UI.ok(`${order.order_no} recorded — ${picked.length} test(s).`);
+        body.querySelector('#lr-out').innerHTML = `
+          <div class="alert ok mt"><b>${UI.esc(order.order_no)}</b> raised for
+            ${UI.esc(patient.first_name)} ${UI.esc(patient.last_name || '')}.
+            ${unpriced.length ? `<div class="mt"><b>${UI.num(unpriced.length)} of them have no rate</b>
+              and will not appear on the bill until one is set under Services &amp; Rates.</div>` : ''}
+            <div class="mt"><button class="btn sm" id="lr-open">Enter the results</button>
+              <button class="btn ghost sm" id="lr-next">Next patient</button></div></div>`;
+        body.querySelector('#lr-open').addEventListener('click', () => openOrder(order.id));
+        body.querySelector('#lr-next').addEventListener('click', () => {
+          picked.length = 0;
+          patient = null;
+          body.querySelector('#lr-out').innerHTML = '';
+          paintWho();
+          paintPicked();
+        });
+        picked.length = 0;
+        paintPicked();
+      } catch (err) {
+        UI.err(err.message);
+        e.target.disabled = false;
+      }
+    });
+
+    paintBoard();
+    paintWho();
+    paintPicked();
+  }
 
   /** X-ray, ultrasound, ECG — reported in words rather than in numbers. */
   /**

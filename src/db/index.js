@@ -195,6 +195,13 @@ function migrate() {
 
   ensureColumn('services', 'bill_group', 'TEXT');
   ensureColumn('lab_tests', 'bill_group', 'TEXT');
+  /*
+   * A panel's own analytes. A component is reported, not sold: it stays off
+   * the charge board and the order list until the clinic gives it a rate, at
+   * which point it is a test the clinic offers on its own.
+   */
+  ensureColumn('lab_tests', 'component_of', 'TEXT');
+  ensureColumn('lab_tests', 'sort_order', 'INTEGER NOT NULL DEFAULT 0');
   backfillBillGroups();
 
   // Medicaments sit under HSN 3004 unless the formulary says otherwise; a GST

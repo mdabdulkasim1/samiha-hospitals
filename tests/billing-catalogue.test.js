@@ -617,3 +617,81 @@ test('what the clinic sets for itself beats what it was deployed with', async ()
   await api('PATCH', '/api/admin/clinic', { 'clinic.phone': '   ' }, 'admin');
   assert.strictEqual(clinic.profile().phone, config.clinic.phone);
 });
+
+// ------------------------------------------------- the diagnostic catalogue
+test('the clinic’s diagnostic panels are loaded with their analytes, unpriced', async () => {
+  const diagnostics = require('../src/db/diagnostics');
+  const codes = [...diagnostics.PANELS, ...diagnostics.SINGLES, ...diagnostics.COMPONENTS]
+    .map((r) => r[0]);
+  assert.strictEqual(new Set(codes).size, codes.length, 'every test has its own code');
+
+  for (const [code, name, panel, , unit] of diagnostics.COMPONENTS) {
+    const row = db.prepare('SELECT * FROM lab_tests WHERE code = ?').get(code);
+    assert.ok(row, `${code} reached the catalogue`);
+    assert.strictEqual(row.name, name);
+    assert.strictEqual(row.component_of, panel, 'and knows the panel it belongs to');
+    assert.strictEqual(row.unit, unit === undefined ? null : unit);
+    assert.strictEqual(row.price, 0, 'no rate is invented for it');
+    // The panel it points at is a real one.
+    assert.ok(db.prepare('SELECT 1 FROM lab_tests WHERE code = ?').get(panel), `${panel} exists`);
+  }
+
+  for (const [code] of [...diagnostics.PANELS, ...diagnostics.SINGLES]) {
+    const row = db.prepare('SELECT * FROM lab_tests WHERE code = ?').get(code);
+    assert.ok(row, `${code} reached the catalogue`);
+    assert.strictEqual(row.component_of, null, 'a panel is not part of another panel');
+    assert.strictEqual(row.price, 0, 'and is priced by the clinic, not by us');
+  }
+
+  // The report's own ranges came across, not a rounded version of them.
+  const ferritin = db.prepare("SELECT * FROM lab_tests WHERE code = 'FERRITIN'").get();
+  assert.strictEqual(ferritin.ref_low, 24);
+  assert.strictEqual(ferritin.ref_high, 425);
+  assert.strictEqual(ferritin.unit, 'ng/mL');
+  const ldl = db.prepare("SELECT * FROM lab_tests WHERE code = 'LIP-LDL'").get();
+  assert.match(ldl.ref_text, /100 optimal/, 'a range stated in words stays in words');
+});
+
+test('an analyte is reported, not sold — until the clinic prices it', async () => {
+  const mchc = db.prepare("SELECT * FROM lab_tests WHERE code = 'CBC-MCHC'").get();
+
+  // Off the order form and off the charge board while it has no rate.
+  const orderable = (await api('GET', '/api/masters/lab-tests', undefined, 'imran')).body;
+  assert.ok(!orderable.some((t) => t.code === 'CBC-MCHC'));
+  const board = (await api('GET', '/api/masters/catalogue', undefined, 'cashier')).body;
+  assert.ok(!board.some((g) => g.items.some((i) => i.code === 'CBC-MCHC')));
+
+  // But on the rates screen, which is where the clinic decides.
+  const all = (await api('GET', '/api/masters/catalogue?all=1', undefined, 'admin')).body;
+  const row = all.flatMap((g) => g.items).find((i) => i.code === 'CBC-MCHC');
+  assert.ok(row, 'the whole catalogue is visible where rates are set');
+  assert.strictEqual(row.component_of, 'CBC');
+
+  // Priced, it becomes a test the clinic offers on its own.
+  const priced = await api('PATCH', `/api/masters/lab-tests/${mchc.id}`, { price: 150 }, 'admin');
+  assert.strictEqual(priced.status, 200, JSON.stringify(priced.body));
+  const now = (await api('GET', '/api/masters/lab-tests', undefined, 'imran')).body;
+  assert.ok(now.some((t) => t.code === 'CBC-MCHC'), 'and now it can be ordered');
+  const nowBoard = (await api('GET', '/api/masters/catalogue', undefined, 'cashier')).body;
+  assert.ok(nowBoard.some((g) => g.items.some((i) => i.code === 'CBC-MCHC')), 'and billed');
+
+  // Put it back, so the rest of the suite sees the catalogue it expects.
+  await api('PATCH', `/api/masters/lab-tests/${mchc.id}`, { price: 0 }, 'admin');
+});
+
+test('the lab can record the tests it ran, priced or not', async () => {
+  const patient = db.prepare('SELECT id FROM patients ORDER BY id LIMIT 1').get();
+  const unpriced = db.prepare("SELECT id, name FROM lab_tests WHERE code = 'IRONPROF'").get();
+  const priced = db.prepare("SELECT id FROM lab_tests WHERE code = 'CBC'").get();
+
+  const order = await api('POST', '/api/lab/orders', {
+    patientId: patient.id,
+    tests: [{ testId: priced.id }, { testId: unpriced.id }],
+    priority: 'urgent', clinicalNotes: 'Recorded at the bench',
+  }, 'imran');
+  assert.strictEqual(order.status, 201, JSON.stringify(order.body));
+
+  const full = (await api('GET', `/api/lab/orders/${order.body.id}`, undefined, 'imran')).body;
+  assert.strictEqual(full.items.length, 2, 'both were recorded');
+  assert.ok(full.items.some((i) => i.price === 0), 'including the one with no rate yet');
+});

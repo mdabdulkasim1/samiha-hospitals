@@ -341,6 +341,21 @@ router.get('/services', wrap((_req, res) => {
   res.json(db.prepare('SELECT * FROM services WHERE active = 1 ORDER BY category, name').all());
 }));
 
+/*
+ * The diagnostics a doctor can order and a counter can charge for.
+ *
+ * A panel's own analytes — MCHC, direct bilirubin, the urine deposits — are
+ * reported, not sold, so they are left out: a hundred unsellable buttons on an
+ * order form only get in the way of the dozen that matter. Give one a rate and
+ * it appears, because pricing a test is how the clinic says it offers that
+ * test on its own.
+ *
+ * `?all=1` returns everything including the unpriced components, which is what
+ * the rates screen shows: it is the one place the whole catalogue belongs.
+ */
+const SELLABLE = "(component_of IS NULL OR component_of = '' OR price > 0)";
+
+
 /**
  * Everything the clinic can charge for, filed the way a cashier looks for it.
  *
@@ -350,15 +365,19 @@ router.get('/services', wrap((_req, res) => {
  * Each carries the kind it came from, because adding a diagnostic to a bill
  * has to raise the order as well as the charge.
  */
-router.get('/catalogue', wrap((_req, res) => {
+router.get('/catalogue', wrap((req, res) => {
+  // The rates screen asks for everything, so the clinic can price an analyte
+  // it wants to offer on its own; every other screen gets what is sellable.
+  const includeComponents = String(req.query.all || '') === '1';
   const items = [
     ...db.prepare(
       `SELECT id, code, name, bill_group, price, tax_pct, 'service' AS kind, category
          FROM services WHERE active = 1`
     ).all(),
     ...db.prepare(
-      `SELECT id, code, name, bill_group, price, 0 AS tax_pct, 'test' AS kind, category
-         FROM lab_tests WHERE active = 1`
+      `SELECT id, code, name, bill_group, price, 0 AS tax_pct, 'test' AS kind, category,
+              component_of
+         FROM lab_tests WHERE active = 1 ${includeComponents ? '' : `AND ${SELLABLE}`}`
     ).all(),
   ];
 
@@ -420,8 +439,12 @@ router.post('/services', adminOnly, wrap((req, res) => {
   res.status(201).json({ id: info.lastInsertRowid });
 }));
 
-router.get('/lab-tests', wrap((_req, res) => {
-  res.json(db.prepare('SELECT * FROM lab_tests WHERE active = 1 ORDER BY category, name').all());
+router.get('/lab-tests', wrap((req, res) => {
+  const all = String(req.query.all || '') === '1';
+  res.json(db.prepare(
+    `SELECT * FROM lab_tests WHERE active = 1 ${all ? '' : `AND ${SELLABLE}`}
+      ORDER BY category, bill_group, name`
+  ).all());
 }));
 
 router.post('/lab-tests', requireRole('admin', 'lab'), wrap((req, res) => {

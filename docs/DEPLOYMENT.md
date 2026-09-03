@@ -149,3 +149,30 @@ letterhead of every document.
 
 Until an ID is set, bills simply print without a payment code. Nothing is
 guessed — a QR pointing at the wrong account is worse than no QR at all.
+
+## The diagnostic catalogue
+
+`lab_tests` holds two kinds of row.
+
+A **panel** — a lipid profile, a complete blood count, a renal function test —
+is what a patient is billed for, and it carries a rate.
+
+A **component** (`component_of` names its panel) is one analyte inside that
+panel: MCHC, direct bilirubin, the urine deposits. It carries the unit and
+reference range the report is issued against, but no rate, and it is left out
+of the doctor's order form and the cashier's charge board — a hundred
+unsellable buttons only get in the way of the dozen that matter.
+
+Give a component a rate under **Services & Rates** and it becomes a test the
+clinic offers on its own: it appears on the order form and on the charge board
+from that moment. Pricing a test is how the clinic says it sells it.
+
+`GET /api/masters/catalogue` and `GET /api/masters/lab-tests` return what is
+sellable; both take `?all=1` for the whole catalogue, which is what the rates
+screen asks for.
+
+The starter catalogue in `src/db/diagnostics.js` came from a health-checkup
+report the clinic runs, with the report's own units and ranges. Nothing in it
+is priced — a guessed rate would put a wrong figure on a real patient's bill —
+and the seed's upsert leaves a price alone once set, so re-seeding never undoes
+the clinic's tariff.
