@@ -23,7 +23,8 @@
 
   /** Mirrors the guard on /api/reports/detail; the server is what decides. */
   const MGMT = ['admin', 'reception', 'cashier'];
-  const OPEN_TO_ALL = ['trend_visits', 'trend_appointments', 'trend_admissions', 'turnaround_visits'];
+  const OPEN_TO_ALL = ['trend_visits', 'trend_appointments', 'trend_admissions',
+    'turnaround_visits', 'trend_lab'];
   const canOpen = (metric) => OPEN_TO_ALL.includes(metric) || APP.can(MGMT);
 
   const when = (r) => UI.esc(UI.dateTime(r.at));
@@ -107,6 +108,19 @@
       { label: 'Balance', num: true, render: (r) => `<b>${UI.money(r.balance)}</b>` },
       documents,
     ],
+    labOrders: [
+      { label: 'Order', render: (r) => `<b>${UI.esc(r.order_no)}</b>` +
+        (r.priority && r.priority !== 'routine'
+          ? ` ${UI.badge(UI.titleise(r.priority), 'danger')}` : '') },
+      { label: 'Patient', render: who },
+      { label: 'Tests', render: (r) => `<span class="small">${UI.esc(r.tests || '—')}</span>` },
+      { label: 'Doctor', render: (r) => UI.esc(r.doctor || '—') },
+      { label: 'Ordered', render: when },
+      { label: 'Reported', render: (r) => (r.reported_at
+        ? UI.esc(UI.dateTime(r.reported_at)) : '<span class="muted">—</span>') },
+      { label: 'Status', render: (r) => UI.statusBadge(r.status) },
+      documents,
+    ],
     doctorVisits: [
       { label: 'Visit', render: (r) => `<b>${UI.esc(r.visit_no)}</b>` },
       { label: 'Patient', render: who },
@@ -145,6 +159,8 @@
     revenue_sliding:         { cols: 'concessions', total: { label: 'Sliding-scale given', key: 'amount' } },
     revenue_assistance:      { cols: 'concessions', total: { label: 'Assistance given', key: 'amount' } },
     revenue_outstanding:     { cols: 'invoices', total: { label: 'Still to collect', key: 'balance' } },
+    trend_lab:               { cols: 'labOrders' },
+    doctor_lab:              { cols: 'labOrders' },
     doctor_visits:           { cols: 'doctorVisits' },
     doctor_month_booked:     { cols: 'appointments' },
     doctor_month_visits:     { cols: 'doctorVisits' },
@@ -198,11 +214,13 @@
           // The window the tiles were added up over, sent along with any click.
           const w = { from: rows[0].day, to: rows[rows.length - 1].day };
           body.innerHTML = `
-            <div class="grid c4 mb">
+            <div class="grid c5 mb">
               ${rstat('teal', `Visits (${days} days)`, UI.num(total('visits')), '',
                 { metric: 'trend_visits', ...w })}
               ${rstat('crimson', 'Appointments', UI.num(total('appointments')), '',
                 { metric: 'trend_appointments', ...w })}
+              ${rstat('info', 'Diagnostics', UI.num(total('lab_orders')), 'Lab and imaging orders',
+                { metric: 'trend_lab', ...w })}
               ${rstat('ok', 'Collected', UI.money(total('collected')), '',
                 { metric: 'trend_collected', ...w })}
               ${rstat('orange', 'Admissions', UI.num(total('admissions')), '',
@@ -218,6 +236,8 @@
                 { label: 'Visits', num: true, render: (r) => dayCell(r, 'trend_visits', r.visits, UI.num) },
                 { label: 'Appointments', num: true,
                   render: (r) => dayCell(r, 'trend_appointments', r.appointments, UI.num) },
+                { label: 'Diagnostics', num: true,
+                  render: (r) => dayCell(r, 'trend_lab', r.lab_orders, UI.num) },
                 { label: 'Admissions', num: true,
                   render: (r) => dayCell(r, 'trend_admissions', r.admissions, UI.num) },
                 { label: 'Collected', num: true,
@@ -301,7 +321,8 @@
                 drillNum({ metric: 'doctor_visits', doctorId: d.id, from, to }, d.visits, UI.num) },
               { label: 'Consultations', num: true, key: 'consultations' },
               { label: 'Admissions', num: true, key: 'admissions' },
-              { label: 'Lab orders', num: true, key: 'lab_orders' },
+              { label: 'Lab orders', num: true, render: (d) =>
+                drillNum({ metric: 'doctor_lab', doctorId: d.id, from, to }, d.lab_orders, UI.num) },
               { label: 'Avg consult', num: true, render: (d) => d.avg_consult_minutes
                 ? UI.num(d.avg_consult_minutes, 1) + ' min' : '—' },
             ], rows, { emptyText: 'No activity in this window.' })}</div></div>`;

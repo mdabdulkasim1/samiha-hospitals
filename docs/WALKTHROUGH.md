@@ -169,6 +169,12 @@ concessions, a doctor's month — and each row carries **Invoice** (and, on a
 receipt, **Receipt**) beside it. A patient ringing to ask what they were
 charged is answered from the list already on screen.
 
+Diagnostics work the same way. **Reports → Footfall trend** now counts the lab
+and imaging orders raised each day, and a doctor's **Lab orders** in the
+productivity table opens theirs. Each row names the tests and prints the
+released **Report**; an order still being worked on says *not reported* rather
+than offering a page that would come out blank.
+
 ## 8 · Pharmacy
 
 *pharmacy@samiha.local · Pharmacy → To dispense*

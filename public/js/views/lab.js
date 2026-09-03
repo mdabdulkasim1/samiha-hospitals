@@ -283,8 +283,17 @@
    * SPC-MHD-002 — which tells the clinic who ordered the test and tells a
    * patient nothing they could use to reach a doctor directly.
    */
-  async function printReport(order) {
-    const o = await API.get(`/api/lab/orders/${order.id}/report`);
+  async function printReport(order, windowRef = null) {
+    /*
+     * The window is claimed before the report is fetched — a browser only
+     * allows a popup while it can still see the click that asked for it, and
+     * an await in between loses that permission. A caller that already opened
+     * one on its own click hands it over.
+     */
+    const win = windowRef || UI.openPrintWindow();
+    let o;
+    try { o = await API.get(`/api/lab/orders/${order.id}/report`); }
+    catch (err) { UI.err(err.message); if (win) win.close(); return; }
     const c = APP.clinic || {};
     const age = o.age_years ? `${o.age_years} yrs` : '—';
     const abnormal = o.items.filter((i) => i.abnormal_flag && i.abnormal_flag !== 'normal');
@@ -380,8 +389,15 @@
               : 'This report is an opinion on the images acquired and is not a diagnosis on its own. Please correlate clinically.')
             : 'Results relate only to the sample received. Please correlate clinically.'}
         </div>
-      </div>`, `Report ${o.order_no}`);
+      </div>`, `Report ${o.order_no}`, win);
   }
+
+  /*
+   * Printing a report from elsewhere in the app — a report list, a dashboard
+   * drill-down — where only the order's id is known. The caller claims the
+   * print window on its own click and passes it in.
+   */
+  APP.printLabReport = (orderId, windowRef = null) => printReport({ id: orderId }, windowRef);
 
   // Exposed so the browser checks can print a report without hunting for a button.
   window.__printReport = printReport;

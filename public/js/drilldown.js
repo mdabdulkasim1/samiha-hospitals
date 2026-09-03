@@ -48,6 +48,17 @@
         out.push(`<button type="button" class="btn ghost sm" data-print-invoice="${invoiceId}"
           title="Print this invoice">Invoice</button>`);
       }
+      /*
+       * A diagnostic order prints its report once the lab has released one.
+       * Until then there is nothing to print but the order slip, and offering
+       * a "report" that would come out blank is worse than offering nothing.
+       */
+      if (r.order_no && r.id) {
+        out.push(['result_entered', 'verified', 'reported'].includes(r.status)
+          ? `<button type="button" class="btn ghost sm" data-print-lab="${r.id}"
+              title="Print this lab report">Report</button>`
+          : '<span class="muted small">not reported</span>');
+      }
       return out.join(' ') || '<span class="muted">—</span>';
     },
   };
@@ -65,6 +76,10 @@
     scope.querySelectorAll('[data-print-receipt]').forEach((b) => b.addEventListener('click', (e) => {
       e.stopPropagation();
       APP.printReceipt(b.dataset.printReceipt, UI.openPrintWindow());
+    }));
+    scope.querySelectorAll('[data-print-lab]').forEach((b) => b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      APP.printLabReport(Number(b.dataset.printLab), UI.openPrintWindow());
     }));
   }
 

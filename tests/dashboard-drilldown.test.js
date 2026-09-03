@@ -251,6 +251,47 @@ test('the footfall figures open exactly what they counted', async () => {
   void w;
 });
 
+test('the diagnostics a report counts can be opened, and reported ones printed', async () => {
+  const win = WINDOW();
+  const res = await rdetail('trend_lab', win);
+  assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+
+  // It answers for the same window the tile was added up over.
+  const trend = (await api('GET', '/api/reports/trend?days=31', undefined, 'cashier')).body;
+  const inWindow = trend.filter((r) => r.day >= win.from && r.day <= win.to);
+  const counted = inWindow.reduce((a, r) => a + Number(r.lab_orders || 0), 0);
+  assert.strictEqual(res.body.total, counted, 'the list adds up to the figure on the tile');
+
+  for (const r of res.body.rows) {
+    assert.ok(r.order_no, 'each row names its order');
+    assert.ok(Number(r.id) > 0, 'and carries the id the report prints from');
+    assert.ok(r.tests, 'and says what was asked for');
+    assert.notStrictEqual(r.status, 'cancelled', 'a cancelled order is not a diagnostic performed');
+  }
+
+  // A row whose report is out prints that report; the id resolves to it.
+  const reported = res.body.rows.find((r) => ['result_entered', 'verified', 'reported'].includes(r.status));
+  if (reported) {
+    const report = await api('GET', `/api/lab/orders/${reported.id}/report`, undefined, 'cashier');
+    assert.strictEqual(report.status, 200, JSON.stringify(report.body));
+    assert.strictEqual(report.body.order_no, reported.order_no);
+    assert.ok(report.body.items.length, 'with the tests on it');
+  }
+});
+
+test('a doctor’s diagnostics open to that doctor’s orders and nobody else’s', async () => {
+  const win = WINDOW();
+  const doctors = (await api('GET',
+    '/api/reports/doctor-productivity?' + new URLSearchParams(win), undefined, 'cashier')).body;
+  const busiest = doctors.find((d) => d.lab_orders > 0);
+  if (!busiest) return;   // nothing ordered in the window; nothing to check
+
+  const res = await rdetail('doctor_lab', { doctorId: busiest.id, ...win }, 'cashier');
+  assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+  assert.strictEqual(res.body.total, busiest.lab_orders, 'the list matches the number in the table');
+  for (const r of res.body.rows) assert.strictEqual(r.doctor, busiest.name);
+});
+
 test('a row that names a bill can be printed from where it is read', async () => {
   // Every money list carries the id of the bill it names, so the report can
   // offer the invoice itself rather than sending the reader back to Billing to

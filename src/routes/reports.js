@@ -194,7 +194,9 @@ router.get('/trend', requireAuth, wrap((req, res) => {
             (SELECT COUNT(*) FROM visits v WHERE date(v.arrived_at) = d.day) AS visits,
             (SELECT COUNT(*) FROM appointments a WHERE date(a.scheduled_at) = d.day) AS appointments,
             (SELECT COALESCE(SUM(p.amount),0) FROM payments p WHERE date(p.paid_at) = d.day) AS collected,
-            (SELECT COUNT(*) FROM admissions ad WHERE date(ad.admitted_at) = d.day) AS admissions
+            (SELECT COUNT(*) FROM admissions ad WHERE date(ad.admitted_at) = d.day) AS admissions,
+            (SELECT COUNT(*) FROM lab_orders lo
+              WHERE date(lo.ordered_at) = d.day AND lo.status != 'cancelled') AS lab_orders
        FROM d ORDER BY d.day`
   ).all(days - 1));
 }));
@@ -732,6 +734,48 @@ const REPORT_DETAILS = Object.assign(Object.create(null), {
         WHERE v.status = 'checked_out' AND date(v.arrived_at) BETWEEN ? AND ?
         ORDER BY v.arrived_at DESC`
     ).all(from, to),
+  },
+
+  /*
+   * The diagnostics behind a day's figure, and behind a doctor's month.
+   *
+   * A lab list is read to find one report — the patient who rang about their
+   * sugar, the insurer asking for the film's opinion again — so each row names
+   * the tests on the order and says whether the report is out. What prints
+   * from here is the same A5 report the lab released.
+   */
+  trend_lab: {
+    title: 'Diagnostics ordered', caption: 'Every lab and imaging order raised in the window',
+    roles: null, route: 'lab', routeLabel: 'Open the laboratory',
+    rows: ({ from, to }) => db.prepare(
+      `SELECT lo.id, lo.order_no, ${PATIENT_NAME} AS name, p.uhid, u.name AS doctor,
+              lo.status, lo.priority, lo.ordered_at AS at, lo.reported_at,
+              (SELECT COUNT(*) FROM lab_order_items li WHERE li.order_id = lo.id) AS test_count,
+              (SELECT GROUP_CONCAT(li.test_name, ', ') FROM lab_order_items li
+                WHERE li.order_id = lo.id) AS tests
+         FROM lab_orders lo
+         JOIN patients p ON p.id = lo.patient_id
+         LEFT JOIN users u ON u.id = lo.doctor_id
+        WHERE date(lo.ordered_at) BETWEEN ? AND ? AND lo.status != 'cancelled'
+        ORDER BY lo.ordered_at DESC`
+    ).all(from, to),
+  },
+
+  doctor_lab: {
+    title: 'Diagnostics ordered', caption: 'What this doctor sent to the lab in the window',
+    roles: MGMT_ROLES, needsDoctor: true, route: 'lab', routeLabel: 'Open the laboratory',
+    rows: ({ from, to, doctorId }) => db.prepare(
+      `SELECT lo.id, lo.order_no, ${PATIENT_NAME} AS name, p.uhid, u.name AS doctor,
+              lo.status, lo.priority, lo.ordered_at AS at, lo.reported_at,
+              (SELECT COUNT(*) FROM lab_order_items li WHERE li.order_id = lo.id) AS test_count,
+              (SELECT GROUP_CONCAT(li.test_name, ', ') FROM lab_order_items li
+                WHERE li.order_id = lo.id) AS tests
+         FROM lab_orders lo
+         JOIN patients p ON p.id = lo.patient_id
+         LEFT JOIN users u ON u.id = lo.doctor_id
+        WHERE lo.doctor_id = ? AND date(lo.ordered_at) BETWEEN ? AND ? AND lo.status != 'cancelled'
+        ORDER BY lo.ordered_at DESC`
+    ).all(doctorId, from, to),
   },
 
   revenue_sliding: {
