@@ -157,7 +157,7 @@ APP.register('dashboard', {
               <div class="btn-row">
                 ${APP.can(['reception']) ? '<button class="btn sm" data-go="patients">Register patient</button>' : ''}
                 ${APP.can(['reception','nurse','doctor','counselor','cashier']) ? '<button class="btn teal sm" data-go="appointments">Book appointment</button>' : ''}
-                ${APP.can(['cashier','reception','counselor']) ? '<button class="btn sm" data-go="billing">₹ Collect payment</button>' : ''}
+                ${APP.can(['cashier','counselor']) ? '<button class="btn sm" data-go="billing">₹ Collect payment</button>' : ''}
                 ${APP.can(['cashier','reception','counselor']) ? '<button class="btn ghost sm" data-go="insurance">Insurance &amp; TPA</button>' : ''}
                 <button class="btn ghost sm" data-go="whatsapp">WhatsApp desk</button>
                 <button class="btn ghost sm" data-go="workflow">Workflow map</button>

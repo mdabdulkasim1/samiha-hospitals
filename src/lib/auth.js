@@ -137,7 +137,23 @@ function purgeExpiredResets() {
   db.prepare("DELETE FROM password_resets WHERE expires_at < datetime('now', '-7 days')").run();
 }
 
+/*
+ * Who may see rupees, anywhere in the system.
+ *
+ * A clinic is read by everybody in it — the technician at the bench, the nurse
+ * at the station, the desk that books the appointment — and what a patient
+ * owes is not their work. Money belongs to the people who handle it: the
+ * cashier who takes it, the counsellor who decides what to waive, and the
+ * administrator who answers for both.
+ *
+ * One list, exported once, so a screen and its endpoint cannot disagree about
+ * who is allowed to see a figure.
+ */
+const MONEY_ROLES = ['admin', 'cashier', 'counselor'];
+const seesMoney = (user) => Boolean(user) && MONEY_ROLES.includes(user.role);
+
 module.exports = {
+  MONEY_ROLES, seesMoney,
   hashPassword, verifyPassword, passwordProblems,
   createResetToken, userForResetToken, consumeResetToken, purgeExpiredResets, hashToken,
   createSession, destroySession, purgeExpiredSessions, userForToken,

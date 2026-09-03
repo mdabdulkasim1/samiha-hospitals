@@ -22,7 +22,7 @@
       { id: 'ipd',         label: 'Wards & Beds',     icon: '⌸', roles: ['admin','ward','nurse','doctor','reception','cashier'] },
     ]},
     { group: 'Money', items: [
-      { id: 'billing',     label: 'Billing & Payments', icon: '₹', roles: ['admin','cashier','reception','counselor'] },
+      { id: 'billing',     label: 'Billing & Payments', icon: '₹', roles: ['admin','cashier','counselor'] },
       // Insurance is its own desk: plenty of patients pay for themselves, and
       // chasing a TPA is not a doctor's or a nurse's job.
       { id: 'insurance',   label: 'Insurance & TPA',    icon: '⛨', roles: ['admin','cashier','reception','counselor'] },

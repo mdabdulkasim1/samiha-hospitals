@@ -12,8 +12,17 @@ const clinic = require('../services/clinic');
 const upi = require('../services/upi');
 
 const router = express.Router();
-const cashRoles = requireRole('cashier', 'reception');
-const viewRoles = requireRole('cashier', 'reception', 'doctor', 'counselor', 'ward');
+/*
+ * The till is the cashier's. Reception books, registers and moves patients
+ * through the clinic; it does not raise a bill, take money or read the day's
+ * takings — one desk handles cash, and the record says which.
+ *
+ * A doctor and the ward may read a bill (a patient asks what a procedure will
+ * cost, and a ward needs the running total before a discharge) but neither may
+ * change one; the counsellor may, because waiving a charge is their job.
+ */
+const cashRoles = requireRole('cashier');
+const viewRoles = requireRole('cashier', 'doctor', 'counselor', 'ward');
 
 router.get('/invoices', viewRoles, wrap((req, res) => {
   const status = str(req.query.status);
@@ -58,7 +67,7 @@ router.get('/invoices', viewRoles, wrap((req, res) => {
 // The money desk's list, and only theirs: it names every patient in the
 // building and what each of them owes, which is not a doctor's to read across
 // the whole clinic — they see their own day in My Clinic.
-const deskRoles = requireRole('cashier', 'reception', 'counselor');
+const deskRoles = requireRole('cashier', 'counselor');
 
 router.get('/pending', deskRoles, wrap((req, res) => {
   const date = str(req.query.date) || new Date().toISOString().slice(0, 10);

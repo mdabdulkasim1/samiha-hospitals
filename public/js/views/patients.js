@@ -470,7 +470,7 @@
         <button data-tab="diagnostics">Diagnostics</button>
         <button data-tab="medicines">Medicines</button>
         <button data-tab="ipd">In-patient</button>
-        <button data-tab="billing">Billing</button>
+        ${p.invoices ? '<button data-tab="billing">Billing</button>' : ''}
         <button data-tab="financial">Financial screening</button>
         <button data-tab="insurance">Insurance</button>
       </div>
@@ -504,8 +504,9 @@
             <dt>Policy / member ID</dt><dd>${UI.esc(p.insurance_policy_no || '—')}</dd>
             <dt>Valid until</dt><dd>${p.insurance_valid_till ? UI.esc(UI.date(p.insurance_valid_till)) : '—'}</dd>
             <dt>Billing address</dt><dd>${UI.esc(p.billing_address || p.address || '—')}</dd>
-            <dt>Outstanding</dt><dd>${p.outstanding > 0
-              ? `<b style="color:var(--danger)">${UI.money(p.outstanding)}</b>` : UI.money(0)}</dd>
+            ${p.outstanding === null || p.outstanding === undefined ? '' : `
+              <dt>Outstanding</dt><dd>${p.outstanding > 0
+                ? `<b style="color:var(--danger)">${UI.money(p.outstanding)}</b>` : UI.money(0)}</dd>`}
           </dl></div></div>
         </div>
 

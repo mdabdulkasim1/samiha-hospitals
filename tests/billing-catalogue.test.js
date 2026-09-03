@@ -450,10 +450,46 @@ test('collecting the money moves the patient off the list', async () => {
     round2(before.totals.amountToCollect - was.balance));
 });
 
-test('the collections list is the money desk\'s, not a doctor\'s', async () => {
-  assert.strictEqual((await api('GET', '/api/billing/pending', undefined, 'imran')).status, 403);
-  assert.strictEqual((await api('GET', '/api/billing/pending', undefined, 'reception')).status, 200);
+test('the collections list is the money desk\'s, and nobody else\'s', async () => {
+  // The counter and the counsellor collect; the front desk books and registers.
+  assert.strictEqual((await api('GET', '/api/billing/pending', undefined, 'cashier')).status, 200);
+  for (const as of ['imran', 'reception', 'pharmacy']) {
+    assert.strictEqual((await api('GET', '/api/billing/pending', undefined, as)).status, 403,
+      `${as} has no business with the day's collections`);
+  }
   assert.strictEqual((await api('GET', '/api/billing/pending', undefined, null)).status, 401);
+});
+
+test('reception books and registers; the cashier bills', async () => {
+  const patient = db.prepare('SELECT id FROM patients ORDER BY id LIMIT 1').get();
+
+  // Every way into a bill is closed to the front desk.
+  assert.strictEqual((await api('POST', '/api/billing/invoices',
+    { patientId: patient.id, kind: 'opd' }, 'reception')).status, 403);
+  for (const path of ['/api/billing/invoices', '/api/billing/daybook']) {
+    assert.strictEqual((await api('GET', path, undefined, 'reception')).status, 403, path);
+  }
+
+  // Including the two steps of a visit that are really money.
+  const visit = (await api('POST', '/api/visits/arrive',
+    { patientId: patient.id, visitType: 'opd', reasonForVisit: 'Role check' }, 'reception')).body;
+  const visitId = visit.id || visit.visit.id;
+  assert.strictEqual((await api('POST', `/api/visits/${visitId}/prepare-bill`, {}, 'reception')).status, 403);
+  assert.strictEqual((await api('POST', `/api/visits/${visitId}/check-out`, {}, 'reception')).status, 403);
+
+  // What reception does keep is the desk's own work.
+  assert.strictEqual((await api('GET', '/api/patients?limit=1', undefined, 'reception')).status, 200);
+
+  // And the cashier can do all of it.
+  assert.strictEqual((await api('POST', `/api/visits/${visitId}/prepare-bill`, {}, 'cashier')).status, 200);
+
+  // A patient's record carries no money to the front desk either.
+  const seen = (await api('GET', `/api/patients/${patient.id}`, undefined, 'reception')).body;
+  assert.strictEqual(seen.invoices, null, 'no invoices');
+  assert.strictEqual(seen.outstanding, null, 'and no balance');
+  const byCashier = (await api('GET', `/api/patients/${patient.id}`, undefined, 'cashier')).body;
+  assert.ok(Array.isArray(byCashier.invoices), 'the cashier sees them');
+  assert.strictEqual(typeof byCashier.outstanding, 'number');
 });
 
 // ------------------------------------------------------------- the formulary

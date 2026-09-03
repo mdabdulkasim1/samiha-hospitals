@@ -215,7 +215,20 @@ money drill-downs (`collections`, `outstanding`, `trend_collected`,
 `revenue_*`, a doctor's billed and collected months) answer 403 to everyone
 else, so nothing can be read out of the network tab either.
 
-Reception keeps the Billing screen, where it raises bills and takes payment;
-what it no longer has is the clinic's day-total on the shared board. The
-pharmacist keeps the pharmacy's own bills and till on the Pharmacy screen, for
-the same reason.
+### The till is the cashier's
+
+Reception books, registers and moves patients through the clinic. It does not
+touch billing at all: no Billing screen, no invoice, no payment, no day-book,
+and no *prepare bill* or *check out* on a visit — those two steps are money,
+and money is one desk's. A patient's record opens for reception without its
+invoices or its outstanding balance, and a household's unpaid total is left out
+of the family list.
+
+The cashier raises and settles bills. The counsellor reads them and gives what
+they are there to give — the sliding scale, assistance, a payment plan, a
+documented exception — but does not open new bills or take cash. A doctor and
+the ward may read a bill (a patient asks what a procedure costs; a ward needs
+the running total before a discharge) and may not change one.
+
+The pharmacist keeps the pharmacy's own bills and till on the Pharmacy screen,
+which is theirs to reconcile at handover.

@@ -2,7 +2,7 @@
 const express = require('express');
 const { db } = require('../db');
 const { wrap, badRequest, forbidden } = require('../lib/http');
-const { requireAuth, requireRole } = require('../lib/auth');
+const { requireAuth, requireRole, MONEY_ROLES, seesMoney } = require('../lib/auth');
 const scheduling = require('../services/scheduling');
 const { str, int } = require('../lib/validate');
 
@@ -446,19 +446,6 @@ router.get('/revenue', requireRole('admin', 'cashier', 'reception'), wrap((req, 
  * the guard here is what actually decides.
  */
 const DESK_ROLES = ['reception', 'counselor', 'nurse', 'doctor', 'cashier'];
-/*
- * Who may see rupees.
- *
- * The dashboard is read by everybody in the building — the technician at the
- * bench, the nurse at the station, the pharmacist at the counter — and what
- * the clinic took today is none of their work. They see their own patients and
- * their own department; the money belongs to the people who handle it.
- *
- * Enforced here rather than by hiding a tile, because a figure left in the
- * payload is a figure anybody can read out of the network tab.
- */
-const MONEY_ROLES = ['admin', 'cashier', 'counselor'];
-const seesMoney = (user) => MONEY_ROLES.includes(user.role);
 const WARD_ROLES = ['ward', 'nurse', 'reception', 'doctor'];
 
 const PATIENT_NAME = "TRIM(p.first_name || ' ' || COALESCE(p.last_name, ''))";

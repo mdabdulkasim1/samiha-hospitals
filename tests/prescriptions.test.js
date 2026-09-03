@@ -43,7 +43,7 @@ test.before(async () => {
   for (const [as, email] of [
     ['admin', 'admin@samiha.local'], ['reception', 'reception@samiha.local'],
     ['imran', 'imran@samiha.local'], ['sara', 'sara@samiha.local'],
-    ['pharmacy', 'pharmacy@samiha.local'],
+    ['pharmacy', 'pharmacy@samiha.local'], ['cashier', 'cashier@samiha.local'],
   ]) {
     const r = await api('POST', '/api/auth/login', { username: email, password: 'samiha@123' }, null);
     assert.strictEqual(r.status, 200, `login failed for ${email}`);
@@ -481,24 +481,28 @@ test('the bill and the discharge summary carry the code, not the doctor', async 
   const visit = (await api('POST', '/api/visits/arrive', {
     patientId: p.id, reasonForVisit: 'Chest pain', doctorId: ids.imran,
   })).body.visit;
-  const inv = (await api('POST', '/api/billing/invoices', { patientId: p.id, visitId: visit.id })).body;
-  await api('POST', `/api/billing/invoices/${inv.id}/items`, { description: 'Consultation', unitPrice: 500 });
+  const inv = (await api('POST', '/api/billing/invoices',
+    { patientId: p.id, visitId: visit.id }, 'cashier')).body;
+  await api('POST', `/api/billing/invoices/${inv.id}/items`,
+    { description: 'Consultation', unitPrice: 500 }, 'cashier');
 
-  const bill = (await api('GET', `/api/billing/invoices/${inv.id}`)).body;
+  const bill = (await api('GET', `/api/billing/invoices/${inv.id}`, undefined, 'cashier')).body;
   assert.strictEqual(bill.doctor_code, code, 'the bill knows whose patient this was');
   assert.strictEqual(bill.visit_no, visit.visit_no, 'and which visit it settles');
 
   // A bill with no visit and no admission has no doctor to name — and says so
   // by leaving the field empty rather than guessing.
-  const standalone = (await api('POST', '/api/billing/invoices', { patientId: p.id, kind: 'pharmacy' })).body;
-  assert.strictEqual((await api('GET', `/api/billing/invoices/${standalone.id}`)).body.doctor_code, null);
+  const standalone = (await api('POST', '/api/billing/invoices',
+    { patientId: p.id, kind: 'pharmacy' }, 'cashier')).body;
+  assert.strictEqual((await api('GET', `/api/billing/invoices/${standalone.id}`,
+    undefined, 'cashier')).body.doctor_code, null);
 
   // And the receipt for money taken against that bill.
   const paid = (await api('POST', `/api/billing/invoices/${inv.id}/payments`,
-    { amount: 500, mode: 'cash' })).body;
+    { amount: 500, mode: 'cash' }, 'cashier')).body;
   const receiptNo = paid.receipt ? paid.receipt.receipt_no
     : (paid.receiptNo || paid.invoice.payments.at(-1).receipt_no);
-  const receipt = (await api('GET', `/api/billing/receipts/${receiptNo}`)).body;
+  const receipt = (await api('GET', `/api/billing/receipts/${receiptNo}`, undefined, 'cashier')).body;
   assert.strictEqual(receipt.doctor_code, code);
   assert.strictEqual(receipt.visit_no, visit.visit_no);
   assert.ok(receipt.received_by_name, 'the cashier who took it still signs the receipt');

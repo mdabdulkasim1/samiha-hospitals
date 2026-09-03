@@ -422,7 +422,7 @@ router.get('/:id', clinicalRoles, wrap((req, res) => {
  * Consultation fee, lab orders and any un-billed services are pulled onto one
  * invoice, then the sliding-scale discount and assistance coverage are applied.
  */
-router.post('/:id/prepare-bill', requireRole('cashier', 'reception'), wrap((req, res) => {
+router.post('/:id/prepare-bill', requireRole('cashier'), wrap((req, res) => {
   const id = int(req.params.id);
   const visit = db.prepare('SELECT * FROM visits WHERE id = ?').get(id);
   if (!visit) throw notFound('Visit not found');
@@ -509,7 +509,7 @@ router.post('/:id/prepare-bill', requireRole('cashier', 'reception'), wrap((req,
  * unsettled balance unless a payment plan or a documented exception exists,
  * which is exactly the No / "No, or Not Completely" branch of the chart.
  */
-router.post('/:id/check-out', requireRole('cashier', 'reception'), wrap((req, res) => {
+router.post('/:id/check-out', requireRole('cashier'), wrap((req, res) => {
   const id = int(req.params.id);
   const visit = db.prepare('SELECT * FROM visits WHERE id = ?').get(id);
   if (!visit) throw notFound('Visit not found');

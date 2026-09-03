@@ -2,7 +2,7 @@
 const express = require('express');
 const { db } = require('../db');
 const { wrap, notFound, conflict, badRequest } = require('../lib/http');
-const { requireRole } = require('../lib/auth');
+const { requireRole, seesMoney } = require('../lib/auth');
 const { required, str, int, num, bool, phone, paging, oneOf, aadhaar } = require('../lib/validate');
 const { generate } = require('../lib/ids');
 const audit = require('../lib/audit');
@@ -202,7 +202,7 @@ router.get('/by-phone', deskRoles, wrap((req, res) => {
             (SELECT COUNT(*) FROM visits v WHERE v.patient_id = p.id) AS visit_count,
             (SELECT MAX(v.arrived_at) FROM visits v WHERE v.patient_id = p.id) AS last_visit,
             (SELECT COALESCE(SUM(i.balance), 0) FROM invoices i
-              WHERE i.patient_id = p.id AND i.status IN ('unpaid','partial')) AS outstanding,
+              WHERE i.patient_id = p.id AND i.status IN ('unpaid','partial')) AS outstanding_raw,
             (SELECT MIN(a.scheduled_at) FROM appointments a
               WHERE a.patient_id = p.id AND a.status IN ('booked','confirmed')
                 AND datetime(a.scheduled_at) >= datetime('now')) AS next_appointment
@@ -210,6 +210,14 @@ router.get('/by-phone', deskRoles, wrap((req, res) => {
       WHERE p.active = 1 AND (p.phone LIKE ? OR p.whatsapp LIKE ?)
       ORDER BY p.stage DESC, COALESCE(p.age_years, 0) DESC, p.first_name`
   ).all(like, like);
+
+  // A household's unpaid balance is the counter's business, not the front
+  // desk's, so it leaves unless the person reading may see money.
+  const money = seesMoney(req.user);
+  for (const m of members) {
+    m.outstanding = money ? m.outstanding_raw : null;
+    delete m.outstanding_raw;
+  }
 
   res.json({
     phone: ph,
@@ -331,15 +339,27 @@ router.get('/:id', deskRoles, wrap((req, res) => {
     `SELECT o.*, (SELECT GROUP_CONCAT(test_name, ', ') FROM lab_order_items WHERE order_id = o.id) AS tests
        FROM lab_orders o WHERE o.patient_id = ? ORDER BY o.id DESC LIMIT 20`
   ).all(id);
-  patient.invoices = db.prepare(
-    'SELECT * FROM invoices WHERE patient_id = ? ORDER BY id DESC LIMIT 20'
-  ).all(id);
   patient.screenings = db.prepare(
     'SELECT * FROM financial_screenings WHERE patient_id = ? ORDER BY id DESC LIMIT 10'
   ).all(id);
-  patient.outstanding = db.prepare(
-    "SELECT COALESCE(SUM(balance), 0) AS s FROM invoices WHERE patient_id = ? AND status IN ('unpaid','partial')"
-  ).get(id).s;
+
+  /*
+   * What this patient has been billed and what they still owe travels only to
+   * the desks that handle money. The rest of the clinic opens the same record
+   * for the clinical history in it, and a nurse reading a chart has no reason
+   * to know that the family is behind on a bill.
+   */
+  if (seesMoney(req.user)) {
+    patient.invoices = db.prepare(
+      'SELECT * FROM invoices WHERE patient_id = ? ORDER BY id DESC LIMIT 20'
+    ).all(id);
+    patient.outstanding = db.prepare(
+      "SELECT COALESCE(SUM(balance), 0) AS s FROM invoices WHERE patient_id = ? AND status IN ('unpaid','partial')"
+    ).get(id).s;
+  } else {
+    patient.invoices = null;
+    patient.outstanding = null;
+  }
 
   res.json(patient);
 }));
