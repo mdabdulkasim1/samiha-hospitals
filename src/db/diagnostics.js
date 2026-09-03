@@ -155,4 +155,134 @@ const COMPONENTS = [
   ['UR-MUCUS', 'Mucus strands', 'URINE', 'Urine', '/HPF', 0, 8, null],
 ];
 
-module.exports = { PANELS, SINGLES, COMPONENTS };
+
+/*
+ * Radiology: the views a department actually shoots, and the studies it
+ * scans, rather than the handful a demo needs.
+ *
+ * Filed the way a request is written — by region, then by view — because that
+ * is how a doctor asks for one: "chest, PA and lateral", "left ankle", "PNS".
+ * A single "X-ray, per part" cannot carry that, and a radiographer who has to
+ * guess which view was meant will shoot the wrong one.
+ *
+ * Nothing is priced, and nothing here says the clinic does it. A department
+ * without fluoroscopy prices no contrast study and switches it off under
+ * Services & Rates; what stays priced is what the clinic offers.
+ *
+ * Columns: code, name, bill group, category, report text.
+ */
+const IMAGING = [
+  // ------------------------------------------------------ chest and thorax
+  ['XR-CHEST', 'X-Ray Chest PA', 'X-ray', 'radiology'],
+  ['XR-CHEST-AP', 'X-Ray Chest AP (portable)', 'X-ray', 'radiology'],
+  ['XR-CHEST-LAT', 'X-Ray Chest lateral', 'X-ray', 'radiology'],
+  ['XR-CHEST-BOTH', 'X-Ray Chest PA & lateral', 'X-ray', 'radiology'],
+  ['XR-RIBS', 'X-Ray Ribs (one side)', 'X-ray', 'radiology'],
+  ['XR-STERN', 'X-Ray Sternum', 'X-ray', 'radiology'],
+  ['XR-NECK', 'X-Ray Soft tissue neck', 'X-ray', 'radiology'],
+
+  // ---------------------------------------------------------------- abdomen
+  ['XR-ABD', 'X-Ray Abdomen erect', 'X-ray', 'radiology'],
+  ['XR-ABD-SUP', 'X-Ray Abdomen supine', 'X-ray', 'radiology'],
+  ['XR-ABD-BOTH', 'X-Ray Abdomen erect & supine', 'X-ray', 'radiology'],
+  ['XR-KUB', 'X-Ray KUB (plain)', 'X-ray', 'radiology'],
+
+  // ------------------------------------------------------------------ spine
+  ['XR-CSPINE', 'X-Ray Cervical Spine', 'X-ray', 'radiology'],
+  ['XR-CSPINE-OBL', 'X-Ray Cervical Spine — oblique views', 'X-ray', 'radiology'],
+  ['XR-CSPINE-FLEX', 'X-Ray Cervical Spine — flexion & extension', 'X-ray', 'radiology'],
+  ['XR-DSPINE', 'X-Ray Dorsal (thoracic) Spine AP/Lateral', 'X-ray', 'radiology'],
+  ['XR-SPINE', 'X-Ray Lumbar Spine AP/Lateral', 'X-ray', 'radiology'],
+  ['XR-LSPINE-FLEX', 'X-Ray Lumbosacral Spine — flexion & extension', 'X-ray', 'radiology'],
+  ['XR-SACRUM', 'X-Ray Sacrum & coccyx', 'X-ray', 'radiology'],
+  ['XR-SCOLI', 'X-Ray Whole spine (scoliosis series)', 'X-ray', 'radiology'],
+
+  // ------------------------------------------------------------- upper limb
+  ['XR-SHOUL', 'X-Ray Shoulder', 'X-ray', 'radiology'],
+  ['XR-CLAV', 'X-Ray Clavicle', 'X-ray', 'radiology'],
+  ['XR-SCAP', 'X-Ray Scapula', 'X-ray', 'radiology'],
+  ['XR-HUM', 'X-Ray Humerus AP/Lateral', 'X-ray', 'radiology'],
+  ['XR-ELBOW', 'X-Ray Elbow AP/Lateral', 'X-ray', 'radiology'],
+  ['XR-FOREARM', 'X-Ray Forearm AP/Lateral', 'X-ray', 'radiology'],
+  ['XR-WRIST', 'X-Ray Wrist AP/Lateral', 'X-ray', 'radiology'],
+  ['XR-HAND', 'X-Ray Hand / fingers', 'X-ray', 'radiology'],
+
+  // ------------------------------------------------------------- lower limb
+  ['XR-PELV', 'X-Ray Pelvis', 'X-ray', 'radiology'],
+  ['XR-HIP', 'X-Ray Hip AP/Lateral (one side)', 'X-ray', 'radiology'],
+  ['XR-HIPS', 'X-Ray Both hips AP', 'X-ray', 'radiology'],
+  ['XR-FEMUR', 'X-Ray Femur AP/Lateral', 'X-ray', 'radiology'],
+  ['XR-KNEE', 'X-Ray Knee AP/Lateral', 'X-ray', 'radiology'],
+  ['XR-PATELLA', 'X-Ray Knee — skyline (patella)', 'X-ray', 'radiology'],
+  ['XR-LEG', 'X-Ray Leg — tibia & fibula', 'X-ray', 'radiology'],
+  ['XR-ANKLE', 'X-Ray Ankle AP/Lateral', 'X-ray', 'radiology'],
+  ['XR-FOOT', 'X-Ray Foot AP/Oblique', 'X-ray', 'radiology'],
+  ['XR-CALC', 'X-Ray Calcaneum', 'X-ray', 'radiology'],
+  ['XR-LIMB', 'X-Ray Limb (per part)', 'X-ray', 'radiology'],
+
+  // ---------------------------------------------------------- head and face
+  ['XR-SKULL', 'X-Ray Skull', 'X-ray', 'radiology'],
+  ['XR-PNS', 'X-Ray Paranasal sinuses (Water’s view)', 'X-ray', 'radiology'],
+  ['XR-NASAL', 'X-Ray Nasal bone', 'X-ray', 'radiology'],
+  ['XR-MAND', 'X-Ray Mandible', 'X-ray', 'radiology'],
+  ['XR-TMJ', 'X-Ray Temporomandibular joints', 'X-ray', 'radiology'],
+  ['XR-MASTOID', 'X-Ray Mastoids', 'X-ray', 'radiology'],
+  ['XR-ORBIT', 'X-Ray Orbit — foreign body', 'X-ray', 'radiology'],
+  ['XR-DENT', 'Dental X-Ray (IOPA)', 'X-ray', 'radiology'],
+  ['XR-OPG', 'Orthopantomogram (OPG)', 'X-ray', 'radiology'],
+
+  /*
+   * Contrast studies, last because they are the rarest. They need fluoroscopy
+   * and a radiologist at the table, so a clinic without either leaves them
+   * unpriced and switches them off.
+   */
+  ['XR-BASWA', 'Barium swallow', 'X-ray', 'radiology'],
+  ['XR-BAMEAL', 'Barium meal', 'X-ray', 'radiology'],
+  ['XR-BAMFT', 'Barium meal follow-through', 'X-ray', 'radiology'],
+  ['XR-BAENEMA', 'Barium enema', 'X-ray', 'radiology'],
+  ['XR-IVP', 'Intravenous pyelogram (IVP)', 'X-ray', 'radiology'],
+  ['XR-MCU', 'Micturating cystourethrogram (MCU)', 'X-ray', 'radiology'],
+  ['XR-RGU', 'Retrograde urethrogram (RGU)', 'X-ray', 'radiology'],
+  ['XR-HSG', 'Hysterosalpingogram (HSG)', 'X-ray', 'radiology'],
+  ['XR-FISTULO', 'Fistulogram', 'X-ray', 'radiology'],
+  ['XR-SIALO', 'Sialogram', 'X-ray', 'radiology'],
+
+  // ------------------------------------------------- ultrasound — abdominal
+  ['USG-ABD', 'Ultrasound — Abdomen & Pelvis', 'Ultrasound & Doppler', 'radiology'],
+  ['USG-ABDW', 'Ultrasound — Whole abdomen', 'Ultrasound & Doppler', 'radiology'],
+  ['USG-UAP', 'Ultrasound — Upper abdomen', 'Ultrasound & Doppler', 'radiology'],
+  ['USG-KUB', 'Ultrasound — KUB', 'Ultrasound & Doppler', 'radiology'],
+
+  // ------------------------------------------- ultrasound — pelvic and obstetric
+  ['USG-PELVF', 'Ultrasound — Pelvis (female)', 'Ultrasound & Doppler', 'radiology'],
+  ['USG-TVS', 'Ultrasound — Transvaginal (TVS)', 'Ultrasound & Doppler', 'radiology'],
+  ['USG-TRUS', 'Ultrasound — Transrectal prostate (TRUS)', 'Ultrasound & Doppler', 'radiology'],
+  ['USG-OBS', 'Ultrasound — Obstetric', 'Ultrasound & Doppler', 'radiology'],
+  ['USG-NT', 'Ultrasound — NT / NB scan (11–13 weeks)', 'Ultrasound & Doppler', 'radiology'],
+  ['USG-ANOM', 'Ultrasound — Anomaly scan (18–22 weeks)', 'Ultrasound & Doppler', 'radiology'],
+  ['USG-GROWTH', 'Ultrasound — Growth scan with Doppler', 'Ultrasound & Doppler', 'radiology'],
+  ['USG-FOLLI', 'Ultrasound — Follicular study (per scan)', 'Ultrasound & Doppler', 'radiology'],
+
+  // ------------------------------------------------ ultrasound — small parts
+  ['USG-THY', 'Ultrasound — Thyroid / Neck', 'Ultrasound & Doppler', 'radiology'],
+  ['USG-BRE', 'Ultrasound — Breast', 'Ultrasound & Doppler', 'radiology'],
+  ['USG-SCR', 'Ultrasound — Scrotum', 'Ultrasound & Doppler', 'radiology'],
+  ['USG-SOFT', 'Ultrasound — Soft tissue', 'Ultrasound & Doppler', 'radiology'],
+  ['USG-LOCAL', 'Ultrasound — Local part / swelling', 'Ultrasound & Doppler', 'radiology'],
+  ['USG-MSK', 'Ultrasound — Musculoskeletal joint', 'Ultrasound & Doppler', 'radiology'],
+  ['USG-CHEST', 'Ultrasound — Chest / pleural', 'Ultrasound & Doppler', 'radiology'],
+  ['USG-NEO', 'Ultrasound — Neonatal cranium', 'Ultrasound & Doppler', 'radiology'],
+  ['USG-INFHIP', 'Ultrasound — Infant hip', 'Ultrasound & Doppler', 'radiology'],
+  ['USG-GUIDE', 'Ultrasound-guided aspiration / biopsy', 'Ultrasound & Doppler', 'radiology'],
+
+  // ----------------------------------------------------------------- Doppler
+  ['USG-DOPCAR', 'Doppler — Carotid & vertebral', 'Ultrasound & Doppler', 'radiology'],
+  ['USG-DOP', 'Doppler — Peripheral vascular', 'Ultrasound & Doppler', 'radiology'],
+  ['USG-DOPART', 'Doppler — Arterial (one limb)', 'Ultrasound & Doppler', 'radiology'],
+  ['USG-DOPVEN', 'Doppler — Venous (one limb)', 'Ultrasound & Doppler', 'radiology'],
+  ['USG-DOPREN', 'Doppler — Renal', 'Ultrasound & Doppler', 'radiology'],
+  ['USG-DOPSCR', 'Doppler — Scrotal', 'Ultrasound & Doppler', 'radiology'],
+  ['USG-DOPO', 'Doppler — Obstetric', 'Ultrasound & Doppler', 'radiology'],
+];
+
+module.exports = { PANELS, SINGLES, COMPONENTS, IMAGING };

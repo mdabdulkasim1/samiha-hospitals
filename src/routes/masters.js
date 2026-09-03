@@ -366,18 +366,22 @@ const SELLABLE = "(component_of IS NULL OR component_of = '' OR price > 0)";
  * has to raise the order as well as the charge.
  */
 router.get('/catalogue', wrap((req, res) => {
-  // The rates screen asks for everything, so the clinic can price an analyte
-  // it wants to offer on its own; every other screen gets what is sellable.
-  const includeComponents = String(req.query.all || '') === '1';
+  /*
+   * The rates screen asks for everything — the analytes inside a panel, and
+   * the items the clinic has switched off — because that is the one screen
+   * where those decisions are made and reversed. Every other screen gets what
+   * the clinic actually sells.
+   */
+  const all = String(req.query.all || '') === '1';
   const items = [
     ...db.prepare(
-      `SELECT id, code, name, bill_group, price, tax_pct, 'service' AS kind, category
-         FROM services WHERE active = 1`
+      `SELECT id, code, name, bill_group, price, tax_pct, 'service' AS kind, category, active
+         FROM services ${all ? '' : 'WHERE active = 1'}`
     ).all(),
     ...db.prepare(
       `SELECT id, code, name, bill_group, price, 0 AS tax_pct, 'test' AS kind, category,
-              component_of
-         FROM lab_tests WHERE active = 1 ${includeComponents ? '' : `AND ${SELLABLE}`}`
+              component_of, active
+         FROM lab_tests ${all ? '' : `WHERE active = 1 AND ${SELLABLE}`}`
     ).all(),
   ];
 
@@ -443,7 +447,7 @@ router.get('/lab-tests', wrap((req, res) => {
   const all = String(req.query.all || '') === '1';
   res.json(db.prepare(
     `SELECT * FROM lab_tests WHERE active = 1 ${all ? '' : `AND ${SELLABLE}`}
-      ORDER BY category, bill_group, name`
+      ORDER BY bill_group, sort_order, name`
   ).all());
 }));
 

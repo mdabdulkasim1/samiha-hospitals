@@ -16,13 +16,16 @@
       const mayEdit = APP.can(['admin']);
 
       const count = groups.reduce((a, g) => a + g.items.length, 0);
-      const unpriced = groups.reduce((a, g) => a + g.items.filter((i) => !i.price).length, 0);
+      const unpriced = groups.reduce((a, g) =>
+        a + g.items.filter((i) => i.active && !i.price).length, 0);
+      const offered = groups.reduce((a, g) => a + g.items.filter((i) => i.active).length, 0);
 
       el.innerHTML = `
         <div class="grid c4 mb">
-          <div class="stat teal"><div class="label">Billable items</div>
-            <div class="value">${UI.num(count)}</div>
-            <div class="foot">Across ${UI.num(groups.length)} groups</div></div>
+          <div class="stat teal"><div class="label">Offered</div>
+            <div class="value">${UI.num(offered)}</div>
+            <div class="foot">of ${UI.num(count)} in the catalogue,
+              across ${UI.num(groups.length)} groups</div></div>
           <div class="stat orange"><div class="label">No rate set</div>
             <div class="value">${UI.num(unpriced)}</div>
             <div class="foot">${unpriced ? 'These bill nothing until a rate is set' : 'Everything is priced'}</div></div>
@@ -74,11 +77,22 @@
                      value="${i.price != null ? i.price : ''}" placeholder="not set"
                      data-kind="${i.kind}" data-id="${i.id}" data-was="${i.price}">`
                 : (i.price ? UI.money(i.price) : '<span class="muted">not set</span>')) },
+              /*
+               * Whether the clinic does this at all. A catalogue is written for
+               * every clinic and no clinic does all of it — a department with
+               * no fluoroscopy switches the barium studies off and they leave
+               * the order form and the charge board, without being deleted:
+               * bills already raised still name what they charged for.
+               */
+              { label: 'Offered', render: (i) => (mayEdit
+                ? `<input type="checkbox" class="offer-input" title="Does the clinic do this?"
+                     data-kind="${i.kind}" data-id="${i.id}"${i.active ? ' checked' : ''}>`
+                : (i.active ? UI.badge('Yes', 'ok') : UI.badge('No', 'warn'))) },
             ], g.items)}</div>
           </div>`).join('')
           : UI.empty('Nothing matches that.', '🔍');
 
-        if (mayEdit) wireRates(host, groups);
+        if (mayEdit) { wireRates(host, groups); wireOffered(host, groups); }
       };
 
       el.querySelector('#rt-q').addEventListener('input', (e) => draw(e.target.value));
@@ -101,6 +115,29 @@
       if (hit) return hit.price || 0;
     }
     return 0;
+  }
+
+  /** Switching an item off takes it out of use without erasing what it was. */
+  function wireOffered(host, groups) {
+    host.querySelectorAll('.offer-input').forEach((box) => {
+      box.addEventListener('change', async () => {
+        const path = box.dataset.kind === 'test'
+          ? `/api/masters/lab-tests/${box.dataset.id}`
+          : `/api/masters/services/${box.dataset.id}`;
+        try {
+          const saved = await API.patch(path, { active: box.checked });
+          for (const g of groups) {
+            const hit = g.items.find((i) => i.kind === box.dataset.kind
+              && String(i.id) === box.dataset.id);
+            if (hit) hit.active = saved.active;
+          }
+          UI.ok(`${saved.name} — ${saved.active ? 'offered' : 'no longer offered'}.`);
+        } catch (err) {
+          UI.err(err.message);
+          box.checked = !box.checked;
+        }
+      });
+    });
   }
 
   /**

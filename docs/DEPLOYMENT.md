@@ -172,7 +172,24 @@ sellable; both take `?all=1` for the whole catalogue, which is what the rates
 screen asks for.
 
 The starter catalogue in `src/db/diagnostics.js` came from a health-checkup
-report the clinic runs, with the report's own units and ranges. Nothing in it
-is priced — a guessed rate would put a wrong figure on a real patient's bill —
-and the seed's upsert leaves a price alone once set, so re-seeding never undoes
-the clinic's tariff.
+report the clinic runs, with the report's own units and ranges, plus a
+radiology list covering the views a request actually names — chest PA and
+lateral, left ankle, PNS, OPG, TVS, carotid Doppler — because a single "X-ray,
+per part" cannot carry that and a radiographer who has to guess the view will
+shoot the wrong one. Radiology is ordered down the body rather than down the
+alphabet, so the X-ray list opens on the chest and ends with the contrast
+studies.
+
+Nothing in it is priced — a guessed rate would put a wrong figure on a real
+patient's bill — and the seed's upsert leaves a price alone once set, so
+re-seeding never undoes the clinic's tariff.
+
+### Switching off what the clinic does not do
+
+No clinic does all of any catalogue. The **Offered** switch on each row of
+Services & Rates takes an item out of use: it leaves the doctor's order form
+and the cashier's charge board immediately, but it is not deleted, so a bill
+already raised still reads correctly. A department without fluoroscopy switches
+off the barium studies and the IVP; one without an ultrasound probe switches
+off the scans. The tile at the top counts what is offered against the whole
+catalogue.

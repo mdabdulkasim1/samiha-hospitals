@@ -312,6 +312,25 @@ for (const [code, name, bill_group, sample_type, unit, ref_low, ref_high, ref_te
     price: 0, tat_hours,
   });
 }
+/*
+ * Radiology. Every view has to stand on its own, because a request names one:
+ * "chest PA and lateral", "left ankle", "PNS". Reported in words, so the ref
+ * text says whose opinion the report carries rather than a range.
+ */
+diagnostics.IMAGING.forEach(([code, name, bill_group, category], i) => {
+  const id = upsert('lab_tests', 'code', {
+    code, name, category, bill_group, price: 0, tat_hours: 24, sort_order: i + 1,
+    ref_text: category === 'cardiology' ? 'Cardiologist report' : 'Radiologist report',
+  });
+  /*
+   * Where a view sits in the list is ours to keep in step, even for one that
+   * was already there — the list reads down the body, chest to foot, and not
+   * down the alphabet, which would open it on the barium studies. Set once,
+   * so nothing is fought over on a later re-seed; the rate stays the clinic's.
+   */
+  db.prepare('UPDATE lab_tests SET sort_order = ? WHERE id = ? AND sort_order = 0').run(i + 1, id);
+});
+
 diagnostics.COMPONENTS.forEach(([code, name, panel, sample_type, unit, ref_low, ref_high, ref_text], i) => {
   const parent = db.prepare('SELECT bill_group FROM lab_tests WHERE code = ?').get(panel);
   upsert('lab_tests', 'code', {
