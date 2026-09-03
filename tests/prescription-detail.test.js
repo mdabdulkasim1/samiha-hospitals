@@ -215,11 +215,15 @@ test('the code master covers what a polyclinic actually sees', async () => {
 test('a pharmacist says how many are on the shelf, and the register still adds up', async () => {
   const drug = db.prepare("SELECT * FROM drugs WHERE code = 'CEFIX-200MG-TAB'").get();
   assert.ok(drug, 'the formulary item exists');
-  assert.strictEqual(db.prepare(
-    'SELECT COALESCE(SUM(qty_available),0) q FROM drug_batches WHERE drug_id = ?').get(drug.id).q, 0);
+  // It came onto the shelf with the starter list, unpriced.
+  const seeded = db.prepare(
+    'SELECT COALESCE(SUM(qty_available),0) q FROM drug_batches WHERE drug_id = ?').get(drug.id).q;
+  assert.ok(seeded > 0, 'a new install opens with the starter list on the shelf');
+  assert.strictEqual(drug.mrp, 0, 'and with no price on it');
 
-  // A first count needs what only the pack can say.
-  const bare = await api('POST', '/api/stock/opening', { drugId: drug.id, qty: 240 }, 'pharmacy');
+  // A count against a batch we have never seen needs what only the pack says.
+  const bare = await api('POST', '/api/stock/opening',
+    { drugId: drug.id, qty: 240, batchNo: 'CFX-2601' }, 'pharmacy');
   assert.strictEqual(bare.status, 400);
   assert.match(bare.body.error, /batch number and expiry/i);
 
@@ -234,7 +238,7 @@ test('a pharmacist says how many are on the shelf, and the register still adds u
     mrp: 12.5, purchasePrice: 8, reason: 'Opening stock counted on the shelf',
   }, 'pharmacy');
   assert.strictEqual(first.status, 200, JSON.stringify(first.body));
-  assert.strictEqual(first.body.onHand, 240);
+  assert.strictEqual(first.body.onHand, seeded + 240, 'a new batch beside the one already there');
   assert.strictEqual(first.body.delta, 240);
   // A formulary line with no price gets one from the first pack in.
   assert.strictEqual(db.prepare('SELECT mrp FROM drugs WHERE id = ?').get(drug.id).mrp, 12.5);
@@ -250,17 +254,17 @@ test('a pharmacist says how many are on the shelf, and the register still adds u
   const recount = await api('POST', '/api/stock/opening', {
     drugId: drug.id, qty: 235, batchNo: 'CFX-2601', reason: 'Five damaged in the strip',
   }, 'pharmacy');
-  assert.strictEqual(recount.body.onHand, 235);
+  assert.strictEqual(recount.body.onHand, seeded + 235);
   assert.strictEqual(recount.body.delta, -5);
   assert.strictEqual(db.prepare(
-    'SELECT COUNT(*) c FROM drug_batches WHERE drug_id = ?').get(drug.id).c, 1,
-    'a recount does not open a second batch');
+    'SELECT COUNT(*) c FROM drug_batches WHERE drug_id = ? AND batch_no = ?').get(drug.id, 'CFX-2601').c,
+    1, 'a recount does not open a second batch');
 
   // And the register reconciles: opening + in − out = closing.
   const reg = (await api('GET', '/api/stock/register?q=CEFIX', undefined, 'pharmacy')).body;
   const row = reg.rows.find((r) => r.drug_id === drug.id);
   assert.strictEqual(Math.round((row.opening + row.inward - row.outward) * 100) / 100, row.closing);
-  assert.strictEqual(row.on_hand, 235);
+  assert.strictEqual(row.on_hand, seeded + 235);
 });
 
 test('setting stock is the pharmacy\'s, and a count cannot be negative', async () => {

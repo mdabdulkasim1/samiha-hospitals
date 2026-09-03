@@ -234,28 +234,34 @@ const PATIENT = {
     `If he buys elsewhere, “Not here” records why, and the record survives.`,
   ]);
 
-  // The pharmacist counts the two tablets onto the shelf before handing any
-  // over. On a fresh install the formulary has the medicine but no stock, and
-  // dispensing what you do not have is exactly what this system will not do.
+  /*
+   * The two tablets are already on the shelf — the starter list put them there
+   * when the clinic was set up — but nobody has priced them, and this system
+   * will not sell a medicine at no price. So the pharmacist puts the MRP off
+   * the pack against them first. The figures below are illustrative: a real
+   * pharmacy reads them off the packs that arrived.
+   */
   const shelf = await chemist('GET', '/api/pharmacy/drugs?limit=800');
-  const stocked = [];
+  const DEMO_MRP = { 'MET-500MG-TAB': 3.4, 'GLIM-1MG-TAB': 6.2, 'GLIM-2MG-TAB': 8.5 };
+  const priced = [];
   for (const drug of [metformin, glimepiride].filter(Boolean)) {
-    const held = shelf.find((d) => d.id === drug.id);
-    const onHand = held && held.batches
-      ? held.batches.reduce((t, b) => t + Number(b.qty_available || 0), 0) : 0;
-    if (onHand >= 60) continue;
-    const expiry = new Date(Date.now() + 540 * 86400000).toISOString().slice(0, 10);
-    await chemist('POST', '/api/stock/opening', {
-      drugId: drug.id, qty: 200, batchNo: 'DEMO' + STAMP, expiryDate: expiry,
-      mrp: drug.mrp || 12, purchasePrice: (drug.mrp || 12) * 0.7, supplier: 'Opening stock',
+    const held = shelf.find((d) => d.id === drug.id) || {};
+    if (held.mrp > 0 && held.on_hand >= 60) continue;
+    await chemist('POST', '/api/stock/opening/bulk', {
+      rows: [{
+        drugId: drug.id,
+        qty: held.on_hand >= 60 ? held.on_hand : 200,
+        mrp: DEMO_MRP[drug.code] || 10,
+      }],
+      reason: 'Rate taken off the pack',
     }).catch(() => null);
-    stocked.push(drug.name);
+    priced.push(`${drug.name} at ${money(DEMO_MRP[drug.code] || 10)}`);
   }
-  if (stocked.length) {
-    say('Suresh in the pharmacy', 'Pharmacy → Stock register → the medicine → “Edit count”', [
-      `${stocked.join(' and ')} were on the formulary with nothing on the shelf.`,
-      `Counted in at 200 each, batch DEMO${STAMP}. The count, the batch and the expiry are what the`,
-      `system bills from — the oldest batch goes out first and its own MRP is what is charged.`,
+  if (priced.length) {
+    say('Suresh in the pharmacy', 'Pharmacy → Opening stock → “No rate set”', [
+      `${priced.join(' and ')}.`,
+      `They were already on the shelf from the starter list, but with no rate the counter`,
+      `refuses to sell them by name. A price here is all it takes; the count is untouched.`,
     ]);
   }
 

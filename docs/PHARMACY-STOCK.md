@@ -91,11 +91,18 @@ than the invoice. What is still owed to each supplier shows on the supplier list
 
 ## Filling the shelf the first time
 
-A new pharmacy is stocked in one sitting, not one medicine at a time.
-**Pharmacy → Opening stock** is the whole formulary on one page, with the
-quantity from the clinic's own starter list already filled in as a proposal.
-Type over any of it with what was actually counted, then take the lot in with
-one press.
+**A fresh install opens with stock.** `npm run db:seed` puts every formulary
+medicine on the shelf at the starter list's own opening quantity — 19,696 units
+across 108 medicines — on one batch, `OPEN-<yyyymm>`, expiring two years out. It
+is only ever written where the medicine has no batch at all, so a count somebody
+has since corrected is never written over by re-seeding.
+
+Those quantities are a plan, not a stocktake, and the shelf they describe should
+be counted before the pharmacy trades on it.
+
+**Pharmacy → Opening stock** is where that is done: the whole formulary on one
+page, quantities pre-filled, pack size beside each. Type over any of it with
+what was actually counted and take the lot in with one press.
 
 `GET /api/stock/opening/sheet` returns every active medicine with what is on
 the shelf now, the starter list's suggested quantity, its pack size, and two
@@ -114,8 +121,13 @@ could not take is returned in `skipped` with the reason.
 **A count may be taken before the medicine is priced.** Stock arriving and
 stock being priced are two different jobs, often done by two people on two
 days, and refusing the count until somebody knows the MRP leaves the shelf full
-and the register empty. What an unpriced medicine cannot do is *leave*: the
-counter refuses it by name — *"… has no rate set"* — until a rate is entered.
+and the register empty. It is also why the seed can stock the shelf at all: an
+MRP is printed on the pack that arrives and differs between batches and brands,
+so the seed invents none, and the medicines it stocks go on unpriced.
+
+What an unpriced medicine cannot do is *leave*: the counter refuses it by name
+— *"… has no rate set"* — until a rate is entered, so nothing is ever billed at
+nothing.
 The response's `unpriced[]` names what still needs one, and the screen's **No
 rate set** filter is where they are filled in; a rate typed there against stock
 already counted saves on its own, without retyping the count.

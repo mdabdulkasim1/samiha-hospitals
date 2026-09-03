@@ -288,24 +288,50 @@ for (const [code, name, category, bill_group, sample_type, unit, ref_low, ref_hi
   });
 }
 
+const seedToday = new Date();
+const openingExpiry = (months) =>
+  new Date(seedToday.getFullYear(), seedToday.getMonth() + months, 28).toISOString().slice(0, 10);
+
 /*
  * The clinic's own starter formulary — every item from the pharmacy stock
- * list, loaded so it can be prescribed, ordered and billed.
+ * list, loaded so it can be prescribed, ordered, counted and billed.
  *
- * Rate and stock are left alone on purpose: an MRP is printed on the pack that
- * arrives and is recorded at goods receipt, and writing opening batches here
- * would put quantities in the register that nobody has counted. The sheet's
- * opening quantity becomes the reorder level (a quarter of it), so the
- * low-stock warning is meaningful the moment real stock is received.
+ * The shelf is stocked from the sheet's own opening quantity, so a new install
+ * opens with a working pharmacy rather than a list of medicines it cannot
+ * dispense. It is the clinic's number, not an invented one, and it is only
+ * ever written where the medicine has no batch at all: a count somebody has
+ * since corrected at the shelf is never written over by re-seeding. The
+ * reorder level is a quarter of it, so the low-stock warning means something
+ * from the first day.
+ *
+ * Rates are still left alone. An MRP is printed on the pack that arrives and
+ * differs between batches and brands, so guessing one here would put a wrong
+ * price on a real patient's bill. These medicines go onto the shelf unpriced,
+ * and the counter refuses to sell an unpriced medicine by name until a rate is
+ * entered — under Pharmacy → Opening stock, where the same sheet lists them.
  */
+const openBatchNo = `OPEN-${new Date().toISOString().slice(0, 7).replace('-', '')}`;
 for (const [code, name, generic, form, strength, category, sched, pack, opening]
   of require('./formulary')) {
-  upsert('drugs', 'code', {
+  const id = upsert('drugs', 'code', {
     code, name, generic_name: generic, form, strength, category, pack_size: pack,
     schedule_type: sched || null, hsn: '3004', tax_pct: 12,
     mrp: 0, purchase_price: 0,
     reorder_level: Math.max(1, Math.round((opening || 0) * 0.25)),
   });
+
+  if (opening > 0 && !db.prepare('SELECT 1 FROM drug_batches WHERE drug_id = ?').get(id)) {
+    db.prepare(
+      `INSERT INTO drug_batches (drug_id, batch_no, expiry_date, qty_received, qty_available,
+                                 mrp, purchase_price, supplier)
+       VALUES (?, ?, ?, ?, ?, 0, 0, 'Opening stock')`
+    ).run(id, openBatchNo, openingExpiry(24), opening, opening);
+    db.prepare(
+      `INSERT INTO stock_ledger (drug_id, batch_id, txn_type, qty_delta, balance_after, ref_type, notes)
+       VALUES (?, (SELECT id FROM drug_batches WHERE drug_id = ? AND batch_no = ?), 'purchase', ?, ?,
+               'seed', 'Opening stock from the starter list — verify at the shelf')`
+    ).run(id, id, openBatchNo, opening, opening);
+  }
 }
 
 
@@ -330,8 +356,7 @@ const drugs = [
   ['FEFOL', 'Fefol-Z', 'Ferrous + Folic Acid', 'capsule', '—', 'Abbott', 12, 6.5, 4.2, 'OTC', 100],
   ['THYRO50', 'Thyronorm 50', 'Levothyroxine', 'tablet', '50 mcg', 'Abbott', 12, 1.9, 1.2, 'H', 150],
 ];
-const today = new Date();
-const expiry = (months) => new Date(today.getFullYear(), today.getMonth() + months, 28).toISOString().slice(0, 10);
+const expiry = openingExpiry;
 
 for (const [code, name, generic, form, strength, mfr, tax, mrp, cost, sched, openingQty] of drugs) {
   const id = upsert('drugs', 'code', {
@@ -584,7 +609,21 @@ for (const d of db.prepare(
 }
 
 console.log('  Lab tests   :', db.prepare('SELECT COUNT(*) AS c FROM lab_tests').get().c);
-console.log('  Drugs       :', db.prepare('SELECT COUNT(*) AS c FROM drugs').get().c);
+console.log('  Drugs       :', db.prepare('SELECT COUNT(*) AS c FROM drugs').get().c,
+  '·', db.prepare(
+    'SELECT COUNT(DISTINCT drug_id) AS c FROM drug_batches WHERE qty_available > 0'
+  ).get().c, 'on the shelf');
+{
+  const unpriced = db.prepare(
+    `SELECT COUNT(*) AS c FROM drugs d
+      WHERE d.active = 1 AND COALESCE(d.mrp, 0) = 0
+        AND EXISTS (SELECT 1 FROM drug_batches b WHERE b.drug_id = d.id AND b.qty_available > 0)`
+  ).get().c;
+  if (unpriced) {
+    console.log(`  Rates       : ${unpriced} medicine(s) are on the shelf with no MRP and cannot be`);
+    console.log('                sold until one is set — Pharmacy → Opening stock → "No rate set"');
+  }
+}
 console.log('  Beds        :', db.prepare('SELECT COUNT(*) AS c FROM beds').get().c);
 console.log('  Insurers    :', db.prepare("SELECT COUNT(*) AS c FROM insurers WHERE kind != 'tpa'").get().c,
   '+', db.prepare("SELECT COUNT(*) AS c FROM insurers WHERE kind = 'tpa'").get().c, 'TPAs');

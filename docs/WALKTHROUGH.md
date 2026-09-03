@@ -148,8 +148,15 @@ diagnosis. It stays there after check-out — if he goes home and comes back on
 Thursday, it is still waiting, with how many days it has been waiting shown
 against it.
 
-Tick what is being handed over, give a discount if any, take the money. Stock
-comes off oldest-expiry-first and the batch's own MRP is what is charged. MRP
+Before anything is handed over there is a step a new clinic meets once. The
+shelf comes stocked from the starter list, but nothing on it is priced — an MRP
+is printed on the pack that arrives, and the system will not guess one. So the
+counter refuses an unpriced medicine by name, and **Pharmacy → Opening stock →
+No rate set** is where the prices go in. It saves on its own: the counts stay
+as they are.
+
+Then: tick what is being handed over, give a discount if any, take the money.
+Stock comes off oldest-expiry-first and the batch's own MRP is what is charged. MRP
 already includes GST, so tax is *extracted* from the price and never added on
 top; the discount is apportioned across the lines before the tax is worked out,
 as §15(3)(a) of the CGST Act requires.

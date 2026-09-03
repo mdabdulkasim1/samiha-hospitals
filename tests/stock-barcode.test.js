@@ -248,33 +248,37 @@ test('the whole shelf can be counted in on one sheet', async () => {
   assert.ok(proposed, 'the formulary is on the sheet');
   assert.strictEqual(proposed.suggested, 1000);
   assert.strictEqual(proposed.pack, 'Strip of 10');
-  assert.ok(proposed.needsCount, 'nothing is on the shelf until somebody counts it');
-  assert.ok(proposed.needsRate, 'and the formulary carries no prices');
+  assert.strictEqual(proposed.on_hand, 1000, 'a new install opens with the starter list on the shelf');
+  assert.ok(proposed.needsRate, 'but the formulary carries no prices');
 
-  const take = sheet.rows.filter((r) => r.needsCount && r.suggested).slice(0, 20);
+  // The counts the pharmacist takes at the shelf, which are what the register
+  // must end up holding whatever the starter list proposed.
+  const take = sheet.rows.filter((r) => r.suggested).slice(0, 20)
+    .map((r) => ({ ...r, counted: Math.max(1, Math.round(r.suggested * 0.8)) }));
   const res = await api('POST', '/api/stock/opening/bulk', {
-    rows: take.map((r) => ({ drugId: r.id, qty: r.suggested })),
+    rows: take.map((r) => ({ drugId: r.id, qty: r.counted })),
     reason: 'Opening stock',
   });
   assert.strictEqual(res.status, 200, JSON.stringify(res.body));
   assert.strictEqual(res.body.taken, take.length);
-  assert.strictEqual(res.body.units, take.reduce((t, r) => t + r.suggested, 0));
+  assert.strictEqual(res.body.units, take.reduce((t, r) => t + r.counted, 0));
   assert.ok(res.body.batchNo.startsWith('OPEN-'));
 
   // Counted in, and the register says who by.
   const again = (await api('GET', '/api/stock/opening/sheet')).body;
   const now = again.rows.find((r) => r.id === take[0].id);
-  assert.strictEqual(now.on_hand, take[0].suggested);
+  assert.strictEqual(now.on_hand, take[0].counted);
   assert.ok(!now.needsCount);
 
   const moves = (await api('GET', `/api/stock/register/${take[0].id}/movements`)).body;
-  assert.ok(moves.movements.some((m) => m.txn_type === 'adjustment' && m.qty_delta === take[0].suggested));
+  assert.ok(moves.movements.some((m) => m.txn_type === 'adjustment'
+    && m.qty_delta === take[0].counted - take[0].suggested));
 });
 
 test('counting a medicine again corrects the shelf instead of doubling it', async () => {
   const sheet = (await api('GET', '/api/stock/opening/sheet')).body;
   const row = sheet.rows.find((r) => r.code === 'PARA-500MG-TAB');
-  assert.ok(row.on_hand > 0, 'it went in on the sheet above');
+  assert.ok(row.on_hand > 0, 'it is on the shelf');
 
   await api('POST', '/api/stock/opening/bulk', { rows: [{ drugId: row.id, qty: 40 }] });
   const after = (await api('GET', '/api/stock/opening/sheet')).body.rows.find((r) => r.id === row.id);

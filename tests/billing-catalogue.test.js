@@ -457,7 +457,7 @@ test('the collections list is the money desk\'s, not a doctor\'s', async () => {
 });
 
 // ------------------------------------------------------------- the formulary
-test('the clinic\'s starter formulary is loaded, priced by nobody and stocked by nobody', async () => {
+test('the clinic\'s starter formulary is loaded and stocked, but priced by nobody', async () => {
   const formulary = require('../src/db/formulary');
   assert.ok(formulary.length >= 90, `expected the full list, got ${formulary.length}`);
 
@@ -475,10 +475,22 @@ test('the clinic\'s starter formulary is loaded, priced by nobody and stocked by
   assert.strictEqual(
     db.prepare('SELECT COUNT(*) c FROM drugs WHERE category IS NOT NULL AND mrp > 0').get().c, 0);
 
-  // And no stock either — the register must not claim what nobody has counted.
-  assert.strictEqual(db.prepare(
-    `SELECT COUNT(*) c FROM drug_batches b JOIN drugs d ON d.id = b.drug_id
-      WHERE d.category IS NOT NULL`).get().c, 0);
+  /*
+   * The shelf is stocked from the sheet's own opening quantity, so a new
+   * install has a pharmacy that can dispense rather than a list it cannot.
+   * The quantity is the clinic's; the price is still nobody's, and the batch
+   * says so by carrying no MRP.
+   */
+  const stocked = db.prepare(
+    `SELECT d.code, b.qty_available, b.mrp FROM drug_batches b JOIN drugs d ON d.id = b.drug_id
+      WHERE d.category IS NOT NULL`
+  ).all();
+  const withQty = formulary.filter((f) => f[8] > 0);
+  assert.strictEqual(stocked.length, withQty.length, 'every item with a suggested quantity is on the shelf');
+  assert.ok(stocked.every((b) => b.mrp === 0), 'and none of it carries an invented price');
+
+  const para = stocked.find((b) => b.code === 'PARA-500MG-TAB');
+  assert.strictEqual(para.qty_available, 1000, "the sheet's own quantity, not a made-up one");
 
   // Every item can be labelled the day it is loaded.
   assert.strictEqual(db.prepare(
@@ -501,14 +513,16 @@ test('the scheduled medicines on the list are flagged as scheduled', async () =>
     'a bandage roll does not need a prescription');
 });
 
-test('a formulary item can be received, and only then does it have stock and a price', async () => {
+test('a formulary item gets its price from the pack that arrives', async () => {
   const drug = db.prepare("SELECT * FROM drugs WHERE code = 'PARA-500MG-TAB'").get();
   assert.ok(drug, 'the item is on the formulary');
   assert.strictEqual(drug.mrp, 0, 'no price until goods arrive');
 
+  // It is on the shelf from the starter list, unpriced, so a delivery adds to
+  // a shelf that already holds something rather than filling an empty one.
   const stockBefore = db.prepare(
     'SELECT COALESCE(SUM(qty_available),0) q FROM drug_batches WHERE drug_id = ?').get(drug.id).q;
-  assert.strictEqual(stockBefore, 0);
+  assert.strictEqual(stockBefore, 1000, "the sheet's opening quantity");
 
   // Suppliers are the clinic's own, so none is seeded — the pharmacy adds
   // its distributor before the first goods-received note.
@@ -524,7 +538,12 @@ test('a formulary item can be received, and only then does it have stock and a p
 
   const after = db.prepare(
     'SELECT COALESCE(SUM(qty_available),0) q FROM drug_batches WHERE drug_id = ?').get(drug.id).q;
-  assert.strictEqual(after, 500, 'the stock is what was received, no more');
-  const batch = db.prepare('SELECT * FROM drug_batches WHERE drug_id = ?').get(drug.id);
+  assert.strictEqual(after, stockBefore + 500, 'the delivery is added to what was already there');
+  const batch = db.prepare(
+    'SELECT * FROM drug_batches WHERE drug_id = ? AND batch_no = ?').get(drug.id, 'B-2601');
   assert.strictEqual(batch.mrp, 1.6, 'the price comes off the pack that arrived');
+
+  // A goods-received note prices the medicine, so it can be sold now.
+  const priced = db.prepare('SELECT mrp FROM drugs WHERE id = ?').get(drug.id).mrp;
+  assert.strictEqual(priced, 1.6);
 });
