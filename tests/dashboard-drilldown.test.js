@@ -53,7 +53,9 @@ test.before(async () => {
   for (const [as, email] of [
     ['admin', 'admin@samiha.local'], ['reception', 'reception@samiha.local'],
     ['cashier', 'cashier@samiha.local'], ['imran', 'imran@samiha.local'],
-    ['arif', 'arif@samiha.local'],
+    ['arif', 'arif@samiha.local'], ['lab', 'lab@samiha.local'],
+    ['nurse', 'nurse@samiha.local'], ['counselor', 'counselor@samiha.local'],
+    ['pharmacy', 'pharmacy@samiha.local'],
   ]) {
     const r = await api('POST', '/api/auth/login', { username: email, password: 'samiha@123' }, null);
     assert.strictEqual(r.status, 200, `login failed for ${email}`);
@@ -198,6 +200,57 @@ test('a doctor is refused the money detail', async () => {
   for (const metric of ['collections', 'outstanding', 'self_paying', 'insured']) {
     const res = await detail(metric, 'imran');
     assert.strictEqual(res.status, 403, `${metric} should be closed to a doctor`);
+  }
+});
+
+test('the dashboard carries no money to anyone who does not handle it', async () => {
+  // The technician, the nurse, the doctor and the pharmacist read the same
+  // board as everybody else. What the clinic took today is not on it.
+  for (const as of ['imran', 'lab', 'nurse', 'pharmacy']) {
+    const d = (await api('GET', '/api/reports/dashboard', undefined, as)).body;
+    assert.strictEqual(d.revenue, null, `${as} is sent no revenue at all`);
+    assert.strictEqual(d.pharmacy.salesToday, null, `${as} is sent no counter takings`);
+    assert.strictEqual(d.insurance.receivable, null, `${as} is sent no receivable`);
+    // Absent, not zeroed: a zero is a figure, and a wrong one.
+    assert.notStrictEqual(d.revenue, 0);
+
+    // The patient and department side of the board is untouched.
+    assert.ok(d.opd, 'the day’s visits');
+    assert.ok(d.lab, 'the day’s diagnostics');
+    assert.ok(d.ipd.beds, 'the beds');
+    assert.ok(d.patients.registered >= 0, 'the patients');
+
+    const trend = (await api('GET', '/api/reports/trend?days=14', undefined, as)).body;
+    assert.ok(trend.length, 'the footfall still comes through');
+    assert.ok(trend.every((r) => r.collected === undefined), 'without the takings');
+    assert.ok(trend.every((r) => r.visits !== undefined), 'but with the visits');
+  }
+
+  // And it is the same three desks everywhere the figure could be reached.
+  for (const as of ['cashier', 'counselor', 'admin']) {
+    const d = (await api('GET', '/api/reports/dashboard', undefined, as)).body;
+    assert.ok(d.revenue, `${as} handles money and is sent it`);
+    assert.ok(typeof d.revenue.collected === 'number');
+    const trend = (await api('GET', '/api/reports/trend?days=14', undefined, as)).body;
+    assert.ok(trend.every((r) => r.collected !== undefined));
+  }
+});
+
+test('the money reports are closed to everyone but those three desks', async () => {
+  const win = WINDOW();
+  const MONEY = ['trend_collected', 'revenue_sliding', 'revenue_assistance', 'revenue_outstanding'];
+  for (const metric of MONEY) {
+    for (const as of ['imran', 'reception']) {
+      const res = await rdetail(metric, win, as);
+      assert.strictEqual(res.status, 403, `${metric} should be closed to ${as}`);
+      assert.match(res.body.error, /admin, cashier, counselor/);
+    }
+    assert.strictEqual((await rdetail(metric, win, 'admin')).status, 200, metric);
+  }
+
+  // What is not about money stays open to the desks it always was.
+  for (const metric of ['trend_visits', 'trend_lab', 'turnaround_visits']) {
+    assert.strictEqual((await rdetail(metric, win, 'imran')).status, 200, metric);
   }
 });
 

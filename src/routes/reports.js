@@ -85,16 +85,20 @@ router.get('/dashboard', requireAuth, wrap((req, res) => {
     ? byDoctor.filter((d) => d.id === req.user.id)
     : byDoctor.filter((d) => d.total > 0 || d.hours);
 
+  const money = seesMoney(req.user);
+
   res.json({
     date,
     opd,
     appointments,
     byDoctor: visibleDoctors,
-    revenue: {
+    // Absent, not zeroed, for anyone who is not on the money side: a zero is a
+    // figure, and the screen should show nothing rather than something wrong.
+    revenue: money ? {
       collected: revenue.collected, receipts: revenue.receipts,
       billed: billed.billed, slidingDiscount: billed.sliding, assistanceCovered: billed.assistance,
       outstanding: db.prepare("SELECT COALESCE(SUM(balance),0) AS s FROM invoices WHERE status IN ('unpaid','partial')").get().s,
-    },
+    } : null,
     ipd: {
       admittedToday: db.prepare("SELECT COUNT(*) AS c FROM admissions WHERE date(admitted_at) = ?").get(date).c,
       dischargedToday: db.prepare('SELECT COUNT(*) AS c FROM admissions WHERE date(discharged_at) = ?').get(date).c,
@@ -107,7 +111,10 @@ router.get('/dashboard', requireAuth, wrap((req, res) => {
          FROM lab_orders WHERE date(ordered_at) = ?`
     ).get(date),
     pharmacy: {
-      salesToday: db.prepare('SELECT COALESCE(SUM(net),0) AS s FROM pharmacy_sales WHERE date(created_at) = ?').get(date).s,
+      // What the counter took is money; what is running out is the shelf's.
+      salesToday: money
+        ? db.prepare('SELECT COALESCE(SUM(net),0) AS s FROM pharmacy_sales WHERE date(created_at) = ?').get(date).s
+        : null,
       lowStockCount: db.prepare(
         `SELECT COUNT(*) AS c FROM (
            SELECT d.id FROM drugs d LEFT JOIN drug_batches b ON b.drug_id = d.id
@@ -168,7 +175,7 @@ router.get('/dashboard', requireAuth, wrap((req, res) => {
       return {
         preauthDraft: pa.draft || 0, preauthQueries: pa.queries || 0, preauthAwaiting: pa.awaiting || 0,
         claimDraft: cl.draft || 0, claimQueries: cl.queries || 0,
-        receivable: cl.receivable || 0, overdueClaims: cl.overdue || 0,
+        receivable: money ? cl.receivable || 0 : null, overdueClaims: cl.overdue || 0,
         // Everything a human has to act on right now.
         actionable: (pa.draft || 0) + (pa.queries || 0) + (cl.draft || 0) + (cl.queries || 0) + (cl.overdue || 0),
       };
@@ -185,7 +192,7 @@ router.get('/dashboard', requireAuth, wrap((req, res) => {
 /** Footfall and revenue over a date range, for the trend chart. */
 router.get('/trend', requireAuth, wrap((req, res) => {
   const days = Math.min(Math.max(int(req.query.days, 30) || 30, 7), 180);
-  res.json(db.prepare(
+  const rows = db.prepare(
     `WITH RECURSIVE d(day) AS (
        SELECT date('now', '-' || ? || ' days')
        UNION ALL SELECT date(day, '+1 day') FROM d WHERE day < date('now')
@@ -198,7 +205,12 @@ router.get('/trend', requireAuth, wrap((req, res) => {
             (SELECT COUNT(*) FROM lab_orders lo
               WHERE date(lo.ordered_at) = d.day AND lo.status != 'cancelled') AS lab_orders
        FROM d ORDER BY d.day`
-  ).all(days - 1));
+  ).all(days - 1);
+
+  // The footfall is everybody's; the takings are not, so the column leaves
+  // rather than being blanked on the way to the screen.
+  if (!seesMoney(req.user)) for (const r of rows) delete r.collected;
+  res.json(rows);
 }));
 
 router.get('/doctor-productivity', requireRole('admin', 'reception', 'cashier'), wrap((req, res) => {
@@ -434,7 +446,19 @@ router.get('/revenue', requireRole('admin', 'cashier', 'reception'), wrap((req, 
  * the guard here is what actually decides.
  */
 const DESK_ROLES = ['reception', 'counselor', 'nurse', 'doctor', 'cashier'];
-const MONEY_ROLES = ['cashier', 'reception', 'counselor'];
+/*
+ * Who may see rupees.
+ *
+ * The dashboard is read by everybody in the building — the technician at the
+ * bench, the nurse at the station, the pharmacist at the counter — and what
+ * the clinic took today is none of their work. They see their own patients and
+ * their own department; the money belongs to the people who handle it.
+ *
+ * Enforced here rather than by hiding a tile, because a figure left in the
+ * payload is a figure anybody can read out of the network tab.
+ */
+const MONEY_ROLES = ['admin', 'cashier', 'counselor'];
+const seesMoney = (user) => MONEY_ROLES.includes(user.role);
 const WARD_ROLES = ['ward', 'nurse', 'reception', 'doctor'];
 
 const PATIENT_NAME = "TRIM(p.first_name || ' ' || COALESCE(p.last_name, ''))";
@@ -687,7 +711,7 @@ const REPORT_DETAILS = Object.assign(Object.create(null), {
 
   trend_collected: {
     title: 'Collected', caption: 'Every receipt in the window',
-    roles: MGMT_ROLES, route: 'billing', routeLabel: 'Open billing',
+    roles: MONEY_ROLES, route: 'billing', routeLabel: 'Open billing',
     rows: ({ from, to }) => db.prepare(
       `SELECT pay.id, pay.receipt_no, ${PATIENT_NAME} AS name, p.uhid,
               pay.invoice_id, i.invoice_no, pay.mode, pay.amount,
@@ -780,7 +804,7 @@ const REPORT_DETAILS = Object.assign(Object.create(null), {
 
   revenue_sliding: {
     title: 'Sliding-scale given', caption: 'Invoices carrying a sliding-scale concession',
-    roles: MGMT_ROLES, route: 'billing', routeLabel: 'Open billing',
+    roles: MONEY_ROLES, route: 'billing', routeLabel: 'Open billing',
     rows: ({ from, to }) => db.prepare(
       `SELECT i.id, i.invoice_no, ${PATIENT_NAME} AS name, p.uhid, i.kind, i.status,
               i.net, i.sliding_discount AS amount, i.created_at AS at
@@ -794,7 +818,7 @@ const REPORT_DETAILS = Object.assign(Object.create(null), {
 
   revenue_assistance: {
     title: 'Assistance & write-offs', caption: 'Invoices where the clinic carried part of the cost',
-    roles: MGMT_ROLES, route: 'billing', routeLabel: 'Open billing',
+    roles: MONEY_ROLES, route: 'billing', routeLabel: 'Open billing',
     rows: ({ from, to }) => db.prepare(
       `SELECT i.id, i.invoice_no, ${PATIENT_NAME} AS name, p.uhid, i.kind, i.status,
               i.net, i.assistance_covered AS amount, i.created_at AS at
@@ -810,7 +834,7 @@ const REPORT_DETAILS = Object.assign(Object.create(null), {
      whenever it was raised, which is exactly how the revenue tab counts it. */
   revenue_outstanding: {
     title: 'Outstanding', caption: 'Open invoices, whenever they were raised',
-    roles: MGMT_ROLES, route: 'billing', routeParams: { status: 'unpaid' }, routeLabel: 'Open billing',
+    roles: MONEY_ROLES, route: 'billing', routeParams: { status: 'unpaid' }, routeLabel: 'Open billing',
     rows: () => db.prepare(
       `SELECT i.id, i.invoice_no, ${PATIENT_NAME} AS name, p.uhid, i.kind, i.status,
               i.net, i.paid, i.balance, i.created_at AS at
@@ -869,7 +893,7 @@ const REPORT_DETAILS = Object.assign(Object.create(null), {
      pharmacy line on an OPD bill counts to the doctor who caused it. */
   doctor_month_billed: {
     title: 'Billed', caption: 'Invoices raised against this doctor’s patients that month',
-    roles: MGMT_ROLES, needsDoctor: true, route: 'billing', routeLabel: 'Open billing',
+    roles: MONEY_ROLES, needsDoctor: true, route: 'billing', routeLabel: 'Open billing',
     rows: ({ from, to, doctorId }) => db.prepare(
       `SELECT i.id, i.invoice_no, ${PATIENT_NAME} AS name, p.uhid, i.kind, i.status,
               i.net AS amount, i.paid, i.balance, i.created_at AS at
@@ -885,7 +909,7 @@ const REPORT_DETAILS = Object.assign(Object.create(null), {
 
   doctor_month_collected: {
     title: 'Collected', caption: 'Received against this doctor’s invoices that month',
-    roles: MGMT_ROLES, needsDoctor: true, route: 'billing', routeLabel: 'Open billing',
+    roles: MONEY_ROLES, needsDoctor: true, route: 'billing', routeLabel: 'Open billing',
     rows: ({ from, to, doctorId }) => db.prepare(
       `SELECT i.id, i.invoice_no, ${PATIENT_NAME} AS name, p.uhid, i.kind, i.status,
               i.net, i.paid AS amount, i.balance, i.created_at AS at

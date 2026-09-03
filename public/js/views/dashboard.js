@@ -30,6 +30,15 @@ APP.register('dashboard', {
         : `<div class="stat ${cls}">${body}</div>`;
     };
 
+    /*
+     * Whether this dashboard carries money at all.
+     *
+     * The server decides — it sends no revenue to a technician, a nurse or a
+     * pharmacist — and the screen follows what it was given rather than
+     * checking the role a second time and risking the two disagreeing.
+     */
+    const money = Boolean(d.revenue);
+
     el.innerHTML = `
       <div class="grid c4 mb">
         ${stat('orange', 'Enquiry patients', UI.num(d.patients ? d.patients.enquiry : 0),
@@ -50,13 +59,16 @@ APP.register('dashboard', {
           `${UI.num(d.opd.in_progress || 0)} in progress · ${UI.num(d.opd.new_patients || 0)} new`, 'opd_visits')}
         ${stat('crimson', 'Appointments', UI.num(d.appointments.total),
           `${UI.num(d.appointments.via_whatsapp || 0)} via WhatsApp · ${UI.num(d.appointments.no_shows || 0)} no-show`, 'appointments')}
-        ${stat('ok', 'Collected today', UI.money(d.revenue.collected),
-          `${UI.num(d.revenue.receipts)} receipt(s) · ${UI.money(d.revenue.outstanding)} outstanding`, 'collections')}
+        ${money
+          ? stat('ok', 'Collected today', UI.money(d.revenue.collected),
+            `${UI.num(d.revenue.receipts)} receipt(s) · ${UI.money(d.revenue.outstanding)} outstanding`, 'collections')
+          : stat('teal', 'Diagnostics today', UI.num(d.lab ? d.lab.ordered_today || 0 : 0),
+            `${UI.num(d.lab ? d.lab.pending || 0 : 0)} still to report`)}
         ${stat('orange', 'Beds occupied', `${UI.num(d.ipd.beds.occupied)} / ${UI.num(d.ipd.beds.total)}`,
           `${d.ipd.beds.occupancyPct}% occupancy · ${UI.num(d.ipd.currentInPatients)} in-patient(s)`, 'beds')}
       </div>
 
-      ${APP.can(['cashier', 'reception', 'counselor']) ? `
+      ${money ? `
         <div class="grid c4 mb">
           ${stat('crimson', 'Still to collect', UI.money(d.revenue.outstanding),
             'Open invoices across the clinic', 'outstanding')}
@@ -69,7 +81,7 @@ APP.register('dashboard', {
               ? `${UI.money(d.insurance.receivable)} approved, not yet received` : 'Cashless and reimbursement', 'insured')}
         </div>` : ''}
 
-      ${d.insurance && d.insurance.receivable > 0 ? `<div class="alert info mb" style="cursor:pointer" onclick="APP.navigate('insurance')">
+      ${money && d.insurance && d.insurance.receivable > 0 ? `<div class="alert info mb" style="cursor:pointer" onclick="APP.navigate('insurance')">
         <b>${UI.money(d.insurance.receivable)}</b> approved by insurers but not yet received.
         ${d.insurance.overdueClaims ? `<b>${d.insurance.overdueClaims}</b> claim(s) are past their settlement date.` : ''}
       </div>` : ''}
@@ -77,12 +89,12 @@ APP.register('dashboard', {
       <div class="grid sidebar-right">
         <div>
           <div class="card">
-            <div class="card-head"><h3>Footfall &amp; collections — last 14 days</h3></div>
+            <div class="card-head"><h3>${money ? 'Footfall &amp; collections' : 'Footfall'} — last 14 days</h3></div>
             <div class="card-body">
               <div class="muted small mb">Visits per day</div>
               ${UI.sparkline(trend.map((t) => t.visits), trend.map((t) => t.day))}
-              <div class="muted small mb mt">Collections per day</div>
-              ${UI.sparkline(trend.map((t) => t.collected), trend.map((t) => t.day))}
+              ${money ? `<div class="muted small mb mt">Collections per day</div>
+              ${UI.sparkline(trend.map((t) => t.collected), trend.map((t) => t.day))}` : ''}
               <div class="row-between mt small muted">
                 <span>${UI.esc(trend[0].day)}</span><span>${UI.esc(trend[trend.length - 1].day)}</span>
               </div>
@@ -120,7 +132,7 @@ APP.register('dashboard', {
             </div>
           </div>
 
-          <div class="card">
+          ${money ? `<div class="card">
             <div class="card-head"><h3>Concessions given today</h3></div>
             <div class="card-body">
               <dl class="kv">
@@ -130,7 +142,7 @@ APP.register('dashboard', {
               </dl>
               <div class="muted small mt">Recorded against completed financial screenings.</div>
             </div>
-          </div>
+          </div>` : ''}
 
           <div class="card">
             <div class="card-head"><h3>Services offered</h3></div>
@@ -461,7 +473,10 @@ function attentionList(d) {
   if (d.patients && d.patients.enquiry) {
     items.push(['orange', `${d.patients.enquiry} enquiry patient(s) not yet registered`, 'patients']);
   }
-  if (d.revenue.outstanding > 0) items.push(['warn', `${UI.money(d.revenue.outstanding)} outstanding across unpaid bills`, 'billing']);
+  // Only for the desks that would go and collect it.
+  if (d.revenue && d.revenue.outstanding > 0) {
+    items.push(['warn', `${UI.money(d.revenue.outstanding)} outstanding across unpaid bills`, 'billing']);
+  }
   if (d.insurance) {
     const ins = d.insurance;
     if (ins.preauthQueries) items.push(['orange', `${ins.preauthQueries} pre-authorisation query/queries from insurers to answer`, 'insurance']);

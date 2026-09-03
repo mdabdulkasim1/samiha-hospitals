@@ -21,11 +21,22 @@
       title="Show what makes up ${UI.esc(label.toLowerCase())}">${inner}</button>`;
   };
 
-  /** Mirrors the guard on /api/reports/detail; the server is what decides. */
+  /*
+   * Mirrors the guard on /api/reports/detail; the server is what decides.
+   *
+   * Rupees are for the desks that handle them. What the clinic took is not the
+   * business of a technician or a nurse, so a money list is not offered to
+   * them — and would be refused if it were.
+   */
   const MGMT = ['admin', 'reception', 'cashier'];
+  const MONEY = ['admin', 'cashier', 'counselor'];
   const OPEN_TO_ALL = ['trend_visits', 'trend_appointments', 'trend_admissions',
     'turnaround_visits', 'trend_lab'];
-  const canOpen = (metric) => OPEN_TO_ALL.includes(metric) || APP.can(MGMT);
+  const MONEY_METRICS = ['trend_collected', 'revenue_sliding', 'revenue_assistance',
+    'revenue_outstanding', 'doctor_month_billed', 'doctor_month_collected'];
+  const canOpen = (metric) => (MONEY_METRICS.includes(metric)
+    ? APP.can(MONEY)
+    : OPEN_TO_ALL.includes(metric) || APP.can(MGMT));
 
   const when = (r) => UI.esc(UI.dateTime(r.at));
   const mins = (v) => (v === null || v === undefined ? '—' : UI.num(v, 1) + ' min');
@@ -196,8 +207,8 @@
           <button data-tab="turnaround">Turnaround</button>
           ${/* Money and colleague-by-colleague numbers are management's, not a
                 doctor's — a doctor reads their own day in My Clinic. */
-            APP.can(['admin', 'reception', 'cashier']) ? `
-            <button data-tab="revenue">Revenue</button>
+            APP.can(MGMT) ? `
+            ${APP.can(MONEY) ? '<button data-tab="revenue">Revenue</button>' : ''}
             <button data-tab="doctors">Doctor productivity</button>
             <button data-tab="doctorMonthly">Doctor month by month</button>` : ''}
           ${APP.can(['admin']) ? '<button data-tab="audit">Audit log</button>' : ''}
@@ -211,25 +222,28 @@
           const days = 30;
           const rows = await API.get(`/api/reports/trend?days=${days}`);
           const total = (k) => rows.reduce((s, r) => s + Number(r[k] || 0), 0);
+          // The takings only travel to the desks that may see them; when they
+          // have not, the column is absent rather than zero.
+          const money = rows.some((r) => r.collected !== undefined);
           // The window the tiles were added up over, sent along with any click.
           const w = { from: rows[0].day, to: rows[rows.length - 1].day };
           body.innerHTML = `
-            <div class="grid c5 mb">
+            <div class="grid ${money ? 'c5' : 'c4'} mb">
               ${rstat('teal', `Visits (${days} days)`, UI.num(total('visits')), '',
                 { metric: 'trend_visits', ...w })}
               ${rstat('crimson', 'Appointments', UI.num(total('appointments')), '',
                 { metric: 'trend_appointments', ...w })}
               ${rstat('info', 'Diagnostics', UI.num(total('lab_orders')), 'Lab and imaging orders',
                 { metric: 'trend_lab', ...w })}
-              ${rstat('ok', 'Collected', UI.money(total('collected')), '',
-                { metric: 'trend_collected', ...w })}
+              ${money ? rstat('ok', 'Collected', UI.money(total('collected')), '',
+                { metric: 'trend_collected', ...w }) : ''}
               ${rstat('orange', 'Admissions', UI.num(total('admissions')), '',
                 { metric: 'trend_admissions', ...w })}
             </div>
             <div class="card"><div class="card-head"><h3>Daily visits</h3></div>
               <div class="card-body">${UI.sparkline(rows.map((r) => r.visits), rows.map((r) => r.day))}</div></div>
-            <div class="card"><div class="card-head"><h3>Daily collections</h3></div>
-              <div class="card-body">${UI.sparkline(rows.map((r) => r.collected), rows.map((r) => r.day))}</div></div>
+            ${money ? `<div class="card"><div class="card-head"><h3>Daily collections</h3></div>
+              <div class="card-body">${UI.sparkline(rows.map((r) => r.collected), rows.map((r) => r.day))}</div></div>` : ''}
             <div class="card"><div class="card-head"><h3>Day by day</h3></div>
               <div class="card-body tight">${UI.table([
                 { label: 'Date', render: (r) => UI.esc(UI.date(r.day)) },
@@ -240,8 +254,8 @@
                   render: (r) => dayCell(r, 'trend_lab', r.lab_orders, UI.num) },
                 { label: 'Admissions', num: true,
                   render: (r) => dayCell(r, 'trend_admissions', r.admissions, UI.num) },
-                { label: 'Collected', num: true,
-                  render: (r) => dayCell(r, 'trend_collected', r.collected, UI.money) },
+                ...(money ? [{ label: 'Collected', num: true,
+                  render: (r) => dayCell(r, 'trend_collected', r.collected, UI.money) }] : []),
               ], [...rows].reverse())}</div></div>`;
           wireDrills(body);
         },

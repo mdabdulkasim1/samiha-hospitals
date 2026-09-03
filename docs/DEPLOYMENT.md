@@ -193,3 +193,29 @@ already raised still reads correctly. A department without fluoroscopy switches
 off the barium studies and the IVP; one without an ultrasound probe switches
 off the scans. The tile at the top counts what is offered against the whole
 catalogue.
+
+## Who may see money
+
+The dashboard is read by everybody in the building — the technician at the
+bench, the nurse at the station, the pharmacist at the counter. What the clinic
+took today is not their work, so they do not see it.
+
+Rupees on the dashboard and in Reports are limited to three roles: **admin,
+cashier and financial counsellor**. Everyone else gets the same board without
+the money: the day's visits, appointments, diagnostics, beds, the doctor list,
+the queue and what needs chasing in their own department. The fourth tile,
+which shows *Collected today* to the money desks, shows *Diagnostics today* to
+everybody else rather than leaving a hole.
+
+It is enforced on the server, not by hiding a tile. `GET /api/reports/dashboard`
+sends `revenue: null`, `pharmacy.salesToday: null` and `insurance.receivable:
+null` to anyone else, and `GET /api/reports/trend` drops its `collected` column
+— absent rather than zeroed, because a zero is a figure and a wrong one. The
+money drill-downs (`collections`, `outstanding`, `trend_collected`,
+`revenue_*`, a doctor's billed and collected months) answer 403 to everyone
+else, so nothing can be read out of the network tab either.
+
+Reception keeps the Billing screen, where it raises bills and takes payment;
+what it no longer has is the clinic's day-total on the shared board. The
+pharmacist keeps the pharmacy's own bills and till on the Pharmacy screen, for
+the same reason.
