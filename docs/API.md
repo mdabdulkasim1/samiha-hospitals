@@ -140,26 +140,32 @@ status: `400` invalid input · `401` not signed in · `403` wrong role · `404` 
 | GET | `/patients/by-phone?phone=` | desk roles |
 
 ## Billing
+Only the cashier raises a bill or takes money. The counsellor reads bills and
+records concessions, plans and exceptions; the ward reads a running in-patient
+bill. Reception quotes rates but does not touch the till, and a doctor is not
+on this table at all.
+
 | Method | Path | Roles |
 |---|---|---|
-| GET | `/billing/invoices[/:id]` · `/billing/daybook?date=` | cashier, reception, doctor, counselor, ward |
-| POST | `/billing/invoices` · `/invoices/:id/items` | cashier, reception |
-| POST | `/billing/invoices/:id/payments` | cashier, reception |
-| POST | `/billing/invoices/:id/payment-plan` | cashier, reception |
+| GET | `/billing/invoices[/:id]` · `/billing/daybook?date=` | cashier, counselor, ward |
+| POST | `/billing/invoices` · `/invoices/:id/items` | cashier |
+| POST | `/billing/invoices/:id/payments` | cashier |
+| POST | `/billing/invoices/:id/payment-plan` | cashier |
 | POST | `/billing/invoices/:id/exception` | cashier, counselor |
 | POST | `/billing/invoices/:id/assistance-cover` | cashier, counselor |
-| GET | `/billing/payment-plans` | cashier, reception, doctor, counselor, ward |
-| POST | `/billing/payment-plans/:id/installments/:seq/pay` | cashier, reception |
-| GET | `/billing/receipts/:receiptNo` | cashier, reception, doctor, counselor, ward |
+| GET | `/billing/payment-plans` | cashier, counselor, ward |
+| POST | `/billing/payment-plans/:id/installments/:seq/pay` | cashier |
+| GET | `/billing/receipts/:receiptNo` | cashier, counselor, ward |
 
 ## In-patient
 | Method | Path | Roles |
 |---|---|---|
 | GET | `/ipd/wards` · `/ipd/admissions[?status=]` · `/ipd/admissions/:id` | clinical desks |
 | POST | `/ipd/wards` · `/ipd/wards/:id/beds` | admin, ward |
-| PATCH | `/ipd/beds/:id` | ward, nurse, doctor, reception |
-| POST | `/ipd/admissions` | ward, nurse, doctor, reception |
-| POST | `/ipd/admissions/:id/notes` · `/vitals` · `/charges` · `/transfer` | ward, nurse, doctor |
+| PATCH | `/ipd/beds/:id` | ward, nurse, reception |
+| POST | `/ipd/admissions` | ward, nurse, reception |
+| POST | `/ipd/admissions/:id/notes` · `/vitals` | ward, nurse, doctor |
+| POST | `/ipd/admissions/:id/charges` · `/transfer` | ward, nurse, cashier |
 | POST | `/ipd/admissions/:id/medications` | doctor |
 | GET | `/ipd/admissions/:id/mar?date=` · POST `/ipd/mar/:id` | nurse, ward, doctor |
 | POST | `/ipd/admissions/:id/discharge` | doctor, ward, cashier |

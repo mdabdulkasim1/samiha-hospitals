@@ -83,7 +83,7 @@
     if (r.allergies) tags.push(UI.badge('⚠ Allergy', 'danger'));
     if (r.labs_open) tags.push(UI.badge(`${r.labs_open} lab`, 'warn'));
     if (r.rx_pending) tags.push(UI.badge(`${r.rx_pending} Rx`, 'warn'));
-    if (r.invoice_balance > 0) tags.push(UI.badge(UI.money(r.invoice_balance) + ' due', 'danger'));
+    if (r.invoice_balance > 0) tags.push(UI.badge(UI.money(r.invoice_balance) + ' due', 'danger'));  // null unless the desk collects
     if (r.screening_status && r.screening_status !== 'completed') tags.push(UI.badge(UI.titleise(r.screening_status), 'orange'));
 
     const search = `${r.patient_name} ${r.uhid} ${r.token_no || ''} ${r.doctor_name || ''}`.toLowerCase();
@@ -365,9 +365,11 @@
         ${p.consultation.follow_up_date ? `<p><b>Review on:</b> ${UI.esc(UI.date(p.consultation.follow_up_date))}</p>` : ''}` : ''}
 
       ${p.labOrders.length ? `<h4 class="mt">Diagnostic orders</h4>
-        <table><thead><tr><th>Order</th><th>Tests</th><th>Status</th><th class="num">Amount</th></tr></thead><tbody>
+        <table><thead><tr><th>Order</th><th>Tests</th><th>Status</th>${
+          APP.seesPrices() ? '<th class="num">Amount</th>' : ''}</tr></thead><tbody>
         ${p.labOrders.map((o) => `<tr><td>${UI.esc(o.order_no)}</td><td>${UI.esc(o.tests || '')}</td>
-          <td>${UI.esc(UI.titleise(o.status))}</td><td class="num">${UI.money(o.total_price)}</td></tr>`).join('')}
+          <td>${UI.esc(UI.titleise(o.status))}</td>${
+            APP.seesPrices() ? `<td class="num">${UI.money(o.total_price)}</td>` : ''}</tr>`).join('')}
         </tbody></table>` : ''}
 
       ${p.medicationList.length ? `<h4 class="mt">Medication list</h4>

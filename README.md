@@ -129,7 +129,8 @@ defer or decline is recorded; declining sends them to the exit.
 **Examination** — Vitals compute BMI live and raise clinical alerts (hypertensive range, low
 SpO₂, fever, tachycardia) before the patient sits back down. The consultation is a SOAP note
 with ICD-10 diagnoses, a prescription built against the live formulary (with an allergy
-cross-check and stock visibility), and lab orders. Signing the note routes the patient to
+cross-check and stock counts, but no prices — see the guardrail on money below), and lab
+orders. Signing the note routes the patient to
 diagnostics, pharmacy or the check-out desk depending on what is outstanding. The **results
 page** is the printable sheet the patient carries forward.
 
@@ -175,6 +176,15 @@ These are enforced in the API, not just the interface:
   share — and any settlement **shortfall returns to their balance** rather than being
   silently written off.
 - Discharge posts bed-day charges automatically and blocks on an unsettled bill.
+- **Money is scoped server-side.** Two lists in `src/lib/auth.js` decide it:
+  `MONEY_ROLES` (admin, cashier, counsellor) may see what the clinic *collected* —
+  takings, balances, ledgers; `PRICE_ROLES` adds pharmacy, ward, nurse station and
+  reception, who may see what a thing *costs* — a bed tariff, an MRP, a rate card.
+  A doctor and a lab technician are on neither list, so the API sends them `null`
+  in place of every figure: no test price, no bed rate, no consultation fee, no
+  patient balance, no invoice. The screens then omit the column rather than
+  drawing an empty one. Because the withholding happens on the server, the figure
+  is not one network tab away either — see `tests/no-money-for-doctors.test.js`.
 - Every state change is written to an immutable **visit trail** and the **audit log**.
 - Password reset answers identically for real and unknown accounts, is rate-limited, stores
   only a token hash, works once, and signs out every session on that account.

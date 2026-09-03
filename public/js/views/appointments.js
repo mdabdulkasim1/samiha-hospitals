@@ -229,7 +229,7 @@
               <span class="muted small">${UI.esc(d.specialization || dept.name || '')}${
                 d.qualification ? ' · ' + UI.esc(d.qualification) : ''}</span>
             </span>
-            <span class="muted small">${d.consult_fee ? UI.money(d.consult_fee) : ''}${
+            <span class="muted small">${d.consult_fee && APP.seesPrices() ? UI.money(d.consult_fee) : ''}${
               d.room_no ? '<br>Room ' + UI.esc(d.room_no) : ''}</span>
           </button>`).join('');
       }).join('');

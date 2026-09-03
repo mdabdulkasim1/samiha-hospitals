@@ -45,7 +45,7 @@
                 <b>${UI.esc(b.bed_no)}</b>
                 <div>${UI.esc(UI.titleise(b.status))}</div>
                 ${b.patient_name ? `<div class="who">${UI.esc(b.patient_name)}<br>${UI.esc(b.ip_no || '')}</div>` : ''}
-                <div class="muted small">${UI.money(b.tariff_per_day)}/day</div>
+                ${APP.seesPrices() ? `<div class="muted small">${UI.money(b.tariff_per_day)}/day</div>` : ''}
               </div>`).join('')}
             </div></div></div>`).join('');
 
@@ -67,8 +67,8 @@
             { label: 'Admitted', render: (a) => UI.esc(UI.date(a.admitted_at)) },
             { label: 'Days', num: true, render: (a) => UI.esc(a.days) },
             { label: 'Flags', render: (a) => a.allergies ? UI.badge('⚠ Allergy', 'danger') : '' },
-            { label: 'Balance', num: true, render: (a) => a.balance > 0
-              ? `<b style="color:var(--danger)">${UI.money(a.balance)}</b>` : UI.money(0) },
+            ...(APP.seesMoney() ? [{ label: 'Balance', num: true, render: (a) => a.balance > 0
+              ? `<b style="color:var(--danger)">${UI.money(a.balance)}</b>` : UI.money(0) }] : []),
           ], admissions, { emptyText: 'No patients currently admitted.' });
           UI.bindRows(host, admissions, (a) => APP.navigate('ipd', { admissionId: a.id }));
         },
@@ -89,6 +89,11 @@
   }
 
   // ---------------------------------------------------------------- admit
+  /* Front desk and nurse station pick beds, and they see the tariff; anyone
+   * else who reaches this list gets the bed without a price on it. */
+  const bedLabel = (b) => `${b.ward_name} · ${b.bed_no}`
+    + (b.tariff_per_day == null ? '' : ` — ${b.tariff_per_day}/day`);
+
   async function openAdmit(bedId) {
     const [wards, doctors] = await Promise.all([
       API.get('/api/ipd/wards'), API.get('/api/masters/staff?role=doctor'),
@@ -105,7 +110,7 @@
             ${UI.field({ name: 'bedId', label: 'Bed', required: true,
               value: typeof bedId === 'number' ? bedId : '',
               options: [{ value: '', label: '— select a vacant bed —' }].concat(vacant.map((b) =>
-                ({ value: b.id, label: `${b.ward_name} · ${b.bed_no} — ${b.tariff_per_day}/day` }))) })}
+                ({ value: b.id, label: bedLabel(b) }))) })}
             ${UI.field({ name: 'doctorId', label: 'Consultant', required: true,
               options: [{ value: '', label: '— select —' }].concat(doctors.map((d) =>
                 ({ value: d.id, label: `${d.name} · ${d.department_name || ''}` }))) })}
@@ -163,6 +168,14 @@
   // ------------------------------------------------------------- admission
   async function renderAdmission(el, id, startOn = 'overview') {
     const a = await API.get(`/api/ipd/admissions/${id}`);
+    /*
+     * A doctor's admission screen carries no rupees: not the bed tariff, not
+     * the running bill, not the charge sheet or the cashless position. The
+     * server has already blanked those fields; this keeps the layout honest
+     * rather than showing a column of dashes where the money used to be.
+     */
+    const prices = APP.seesPrices();
+    const cashless = APP.can(['cashier', 'reception', 'counselor', 'ward']);
     APP.setSubtitle(`${a.ip_no} · ${a.patient_name} · ${a.ward_name} / ${a.bed_no}`);
     APP.actions([
       { id: 'back', label: '← Wards', onClick: () => APP.navigate('ipd') },
@@ -175,16 +188,16 @@
       ${a.allergies ? `<div class="alert danger">⚠ <b>Allergies:</b> ${UI.esc(a.allergies)}</div>` : ''}
       ${a.status !== 'admitted' ? `<div class="alert ok"><b>Discharged</b> ${UI.esc(UI.dateTime(a.discharged_at))} — ${UI.esc(UI.titleise(a.discharge_type || ''))}</div>` : ''}
 
-      <div class="grid c4 mb">
+      <div class="grid ${prices ? 'c4' : 'c3'} mb">
         <div class="stat teal"><div class="label">IP number</div><div class="value" style="font-size:18px">${UI.esc(a.ip_no)}</div>
           <div class="foot">${UI.esc(UI.titleise(a.admission_type))}</div></div>
         <div class="stat crimson"><div class="label">Day</div><div class="value">${UI.num(a.days)}</div>
           <div class="foot">Since ${UI.esc(UI.date(a.admitted_at))}</div></div>
         <div class="stat orange"><div class="label">Bed</div><div class="value" style="font-size:18px">${UI.esc(a.bed_no)}</div>
-          <div class="foot">${UI.esc(a.ward_name)} · ${UI.money(a.tariff_per_day)}/day</div></div>
-        <div class="stat ${a.invoice && a.invoice.balance > 0 ? 'crimson' : 'ok'}"><div class="label">Bill so far</div>
+          <div class="foot">${UI.esc(a.ward_name)}${prices ? ` · ${UI.money(a.tariff_per_day)}/day` : ''}</div></div>
+        ${prices ? `<div class="stat ${a.invoice && a.invoice.balance > 0 ? 'crimson' : 'ok'}"><div class="label">Bill so far</div>
           <div class="value">${a.invoice ? UI.money(a.invoice.net) : UI.money(0)}</div>
-          <div class="foot">Balance ${a.invoice ? UI.money(a.invoice.balance) : UI.money(0)}</div></div>
+          <div class="foot">Balance ${a.invoice ? UI.money(a.invoice.balance) : UI.money(0)}</div></div>` : ''}
       </div>
 
       <div class="tabs" id="ad-tabs">
@@ -192,9 +205,9 @@
         <button data-tab="notes">Rounds &amp; notes</button>
         <button data-tab="mar">Medication chart</button>
         <button data-tab="vitals">Vitals</button>
-        <button data-tab="charges">Charges &amp; bill</button>
+        ${prices ? '<button data-tab="charges">Charges &amp; bill</button>' : ''}
         <button data-tab="orders">Diagnostics</button>
-        <button data-tab="insurance">Insurance</button>
+        ${cashless ? '<button data-tab="insurance">Insurance</button>' : ''}
       </div>
       <div id="ad-body"></div>`;
 
@@ -446,7 +459,8 @@
       tabs[b.dataset.tab]();
     }));
 
-    const opening = tabs[startOn] ? startOn : 'overview';
+    // Only land on a tab this user actually has a button for.
+    const opening = el.querySelector(`#ad-tabs button[data-tab="${startOn}"]`) ? startOn : 'overview';
     el.querySelectorAll('#ad-tabs button').forEach((x) =>
       x.classList.toggle('active', x.dataset.tab === opening));
     tabs[opening]();
@@ -523,7 +537,7 @@
     simpleForm('Transfer to another bed',
       UI.field({ name: 'toBedId', label: 'New bed', required: true,
         options: [{ value: '', label: '— select —' }].concat(vacant.map((b) =>
-          ({ value: b.id, label: `${b.ward_name} · ${b.bed_no} — ${b.tariff_per_day}/day` }))) }) +
+          ({ value: b.id, label: bedLabel(b) }))) }) +
       UI.field({ name: 'reason', label: 'Reason', required: true }),
       async (v) => { await API.post(`/api/ipd/admissions/${a.id}/transfer`, v); UI.ok('Patient transferred.'); });
   }
@@ -534,7 +548,8 @@
       title: `Discharge — ${a.patient_name} (${a.ip_no})`,
       size: 'wide',
       body: `<div class="alert info">Bed charges for ${UI.esc(a.days)} day(s) and any unbilled charges are posted to
-          the invoice when you discharge. The bill must be settled, or carry a payment plan or documented exception.</div>
+          the invoice when you discharge. The account must be settled${APP.seesPrices() ? '' : ' at the cashier'},
+          or carry a payment plan or documented exception.</div>
         <form id="dc-form">
           <div class="grid c2">
             ${UI.field({ name: 'dischargeType', label: 'Discharge type', value: 'recovered',
@@ -556,10 +571,13 @@
         try {
           const res = await API.post(`/api/ipd/admissions/${a.id}/discharge`, UI.formValues(form));
           if (res.error) {
+            // Whoever cannot open a bill is told the account is unsettled and
+            // sent to the cashier — the button, and the figure, are not theirs.
             modal.querySelector('#dc-out').innerHTML =
               `<div class="alert danger mt"><b>${UI.esc(res.error)}</b><br>${UI.esc(res.hint)}
-               <button class="btn sm mt" id="dc-bill">Open the bill</button></div>`;
-            modal.querySelector('#dc-bill').addEventListener('click', () => { UI.closeAllModals(); APP.openInvoice(res.invoice.id); });
+               ${res.invoice ? '<button class="btn sm mt" id="dc-bill">Open the bill</button>' : ''}</div>`;
+            const bill = modal.querySelector('#dc-bill');
+            if (bill) bill.addEventListener('click', () => { UI.closeAllModals(); APP.openInvoice(res.invoice.id); });
             return 'keep';
           }
           UI.ok(`Discharged after ${res.days} day(s). Bed released for cleaning.`);

@@ -2,7 +2,7 @@
 const express = require('express');
 const { db } = require('../db');
 const { wrap, notFound, conflict, badRequest } = require('../lib/http');
-const { requireRole } = require('../lib/auth');
+const { requireRole, seesPrices } = require('../lib/auth');
 const { required, str, int, num, money } = require('../lib/validate');
 const { generate } = require('../lib/ids');
 const billing = require('../services/billing');
@@ -10,7 +10,12 @@ const whatsapp = require('../services/whatsapp');
 const audit = require('../lib/audit');
 
 const router = express.Router();
-const wardRoles = requireRole('ward', 'nurse', 'doctor', 'reception');
+/*
+ * Admitting, moving and discharging a patient is bed management: the front
+ * desk and the nurse station do it, because they know what is free and who is
+ * waiting. A doctor says a patient needs a bed; they do not allocate one.
+ */
+const wardRoles = requireRole('ward', 'nurse', 'reception');
 const viewRoles = requireRole('ward', 'nurse', 'doctor', 'reception', 'cashier', 'pharmacy', 'lab');
 
 /**
@@ -20,7 +25,7 @@ const viewRoles = requireRole('ward', 'nurse', 'doctor', 'reception', 'cashier',
  */
 
 // ------------------------------------------------------------ wards and beds
-router.get('/wards', viewRoles, wrap((_req, res) => {
+router.get('/wards', viewRoles, wrap((req, res) => {
   const wards = db.prepare('SELECT * FROM wards WHERE active = 1 ORDER BY name').all();
   for (const w of wards) {
     w.beds = db.prepare(
@@ -35,6 +40,9 @@ router.get('/wards', viewRoles, wrap((_req, res) => {
     w.total = w.beds.length;
     w.occupied = w.beds.filter((b) => b.status === 'occupied').length;
     w.vacant = w.beds.filter((b) => b.status === 'vacant').length;
+  }
+  if (!seesPrices(req.user)) {
+    for (const w of wards) for (const b of w.beds) b.tariff_per_day = null;
   }
   const total = wards.reduce((s, w) => s + w.total, 0);
   const occupied = wards.reduce((s, w) => s + w.occupied, 0);
@@ -88,6 +96,9 @@ router.get('/admissions', viewRoles, wrap((req, res) => {
       WHERE (? = 'all' OR a.status = ?)
       ORDER BY a.id DESC LIMIT 200`
   ).all(status, status);
+  if (!seesPrices(req.user)) {
+    for (const r of rows) { r.tariff_per_day = null; r.balance = null; }
+  }
   res.json(rows);
 }));
 
@@ -177,6 +188,15 @@ router.get('/admissions/:id', viewRoles, wrap((req, res) => {
       WHERE t.admission_id = ? ORDER BY t.id`
   ).all(id);
   a.invoice = a.invoice_id ? billing.fullInvoice(a.invoice_id) : null;
+  /*
+   * The bedside chart, without the ledger. What a patient owes has no bearing
+   * on what they need, so the roles that treat them are not shown it.
+   */
+  if (!seesPrices(req.user)) {
+    a.tariff_per_day = null;
+    a.charges = a.charges.map((c) => ({ ...c, unit_price: null, amount: null }));
+    a.invoice = null;
+  }
   res.json(a);
 }));
 
@@ -392,10 +412,15 @@ router.post('/admissions/:id/discharge', requireRole('doctor', 'ward', 'cashier'
     const hasPlan = db.prepare("SELECT 1 FROM payment_plans WHERE invoice_id = ? AND status = 'active'").get(invoiceId);
     const hasException = db.prepare('SELECT 1 FROM payment_exceptions WHERE invoice_id = ?').get(invoiceId);
     if (!hasPlan && !hasException && !req.body.force) {
+      const prices = seesPrices(req.user);
       return res.status(409).json({
-        error: `Outstanding balance of ${invoice.balance.toFixed(2)} on ${invoice.invoice_no}.`,
-        hint: 'Settle the bill, record a payment-plan agreement, or document a payment exception before discharging.',
-        invoice: billing.fullInvoice(invoiceId),
+        error: prices
+          ? `Outstanding balance of ${invoice.balance.toFixed(2)} on ${invoice.invoice_no}.`
+          : `The account for ${invoice.invoice_no} is not settled yet.`,
+        hint: prices
+          ? 'Settle the bill, record a payment-plan agreement, or document a payment exception before discharging.'
+          : 'Ask the cashier to settle it, or to record a payment plan or exception, then discharge.',
+        invoice: prices ? billing.fullInvoice(invoiceId) : null,
       });
     }
   }
@@ -422,7 +447,7 @@ router.post('/admissions/:id/discharge', requireRole('doctor', 'ward', 'cashier'
   audit.log(req, 'discharge', 'admission', id, { days });
   res.json({
     admission: db.prepare('SELECT * FROM admissions WHERE id = ?').get(id),
-    days, invoice: billing.fullInvoice(invoiceId),
+    days, invoice: seesPrices(req.user) ? billing.fullInvoice(invoiceId) : null,
   });
 }));
 
@@ -450,7 +475,7 @@ router.get('/admissions/:id/discharge-summary', viewRoles, wrap((req, res) => {
     `SELECT n.*, u.name AS by_name FROM ip_notes n LEFT JOIN users u ON u.id = n.created_by
       WHERE n.admission_id = ? ORDER BY n.id`
   ).all(id);
-  a.invoice = a.invoice_id ? billing.fullInvoice(a.invoice_id) : null;
+  a.invoice = a.invoice_id && seesPrices(req.user) ? billing.fullInvoice(a.invoice_id) : null;
   res.json(a);
 }));
 

@@ -16,7 +16,9 @@
       { id: 'consult',     label: 'Consultation',     icon: '✚', roles: ['admin','doctor'] },
       { id: 'financial',   label: 'Financial Screening', icon: '⚖', roles: ['admin','counselor','reception','cashier'] },
       { id: 'lab',         label: 'Diagnostics',      icon: '⚗', roles: ['admin','lab','doctor','nurse','reception','cashier'] },
-      { id: 'pharmacy',    label: 'Pharmacy',         icon: '⚕', roles: ['admin','pharmacy','doctor','nurse','reception','cashier'] },
+      // Not a doctor's screen. What is on the shelf they can see while
+      // prescribing; the counter, its bills and its till are the pharmacist's.
+      { id: 'pharmacy',    label: 'Pharmacy',         icon: '⚕', roles: ['admin','pharmacy','nurse','reception','cashier'] },
     ]},
     { group: 'In-patient', items: [
       { id: 'ipd',         label: 'Wards & Beds',     icon: '⌸', roles: ['admin','ward','nurse','doctor','reception','cashier'] },
@@ -52,6 +54,24 @@
       if (!APP.user) return false;
       return APP.user.role === 'admin' || roles.includes(APP.user.role);
     },
+
+    /*
+     * Money is not everybody's business. These mirror the same two lists on
+     * the server (src/lib/auth.js), which is where they are enforced — the
+     * server sends null instead of a figure, so hiding here is only so the
+     * screen does not show an empty column where a rupee sign used to be.
+     *
+     * seesMoney  — what was collected: takings, balances, ledgers.
+     * seesPrices — what a thing costs: a rate card, a bed tariff, an MRP.
+     */
+    /** Whether this user's nav carries a given screen at all. */
+    canOpen(route) {
+      const item = NAV.flatMap((g) => g.items).find((i) => i.id === route);
+      return item ? APP.can(item.roles) : true;
+    },
+
+    seesMoney() { return APP.can(['cashier', 'counselor']); },
+    seesPrices() { return APP.can(['cashier', 'counselor', 'pharmacy', 'ward', 'nurse', 'reception']); },
 
     navigate(route, params) {
       const qs = params && Object.keys(params).length

@@ -2,7 +2,7 @@
 const express = require('express');
 const { db } = require('../db');
 const { wrap, notFound, conflict, badRequest } = require('../lib/http');
-const { requireRole } = require('../lib/auth');
+const { requireRole, seesPrices } = require('../lib/auth');
 const { required, str, num, int, bool } = require('../lib/validate');
 const audit = require('../lib/audit');
 const { generate, doctorCode } = require('../lib/ids');
@@ -48,6 +48,8 @@ router.get('/staff', wrap((req, res) => {
       WHERE (? IS NULL OR u.role = ?)
       ORDER BY u.role, u.name`
   ).all(role, role);
+  // A consultation fee is a rate like any other on the tariff.
+  if (!seesPrices(req.user)) for (const r of rows) { r.consult_fee = null; r.follow_up_fee = null; }
   res.json(rows);
 }));
 
@@ -398,6 +400,8 @@ router.get('/catalogue', wrap((req, res) => {
     if (!byGroup.has(g)) byGroup.set(g, []);
     byGroup.get(g).push(it);
   }
+  if (!seesPrices(req.user)) for (const it of items) it.price = null;
+
   res.json([...byGroup.entries()]
     .map(([group, rows]) => ({ group, items: rows.sort((a, b) => a.name.localeCompare(b.name)) }))
     .sort((a, b) => rank(a.group) - rank(b.group) || a.group.localeCompare(b.group)));
@@ -446,10 +450,14 @@ router.post('/services', adminOnly, wrap((req, res) => {
 
 router.get('/lab-tests', wrap((req, res) => {
   const all = String(req.query.all || '') === '1';
-  res.json(db.prepare(
+  const rows = db.prepare(
     `SELECT * FROM lab_tests WHERE active = 1 ${all ? '' : `AND ${SELLABLE}`}
       ORDER BY bill_group, sort_order, name`
-  ).all());
+  ).all();
+  // A doctor orders a test because the patient needs it. What it costs is the
+  // counter's, and a rate on the order form is a thumb on that scale.
+  if (!seesPrices(req.user)) for (const r of rows) r.price = null;
+  res.json(rows);
 }));
 
 router.post('/lab-tests', requireRole('admin', 'lab'), wrap((req, res) => {

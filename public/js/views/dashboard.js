@@ -330,7 +330,7 @@ const DRILL_COLUMNS = {
     { label: 'Patient', render: (r) => (r.name ? who(r) : '<span class="muted">—</span>') },
     { label: 'IP No', render: (r) => UI.esc(r.ip_no || '—') },
     { label: 'Since', render: (r) => (r.at ? UI.esc(UI.ago(r.at)) : '—') },
-    { label: 'Per day', num: true, render: (r) => UI.money(r.tariff) },
+    { label: 'Per day', num: true, priced: true, render: (r) => UI.money(r.tariff) },
   ],
   self_paying: [
     { label: 'Patient', render: who },
@@ -353,8 +353,11 @@ const DRILL_TOTAL = {
 };
 
 function openMetric(metric, date) {
+  // These tables are built when the script loads, before anyone has signed in,
+  // so the price columns are dropped here — once we know who is looking.
+  const columns = (DRILL_COLUMNS[metric] || []).filter((c) => !c.priced || APP.seesPrices());
   return Drilldown.open('/api/reports/dashboard/detail' + API.qs({ metric, date }), {
-    columns: DRILL_COLUMNS[metric],
+    columns,
     total: DRILL_TOTAL[metric],
   });
 }
@@ -468,7 +471,13 @@ function attentionList(d) {
   if (d.financialScreening.waiting) items.push(['orange', `${d.financialScreening.waiting} financial screening(s) waiting for a counselor`, 'financial']);
   if (d.financialScreening.docs_pending) items.push(['warn', `${d.financialScreening.docs_pending} screening(s) awaiting proof of income`, 'financial']);
   if (d.lab.pending) items.push(['info', `${d.lab.pending} diagnostic order(s) in progress`, 'lab']);
-  if (d.pharmacy.lowStockCount) items.push(['danger', `${d.pharmacy.lowStockCount} medicine(s) at or below reorder level`, 'pharmacy']);
+  if (d.pharmacy.lowStockCount) {
+    // The pharmacist goes and orders it; a prescriber only needs to know
+    // before they write for it, so they get the count without the counter.
+    items.push(APP.canOpen('pharmacy')
+      ? ['danger', `${d.pharmacy.lowStockCount} medicine(s) at or below reorder level`, 'pharmacy']
+      : ['info', `${d.pharmacy.lowStockCount} medicine(s) are running low at the pharmacy`, null]);
+  }
   if (d.enquiries.open) items.push(['info', `${d.enquiries.open} open enquiry/enquiries to follow up`, 'enquiries']);
   if (d.patients && d.patients.enquiry) {
     items.push(['orange', `${d.patients.enquiry} enquiry patient(s) not yet registered`, 'patients']);
@@ -485,7 +494,11 @@ function attentionList(d) {
     if (ins.claimDraft) items.push(['info', `${ins.claimDraft} claim(s) built but not submitted`, 'insurance']);
     if (ins.overdueClaims) items.push(['danger', `${ins.overdueClaims} claim(s) past their settlement date — chase the insurer`, 'insurance']);
   }
-  if (!items.length) return UI.empty('Nothing needs chasing. 👏', '✅');
-  return items.map(([kind, text, route]) =>
-    `<div class="alert ${kind}" style="cursor:pointer" onclick="APP.navigate('${route}')">${UI.esc(text)}</div>`).join('');
+  // Chasing something you cannot open is not attention, it is noise: every
+  // line here is dropped unless this user has the screen that answers it.
+  const mine = items.filter(([, , route]) => route === null || APP.canOpen(route));
+  if (!mine.length) return UI.empty('Nothing needs chasing. 👏', '✅');
+  return mine.map(([kind, text, route]) => route
+    ? `<div class="alert ${kind}" style="cursor:pointer" onclick="APP.navigate('${route}')">${UI.esc(text)}</div>`
+    : `<div class="alert ${kind}">${UI.esc(text)}</div>`).join('');
 }

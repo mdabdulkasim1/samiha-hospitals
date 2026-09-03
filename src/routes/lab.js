@@ -2,7 +2,7 @@
 const express = require('express');
 const { db } = require('../db');
 const { wrap, notFound, badRequest, conflict } = require('../lib/http');
-const { requireRole } = require('../lib/auth');
+const { requireRole, seesPrices } = require('../lib/auth');
 const { required, str, int, num } = require('../lib/validate');
 const { generate } = require('../lib/ids');
 const whatsapp = require('../services/whatsapp');
@@ -48,7 +48,7 @@ router.get('/orders', viewRoles, wrap((req, res) => {
             p.age_years, p.gender, u.name AS doctor_name, dp.doctor_code, v.visit_no, a.ip_no,
             (SELECT COUNT(*) FROM lab_order_items i WHERE i.order_id = o.id) AS item_count,
             (SELECT GROUP_CONCAT(test_name, ', ') FROM lab_order_items i WHERE i.order_id = o.id) AS tests,
-            (SELECT COALESCE(SUM(price),0) FROM lab_order_items i WHERE i.order_id = o.id) AS total_price
+            (SELECT COALESCE(SUM(price),0) FROM lab_order_items i WHERE i.order_id = o.id) AS total_price_raw
        FROM lab_orders o
        JOIN patients p ON p.id = o.patient_id
        LEFT JOIN users u ON u.id = o.doctor_id
@@ -59,6 +59,14 @@ router.get('/orders', viewRoles, wrap((req, res) => {
       ORDER BY CASE o.priority WHEN 'stat' THEN 0 WHEN 'urgent' THEN 1 ELSE 2 END, o.id DESC
       LIMIT 300`
   ).all(status, status, visitId, visitId, patientId, patientId);
+
+  // What an order comes to is the counter's business. The bench reads this
+  // list to know what to run and who for.
+  const prices = seesPrices(req.user);
+  for (const r of rows) {
+    r.total_price = prices ? r.total_price_raw : null;
+    delete r.total_price_raw;
+  }
 
   const counts = db.prepare('SELECT status, COUNT(*) AS c FROM lab_orders GROUP BY status').all()
     .reduce((acc, r) => ({ ...acc, [r.status]: r.c }), {});

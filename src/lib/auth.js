@@ -152,8 +152,27 @@ function purgeExpiredResets() {
 const MONEY_ROLES = ['admin', 'cashier', 'counselor'];
 const seesMoney = (user) => Boolean(user) && MONEY_ROLES.includes(user.role);
 
+/*
+ * Who may see a price.
+ *
+ * Wider than the money desks, because a price is not the same as the clinic's
+ * takings: the pharmacist reads an MRP off every pack, the ward needs the
+ * running total before a discharge, and the front desk is asked what a
+ * consultation costs a dozen times a day.
+ *
+ * The nurse station is on the list because it books beds and posts ward
+ * charges alongside the front desk, and cannot do either blind.
+ *
+ * Not the prescribing roles. A doctor decides what a patient needs and the
+ * lab carries it out; what any of it costs belongs to the desk that collects
+ * it, and a rate on the screen while a treatment is being chosen is a thumb
+ * on that scale.
+ */
+const PRICE_ROLES = ['admin', 'cashier', 'counselor', 'pharmacy', 'ward', 'nurse', 'reception'];
+const seesPrices = (user) => Boolean(user) && PRICE_ROLES.includes(user.role);
+
 module.exports = {
-  MONEY_ROLES, seesMoney,
+  MONEY_ROLES, seesMoney, PRICE_ROLES, seesPrices,
   hashPassword, verifyPassword, passwordProblems,
   createResetToken, userForResetToken, consumeResetToken, purgeExpiredResets, hashToken,
   createSession, destroySession, purgeExpiredSessions, userForToken,

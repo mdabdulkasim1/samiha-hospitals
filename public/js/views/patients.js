@@ -471,8 +471,11 @@
         <button data-tab="medicines">Medicines</button>
         <button data-tab="ipd">In-patient</button>
         ${p.invoices ? '<button data-tab="billing">Billing</button>' : ''}
-        <button data-tab="financial">Financial screening</button>
-        <button data-tab="insurance">Insurance</button>
+        ${/* Means-testing and cashless cover are the counselling and cashless
+              desks' business; the clinical tabs above are everyone's. */
+          APP.can(['counselor', 'reception', 'cashier', 'ward'])
+            ? `<button data-tab="financial">Financial screening</button>
+        <button data-tab="insurance">Insurance</button>` : ''}
       </div>
       <div id="ptab-body"></div>`;
 

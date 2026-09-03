@@ -2,7 +2,7 @@
 const express = require('express');
 const { db } = require('../db');
 const { wrap, badRequest, forbidden } = require('../lib/http');
-const { requireAuth, requireRole, MONEY_ROLES, seesMoney } = require('../lib/auth');
+const { requireAuth, requireRole, MONEY_ROLES, seesMoney, seesPrices } = require('../lib/auth');
 const scheduling = require('../services/scheduling');
 const { str, int } = require('../lib/validate');
 
@@ -580,6 +580,9 @@ const DETAILS = Object.assign(Object.create(null), {
     title: 'Beds',
     caption: 'Every bed, and who is in it',
     roles: WARD_ROLES,
+    // The tariff is a price: the ward books beds and sees it, the doctor
+    // reading the same list to find a free bed does not.
+    priced: ['tariff'],
     route: 'ipd', routeLabel: 'Open wards & beds',
     rows: () => db.prepare(
       `SELECT b.id, b.bed_no, w.name AS ward, b.status, b.tariff_per_day AS tariff,
@@ -642,6 +645,9 @@ router.get('/dashboard/detail', requireAuth, wrap((req, res) => {
   // A doctor's dashboard shows their own clinic, so their drill-down does too.
   const scopeTo = spec.scopeToDoctor && req.user.role === 'doctor' ? req.user.id : null;
   const rows = spec.rows(date, scopeTo);
+  if (spec.priced && !seesPrices(req.user)) {
+    for (const r of rows) for (const k of spec.priced) r[k] = null;
+  }
 
   // A long list is capped for the modal; the full screen is one click away.
   const LIMIT = 200;

@@ -543,22 +543,28 @@
           <div id="lt-total" class="alert info" hidden></div>`,
         footer: `<button class="btn ghost" data-act="__close">Cancel</button><button class="btn" data-act="order">Place order</button>`,
         onMount(modal) {
+          // What a test costs is not part of deciding to order it: the
+          // prescriber picks the tests, the counter prices them.
+          const prices = APP.seesPrices();
           const draw = (filter = '') => {
             const rows = tests.filter((t) => !filter || t.name.toLowerCase().includes(filter) || t.code.toLowerCase().includes(filter));
             modal.querySelector('#lt-list').innerHTML = `<table><thead><tr>
-              <th></th><th>Test</th><th>Category</th><th>Sample</th><th class="num">Price</th><th class="num">TAT</th></tr></thead><tbody>
+              <th></th><th>Test</th><th>Category</th><th>Sample</th>${
+                prices ? '<th class="num">Price</th>' : ''}<th class="num">TAT</th></tr></thead><tbody>
               ${rows.map((t) => `<tr><td><input type="checkbox" data-test="${t.id}"${chosen.has(t.id) ? ' checked' : ''}></td>
                 <td><b>${UI.esc(t.name)}</b><div class="muted small">${UI.esc(t.code)}</div></td>
                 <td>${UI.esc(UI.titleise(t.category))}</td><td>${UI.esc(t.sample_type || '—')}</td>
-                <td class="num">${UI.money(t.price)}</td><td class="num">${UI.esc(t.tat_hours)}h</td></tr>`).join('')}
+                ${prices ? `<td class="num">${UI.money(t.price)}</td>` : ''}<td class="num">${UI.esc(t.tat_hours)}h</td></tr>`).join('')}
               </tbody></table>`;
             modal.querySelectorAll('[data-test]').forEach((cb) => cb.addEventListener('change', () => {
               const id = Number(cb.dataset.test);
               if (cb.checked) chosen.add(id); else chosen.delete(id);
-              const total = tests.filter((t) => chosen.has(t.id)).reduce((s, t) => s + t.price, 0);
+              const total = tests.filter((t) => chosen.has(t.id)).reduce((s, t) => s + (t.price || 0), 0);
               const out = modal.querySelector('#lt-total');
               out.hidden = !chosen.size;
-              out.innerHTML = `${chosen.size} test(s) selected — <b>${UI.money(total)}</b> will be added to the bill.`;
+              out.innerHTML = prices
+                ? `${chosen.size} test(s) selected — <b>${UI.money(total)}</b> will be added to the bill.`
+                : `${chosen.size} test(s) selected — they go to the bill at the counter.`;
             }));
           };
           draw();

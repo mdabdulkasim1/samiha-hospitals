@@ -2,7 +2,7 @@
 const express = require('express');
 const { db } = require('../db');
 const { wrap, notFound, badRequest, conflict } = require('../lib/http');
-const { requireRole } = require('../lib/auth');
+const { requireRole, seesPrices } = require('../lib/auth');
 const { required, str, int, num, money, phone, paging } = require('../lib/validate');
 const { generate } = require('../lib/ids');
 const pharmacy = require('../services/pharmacy');
@@ -46,11 +46,20 @@ router.get('/drugs', rxRoles, wrap((req, res) => {
       WHERE drug_id = ? AND qty_available > 0 AND date(expiry_date) >= date('now')
       ORDER BY date(expiry_date), id`
   );
+  /*
+   * A doctor, a nurse and a technician read this list to know what is on the
+   * shelf — the name, the strength, and how many are left. What it costs is
+   * the counter's business, and a price beside a medicine while it is being
+   * chosen is a thumb on a clinical scale, so it does not travel to them.
+   */
+  const prices = seesPrices(req.user);
   for (const r of rows) {
     r.batches = batchesOf.all(r.id).map((b) => ({
-      id: b.id, batchNo: b.batch_no, mrp: b.mrp || r.mrp, qty: b.qty_available, expiry: b.expiry_date,
+      id: b.id, batchNo: b.batch_no, qty: b.qty_available, expiry: b.expiry_date,
+      mrp: prices ? b.mrp || r.mrp : null,
     }));
-    r.sale_mrp = r.batches.length ? r.batches[0].mrp : r.mrp;
+    r.sale_mrp = prices ? (r.batches.length ? r.batches[0].mrp : r.mrp) : null;
+    if (!prices) { r.mrp = null; r.purchase_price = null; }
   }
   res.json(rows);
 }));

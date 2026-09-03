@@ -53,7 +53,7 @@
           : UI.esc(o.doctor_name || '—') },
         { label: 'Status', render: (o) => UI.statusBadge(o.status) },
         { label: 'Ordered', render: (o) => UI.esc(UI.ago(o.ordered_at)) },
-        { label: 'Amount', num: true, render: (o) => UI.money(o.total_price) },
+        ...(APP.seesPrices() ? [{ label: 'Amount', num: true, render: (o) => UI.money(o.total_price) }] : []),
       ], res.rows, { emptyText: 'No diagnostic orders match this filter.' });
         UI.bindRows(into, res.rows, (o) => openOrder(o.id));
       };
@@ -154,7 +154,7 @@
           ${g.items.map((t) => `<button type="button" class="item-btn" data-test="${t.id}">
             <span class="item-name">${UI.esc(t.name)}</span>
             <span class="item-rate">${UI.esc(t.sample_type || UI.titleise(t.category))}${
-              t.price ? '' : ' · no rate set'}</span>
+              APP.seesPrices() && !t.price ? ' · no rate set' : ''}</span>
           </button>`).join('')}
         </div>`
         : UI.empty('No diagnostics are set up yet.', '🧪');
@@ -174,7 +174,7 @@
     const paintPicked = () => {
       body.querySelector('#lr-picked').innerHTML = UI.table([
         { label: 'Test', render: (t) => `<b>${UI.esc(t.name)}</b>` +
-          (t.price ? '' : '<div class="muted small">no rate set — will not reach the bill</div>') },
+          (APP.seesPrices() && !t.price ? '<div class="muted small">no rate set — will not reach the bill</div>' : '') },
         { label: '', render: (t, i) => `<button class="btn ghost sm" data-rm="${i}">Remove</button>` },
       ], picked, { emptyText: 'Nothing picked yet.' });
 
@@ -242,7 +242,7 @@
           priority: body.querySelector('[name=priority]').value,
           clinicalNotes: body.querySelector('[name=clinicalNotes]').value || undefined,
         });
-        const unpriced = picked.filter((t) => !t.price);
+        const unpriced = APP.seesPrices() ? picked.filter((t) => !t.price) : [];
         UI.ok(`${order.order_no} recorded — ${picked.length} test(s).`);
         body.querySelector('#lr-out').innerHTML = `
           <div class="alert ok mt"><b>${UI.esc(order.order_no)}</b> raised for

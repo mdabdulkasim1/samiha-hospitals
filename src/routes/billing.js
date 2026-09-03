@@ -17,12 +17,14 @@ const router = express.Router();
  * through the clinic; it does not raise a bill, take money or read the day's
  * takings — one desk handles cash, and the record says which.
  *
- * A doctor and the ward may read a bill (a patient asks what a procedure will
- * cost, and a ward needs the running total before a discharge) but neither may
- * change one; the counsellor may, because waiving a charge is their job.
+ * The ward may read a bill — it needs the running total before a discharge —
+ * but may not change one; the counsellor may, because waiving a charge is
+ * their job. A doctor reads none of it: what a patient is charged has no
+ * bearing on what they need, and a balance on the screen while a treatment is
+ * being chosen is a thumb on that scale.
  */
 const cashRoles = requireRole('cashier');
-const viewRoles = requireRole('cashier', 'doctor', 'counselor', 'ward');
+const viewRoles = requireRole('cashier', 'counselor', 'ward');
 
 router.get('/invoices', viewRoles, wrap((req, res) => {
   const status = str(req.query.status);

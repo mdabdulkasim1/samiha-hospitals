@@ -2,7 +2,7 @@
 const express = require('express');
 const { db } = require('../db');
 const { wrap, notFound, conflict, badRequest } = require('../lib/http');
-const { requireRole } = require('../lib/auth');
+const { requireRole, seesMoney, seesPrices } = require('../lib/auth');
 const { required, str, int, num, bool, paging } = require('../lib/validate');
 const { generate } = require('../lib/ids');
 const scheduling = require('../services/scheduling');
@@ -75,6 +75,9 @@ router.get('/board', clinicalRoles, wrap((req, res) => {
       WHERE date(v.arrived_at) = ?
       ORDER BY CASE v.status WHEN 'checked_out' THEN 1 ELSE 0 END, v.token_no, v.id`
   ).all(date);
+
+  // The "₹ due" flag on a card belongs to the desks that would collect it.
+  if (!seesMoney(req.user)) for (const r of rows) r.invoice_balance = null;
 
   const counts = {};
   for (const s of STAGES) counts[s] = 0;
@@ -367,7 +370,7 @@ router.get('/:id/results-page', clinicalRoles, wrap((req, res) => {
   if (!visit) throw notFound('Visit not found');
 
   const consultation = db.prepare('SELECT * FROM consultations WHERE visit_id = ?').get(id);
-  res.json({
+  const payload = {
     visit,
     vitals: db.prepare('SELECT * FROM vitals WHERE visit_id = ? ORDER BY id DESC LIMIT 1').get(id) || null,
     consultation: consultation ? consultationPayload(consultation.id) : null,
@@ -384,7 +387,10 @@ router.get('/:id/results-page', clinicalRoles, wrap((req, res) => {
     ).get(id) || null,
     screening: db.prepare('SELECT * FROM financial_screenings WHERE visit_id = ? ORDER BY id DESC LIMIT 1').get(id) || null,
     timeline: db.prepare('SELECT ve.*, u.name AS actor_name FROM visit_events ve LEFT JOIN users u ON u.id = ve.actor_id WHERE ve.visit_id = ? ORDER BY ve.id').all(id),
-  });
+  };
+  if (!seesPrices(req.user)) for (const o of payload.labOrders) o.total_price = null;
+  if (!seesMoney(req.user)) payload.invoice = null;
+  res.json(payload);
 }));
 
 router.get('/:id', clinicalRoles, wrap((req, res) => {
@@ -408,7 +414,8 @@ router.get('/:id', clinicalRoles, wrap((req, res) => {
        FROM lab_orders o WHERE o.visit_id = ? ORDER BY o.id`
   ).all(id);
   visit.prescriptions = db.prepare('SELECT * FROM prescriptions WHERE visit_id = ? ORDER BY id').all(id);
-  visit.invoices = db.prepare('SELECT * FROM invoices WHERE visit_id = ? ORDER BY id').all(id);
+  visit.invoices = seesMoney(req.user)
+    ? db.prepare('SELECT * FROM invoices WHERE visit_id = ? ORDER BY id').all(id) : [];
   visit.screening = db.prepare('SELECT * FROM financial_screenings WHERE visit_id = ? ORDER BY id DESC LIMIT 1').get(id) || null;
   visit.timeline = db.prepare(
     'SELECT ve.*, u.name AS actor_name FROM visit_events ve LEFT JOIN users u ON u.id = ve.actor_id WHERE ve.visit_id = ? ORDER BY ve.id'
