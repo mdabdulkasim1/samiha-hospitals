@@ -86,6 +86,20 @@ weight and BMI follow him onto the prescription and the lab report.
 The station also takes walk-ins: search a patient by name, UHID or mobile and
 record readings without a visit.
 
+**A reading can be finished later.** A nurse takes what the patient will stand
+still for — the cuff is on somebody else, the oximeter is across the room, the
+sugar comes back ten minutes on — and the chart is left with gaps. On the
+patient's **Vitals chart**, every row says how many measurements are still
+blank and opens on a press: the boxes come up filled with what was taken, the
+empty ones marked *Not recorded yet*. Type what you have and save.
+
+Only what you send is written, so completing the oxygen saturation cannot wipe
+the temperature somebody else recorded, and emptying a box takes a figure back
+out — which is how a number typed into the wrong place is removed. A reading
+cannot be emptied altogether. It keeps the name of whoever took it and gains a
+second line saying who completed it, because a chart that has been changed
+should say so.
+
 ## 5 · Doctor
 
 *imran@samiha.local · My Clinic → the patient*

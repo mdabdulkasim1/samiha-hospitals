@@ -610,7 +610,23 @@
               { label: 'Temp', num: true, render: (v) => v.temp_c ? UI.esc(v.temp_c) + ' °C' : '—' },
               { label: 'SpO₂', num: true, render: (v) => v.spo2 ? UI.esc(v.spo2) + '%' : '—' },
               { label: 'Sugar', num: true, render: (v) => v.blood_sugar ? UI.esc(v.blood_sugar) : '—' },
-              { label: 'By', render: (v) => UI.esc(v.recorded_by_name || '—') },
+              { label: 'By', render: (v) => UI.esc(v.recorded_by_name || '—') +
+                (v.amended_by_name ? `<div class="muted small">completed by ${
+                  UI.esc(v.amended_by_name)}</div>` : '') },
+              /*
+               * What is still blank on this reading, and the way to fill it.
+               * A gap on a chart is usually a measurement taken a minute later
+               * on a machine across the room, not a measurement nobody wants.
+               */
+              { label: '', render: (v) => {
+                const missing = gapsIn(v);
+                if (!APP.can(['reception', 'nurse', 'doctor'])) {
+                  return missing.length
+                    ? `<span class="muted small">${UI.num(missing.length)} not recorded</span>` : '';
+                }
+                return `<button class="btn ${missing.length ? '' : 'ghost '}sm" data-edit-vitals="${v.id}">${
+                  missing.length ? `Fill in ${UI.num(missing.length)}` : 'Edit'}</button>`;
+              } },
             ], rows, { emptyText: 'No reading has been taken yet.' })}</div></div>`;
       },
 
@@ -691,6 +707,8 @@
       body.innerHTML = tabs[name]();
       const addVitals = body.querySelector('#add-vitals');
       if (addVitals) addVitals.addEventListener('click', () => openVitals(p));
+      body.querySelectorAll('[data-edit-vitals]').forEach((b) => b.addEventListener('click', () =>
+        openVitals(p, p.vitals.find((v) => v.id === Number(b.dataset.editVitals)))));
       el.querySelectorAll('#ptabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
       if (name === 'visits') UI.bindRows(body, p.visits, (v) => APP.openVisit(v.id));
       if (name === 'billing') UI.bindRows(body, p.invoices, (i) => APP.openInvoice(i.id));
@@ -929,34 +947,80 @@
     return 'Obese range';
   }
 
-  /** Add a dated reading — the weight, height, pressure and why they came. */
-  function openVitals(patient) {
+  /** The measurements a reading can carry, and what each is called on screen. */
+  const VITAL_FIELDS = [
+    ['weightKg', 'weight_kg', 'Weight'], ['heightCm', 'height_cm', 'Height'],
+    ['tempC', 'temp_c', 'Temperature'], ['bpSystolic', 'bp_systolic', 'BP systolic'],
+    ['bpDiastolic', 'bp_diastolic', 'BP diastolic'], ['pulse', 'pulse', 'Pulse'],
+    ['spo2', 'spo2', 'SpO₂'], ['respRate', 'resp_rate', 'Respiratory rate'],
+    ['bloodSugar', 'blood_sugar', 'Blood sugar'],
+  ];
+
+  /** What was not taken on a given reading. */
+  function gapsIn(v) {
+    return VITAL_FIELDS
+      .filter(([, column]) => v[column] === null || v[column] === undefined || v[column] === '')
+      .map(([, , label]) => label);
+  }
+
+  /**
+   * A dated reading — the weight, height, pressure and why they came.
+   *
+   * The same form takes a new reading and finishes an old one. A nurse takes
+   * what the patient will stand still for; the cuff, the oximeter and the
+   * sugar often come minutes later, and the chart should not be stuck with the
+   * gap because the moment passed. Pass a reading and its boxes come up filled,
+   * with the empty ones marked.
+   */
+  function openVitals(patient, existing = null) {
+    const val = (column) => (existing && existing[column] !== null
+      && existing[column] !== undefined ? existing[column] : '');
+    const missing = existing ? gapsIn(existing) : [];
+    const box = (name, column, label, opts = {}) => UI.field({
+      name, label, type: 'number', value: val(column),
+      ...opts,
+      hint: opts.hint || (existing && missing.includes(label) ? 'Not recorded yet' : ''),
+    });
+
     UI.modal({
-      title: `Record a reading — ${patient.first_name} ${patient.last_name || ''}`.trim(),
-      body: `<form id="vt-form">
+      title: existing
+        ? `${missing.length ? 'Complete' : 'Edit'} the reading of ${UI.date(existing.recorded_at)} — ${
+          patient.first_name} ${patient.last_name || ''}`.trim()
+        : `Record a reading — ${patient.first_name} ${patient.last_name || ''}`.trim(),
+      body: `${existing ? `<div class="alert ${missing.length ? 'info' : 'ok'}">
+          Taken by <b>${UI.esc(existing.recorded_by_name || 'somebody')}</b> on
+          ${UI.esc(UI.dateTime(existing.recorded_at))}.
+          ${missing.length
+            ? `Still blank: <b>${UI.esc(missing.join(', '))}</b>. Fill in what you have — the rest is left as it is.`
+            : 'Everything was recorded. Change a figure only to correct it.'}
+        </div>` : ''}
+        <form id="vt-form">
           ${UI.field({ name: 'purpose', label: 'Purpose of the visit', required: true,
+            value: existing ? existing.purpose || '' : '',
             placeholder: 'BP check, weight review, fever, follow-up…' })}
           <div class="grid c3">
-            ${UI.field({ name: 'weightKg', label: 'Weight (kg)', type: 'number', step: '0.1' })}
-            ${UI.field({ name: 'heightCm', label: 'Height (cm)', type: 'number', step: '0.1',
-              hint: 'Blank keeps the last height on file' })}
-            ${UI.field({ name: 'tempC', label: 'Temperature (°C)', type: 'number', step: '0.1' })}
+            ${box('weightKg', 'weight_kg', 'Weight', { label: 'Weight (kg)', step: '0.1' })}
+            ${box('heightCm', 'height_cm', 'Height', { label: 'Height (cm)', step: '0.1',
+              hint: existing ? '' : 'Blank keeps the last height on file' })}
+            ${box('tempC', 'temp_c', 'Temperature', { label: 'Temperature (°C)', step: '0.1' })}
           </div>
           <div class="grid c3">
-            ${UI.field({ name: 'bpSystolic', label: 'BP systolic', type: 'number', placeholder: '120' })}
-            ${UI.field({ name: 'bpDiastolic', label: 'BP diastolic', type: 'number', placeholder: '80' })}
-            ${UI.field({ name: 'pulse', label: 'Pulse (bpm)', type: 'number' })}
+            ${box('bpSystolic', 'bp_systolic', 'BP systolic', { label: 'BP systolic', placeholder: '120' })}
+            ${box('bpDiastolic', 'bp_diastolic', 'BP diastolic', { label: 'BP diastolic', placeholder: '80' })}
+            ${box('pulse', 'pulse', 'Pulse', { label: 'Pulse (bpm)' })}
           </div>
           <div class="grid c3">
-            ${UI.field({ name: 'spo2', label: 'SpO₂ (%)', type: 'number', min: 0, max: 100 })}
-            ${UI.field({ name: 'respRate', label: 'Respiratory rate', type: 'number' })}
-            ${UI.field({ name: 'bloodSugar', label: 'Blood sugar (mg/dL)', type: 'number', step: '0.1' })}
+            ${box('spo2', 'spo2', 'SpO₂', { label: 'SpO₂ (%)', min: 0, max: 100 })}
+            ${box('respRate', 'resp_rate', 'Respiratory rate', { label: 'Respiratory rate' })}
+            ${box('bloodSugar', 'blood_sugar', 'Blood sugar', { label: 'Blood sugar (mg/dL)', step: '0.1' })}
           </div>
-          ${UI.field({ name: 'notes', label: 'Notes', rows: 2 })}
+          ${UI.field({ name: 'notes', label: 'Notes', rows: 2,
+            value: existing ? existing.notes || '' : '' })}
         </form>
         <div id="vt-read"></div>`,
       footer: `<button class="btn ghost" data-act="__close">Cancel</button>
-               <button class="btn" data-act="save">Save the reading</button>`,
+               <button class="btn" data-act="save">${
+                 existing ? 'Save the reading' : 'Save the reading'}</button>`,
       onMount(modal) {
         // Say what the numbers mean as they are typed, so an out-of-range
         // reading is noticed at the desk rather than a week later.
@@ -982,8 +1046,16 @@
         if (act !== 'save') return;
         const form = modal.querySelector('#vt-form');
         if (!form.reportValidity()) return 'keep';
-        await API.post(`/api/patients/${patient.id}/vitals`, UI.formValues(form));
-        UI.ok('Reading saved to the chart.');
+        const values = UI.formValues(form);
+        if (existing) {
+          // Every box is sent, filled or not: an emptied one is a figure the
+          // nurse is taking back out, and the server treats it that way.
+          await API.patch(`/api/patients/${patient.id}/vitals/${existing.id}`, values);
+          UI.ok('Reading updated on the chart.');
+        } else {
+          await API.post(`/api/patients/${patient.id}/vitals`, values);
+          UI.ok('Reading saved to the chart.');
+        }
         APP.reload();
       },
     });

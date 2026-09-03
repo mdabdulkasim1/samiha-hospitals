@@ -154,3 +154,86 @@ test('a walk-in reading joins the same dated chart as a visit reading', async ()
     || new Date(chart[i - 1].recorded_at) >= new Date(v.recorded_at)),
   'newest first, so the chart reads as a history');
 });
+
+// ------------------------------------------------- finishing a reading later
+test('a half-taken reading can be finished afterwards', async () => {
+  // The cuff was on somebody else, the oximeter across the room.
+  const taken = (await api('POST', `/api/patients/${ids.patient}/vitals`,
+    { purpose: 'fever', weightKg: 74, heightCm: 164, tempC: 36.5 })).body;
+  assert.strictEqual(taken.bp_systolic, null);
+  assert.strictEqual(taken.spo2, null);
+  assert.strictEqual(taken.bmi, 27.5, 'BMI from what was measured');
+
+  const done = await api('PATCH', `/api/patients/${ids.patient}/vitals/${taken.id}`,
+    { bpSystolic: 148, bpDiastolic: 94, pulse: 82, spo2: 97, bloodSugar: 142 });
+  assert.strictEqual(done.status, 200, JSON.stringify(done.body));
+
+  // The gaps are filled and nothing else moved.
+  assert.strictEqual(done.body.bp_systolic, 148);
+  assert.strictEqual(done.body.spo2, 97);
+  assert.strictEqual(done.body.blood_sugar, 142);
+  assert.strictEqual(done.body.weight_kg, 74, 'the weight is untouched');
+  assert.strictEqual(done.body.temp_c, 36.5, 'and so is the temperature');
+  assert.strictEqual(done.body.bmi, 27.5);
+
+  // It still belongs to whoever took it, and says it was completed.
+  assert.strictEqual(done.body.recorded_by, taken.recorded_by);
+  assert.ok(done.body.amended_at, 'and when');
+  assert.ok(done.body.amended_by, 'and by whom');
+
+  // And it now raises the flags its new figures deserve: a reading completed
+  // an hour late is still a reading somebody has to act on.
+  assert.ok(done.body.alerts.some((a) => /blood pressure/i.test(a.text)),
+    JSON.stringify(done.body.alerts));
+});
+
+test('what is not sent is not touched, and an emptied box is a figure withdrawn', async () => {
+  const taken = (await api('POST', `/api/patients/${ids.patient}/vitals`,
+    { purpose: 'review', pulse: 78, tempC: 37.1, spo2: 98 })).body;
+
+  // A request naming only the pulse leaves the rest exactly as it was.
+  const one = (await api('PATCH', `/api/patients/${ids.patient}/vitals/${taken.id}`,
+    { pulse: 84 })).body;
+  assert.strictEqual(one.pulse, 84);
+  assert.strictEqual(one.temp_c, 37.1, 'the temperature somebody else recorded');
+  assert.strictEqual(one.spo2, 98);
+
+  // An empty box takes a figure back out — a number typed in the wrong place.
+  const cleared = (await api('PATCH', `/api/patients/${ids.patient}/vitals/${taken.id}`,
+    { spo2: '' })).body;
+  assert.strictEqual(cleared.spo2, null);
+  assert.strictEqual(cleared.pulse, 84, 'and leaves the rest alone');
+
+  // But a reading cannot be emptied altogether: a dated row saying nothing is
+  // worse than no row.
+  const emptied = await api('PATCH', `/api/patients/${ids.patient}/vitals/${taken.id}`, {
+    pulse: '', tempC: '', spo2: '', weightKg: '', heightCm: '',
+    bpSystolic: '', bpDiastolic: '', respRate: '', bloodSugar: '', painScore: '',
+  });
+  assert.strictEqual(emptied.status, 400);
+  assert.match(emptied.body.error, /at least one measurement/i);
+
+  // Nonsense is refused rather than stored.
+  assert.strictEqual((await api('PATCH', `/api/patients/${ids.patient}/vitals/${taken.id}`,
+    { pulse: 'fast' })).status, 400);
+});
+
+test('a reading belongs to its own patient, and to the people who take readings', async () => {
+  const taken = (await api('POST', `/api/patients/${ids.patient}/vitals`,
+    { purpose: 'check', pulse: 70 })).body;
+
+  // Another patient's id cannot reach it.
+  const other = (await api('POST', '/api/patients', {
+    firstName: 'Other', lastName: 'Chart', phone: '9846333222', gender: 'female',
+    age: 30, consentTreatment: true,
+  }, 'reception')).body;
+  assert.strictEqual((await api('PATCH', `/api/patients/${other.id}/vitals/${taken.id}`,
+    { pulse: 90 })).status, 404);
+  assert.strictEqual((await api('PATCH', `/api/patients/${ids.patient}/vitals/999999`,
+    { pulse: 90 })).status, 404);
+
+  assert.strictEqual((await api('PATCH', `/api/patients/${ids.patient}/vitals/${taken.id}`,
+    { pulse: 90 }, 'pharmacy')).status, 403, 'the pharmacy takes no readings');
+  assert.strictEqual((await api('PATCH', `/api/patients/${ids.patient}/vitals/${taken.id}`,
+    { pulse: 90 }, 'imran')).status, 200, 'a doctor may');
+});

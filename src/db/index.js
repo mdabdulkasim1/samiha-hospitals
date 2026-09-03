@@ -200,6 +200,14 @@ function migrate() {
    * the charge board and the order list until the clinic gives it a rate, at
    * which point it is a test the clinic offers on its own.
    */
+  /*
+   * A reading that was completed or corrected after it was first taken. The
+   * original recorder still owns the reading; these say somebody came back to
+   * it, and when.
+   */
+  ensureColumn('vitals', 'amended_at', 'TEXT');
+  ensureColumn('vitals', 'amended_by', 'INTEGER');
+
   ensureColumn('lab_tests', 'component_of', 'TEXT');
   ensureColumn('lab_tests', 'sort_order', 'INTEGER NOT NULL DEFAULT 0');
   backfillBillGroups();

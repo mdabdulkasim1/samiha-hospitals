@@ -317,11 +317,12 @@ router.get('/:id', deskRoles, wrap((req, res) => {
    * that visit's reason; one taken at the desk carries its own.
    */
   patient.vitals = db.prepare(
-    `SELECT v.*, u.name AS recorded_by_name, vis.visit_no,
+    `SELECT v.*, u.name AS recorded_by_name, am.name AS amended_by_name, vis.visit_no,
             COALESCE(v.purpose, vis.reason_for_visit) AS purpose,
             doc.name AS doctor_name
        FROM vitals v
        LEFT JOIN users u ON u.id = v.recorded_by
+       LEFT JOIN users am ON am.id = v.amended_by
        LEFT JOIN visits vis ON vis.id = v.visit_id
        LEFT JOIN users doc ON doc.id = vis.doctor_id
       WHERE v.patient_id = ? ORDER BY datetime(v.recorded_at) DESC, v.id DESC LIMIT 100`
@@ -485,6 +486,89 @@ router.post('/:id/vitals', requireRole('reception', 'nurse', 'doctor'), wrap((re
   // The same flags the nurse station raises on a queued patient. A reading
   // that needs a doctor now needs one whether or not there is a visit open.
   res.status(201).json({ ...recorded, alerts: vitalsService.alerts(recorded) });
+}));
+
+/**
+ * Going back to a reading and finishing it.
+ *
+ * A nurse takes what the patient will stand still for. The blood pressure cuff
+ * is on somebody else, the pulse oximeter is across the room, the sugar comes
+ * back ten minutes later — and the chart is left with gaps that everybody
+ * intends to fill and nobody can. This is how they are filled: open the
+ * reading and type what was missing.
+ *
+ * Only what is sent is touched. A field left out of the request keeps whatever
+ * it held, so completing the oxygen saturation cannot quietly wipe the
+ * temperature somebody else recorded. A field sent empty is cleared on
+ * purpose, which is how a number typed into the wrong box is taken out again.
+ *
+ * The reading keeps the name of whoever took it. Amending it records a second
+ * name beside that, because a chart that has been changed should say so.
+ */
+router.patch('/:id/vitals/:vitalsId', requireRole('reception', 'nurse', 'doctor'), wrap((req, res) => {
+  const id = int(req.params.id);
+  const reading = db.prepare('SELECT * FROM vitals WHERE id = ? AND patient_id = ?')
+    .get(int(req.params.vitalsId), id);
+  if (!reading) throw notFound('Reading not found for this patient');
+
+  const FIELDS = {
+    heightCm: ['height_cm', num], weightKg: ['weight_kg', num],
+    tempC: ['temp_c', num], pulse: ['pulse', int], respRate: ['resp_rate', int],
+    bpSystolic: ['bp_systolic', int], bpDiastolic: ['bp_diastolic', int],
+    spo2: ['spo2', int], bloodSugar: ['blood_sugar', num], painScore: ['pain_score', int],
+  };
+
+  const sent = (key) => Object.prototype.hasOwnProperty.call(req.body, key);
+  const blank = (v) => v === null || v === undefined || String(v).trim() === '';
+
+  const next = { ...reading };
+  const changed = {};
+  for (const [key, [column, cast]] of Object.entries(FIELDS)) {
+    if (!sent(key)) continue;
+    const raw = req.body[key];
+    if (!blank(raw) && !Number.isFinite(Number(raw))) {
+      throw badRequest(`${key} must be a number, or empty to clear it.`);
+    }
+    const value = blank(raw) ? null : cast(raw);
+    if (value !== reading[column]) changed[column] = { from: reading[column], to: value };
+    next[column] = value;
+  }
+  if (sent('purpose')) next.purpose = str(req.body.purpose) || null;
+  if (sent('notes')) next.notes = str(req.body.notes) || null;
+
+  // A reading with nothing left in it is not a reading. Clearing the last
+  // measurement would leave a dated row on the chart saying nothing at all.
+  const measurements = Object.values(FIELDS)
+    .map(([column]) => next[column])
+    .filter((v) => v !== null && v !== undefined);
+  if (!measurements.length) {
+    throw badRequest('A reading must keep at least one measurement. Ask an administrator to remove it instead.');
+  }
+
+  // BMI follows the height and weight it is worked out from, and height still
+  // carries forward from the last time anybody measured it.
+  const lastHeight = db.prepare(
+    `SELECT height_cm FROM vitals
+      WHERE patient_id = ? AND height_cm > 0 AND id <> ? ORDER BY id DESC LIMIT 1`
+  ).get(id, reading.id);
+  const height = next.height_cm > 0 ? next.height_cm : (lastHeight ? lastHeight.height_cm : 0);
+  next.bmi = height > 0 && next.weight_kg > 0
+    ? Math.round((next.weight_kg / ((height / 100) ** 2)) * 10) / 10 : null;
+
+  db.prepare(
+    `UPDATE vitals
+        SET height_cm = ?, weight_kg = ?, bmi = ?, temp_c = ?, pulse = ?, resp_rate = ?,
+            bp_systolic = ?, bp_diastolic = ?, spo2 = ?, blood_sugar = ?, pain_score = ?,
+            purpose = ?, notes = ?,
+            amended_at = datetime('now'), amended_by = ?
+      WHERE id = ?`
+  ).run(next.height_cm, next.weight_kg, next.bmi, next.temp_c, next.pulse, next.resp_rate,
+        next.bp_systolic, next.bp_diastolic, next.spo2, next.blood_sugar, next.pain_score,
+        next.purpose, next.notes, req.user.id, reading.id);
+
+  audit.log(req, 'amend_vitals', 'patient', id, { vitalsId: reading.id, changed });
+  const saved = db.prepare('SELECT * FROM vitals WHERE id = ?').get(reading.id);
+  res.json({ ...saved, alerts: vitalsService.alerts(saved) });
 }));
 
 router.post('/:id/register', requireRole('reception'), wrap((req, res) => {
