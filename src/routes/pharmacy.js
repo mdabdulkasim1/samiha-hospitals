@@ -197,6 +197,46 @@ router.post('/prescriptions/:sheetId/decline', requireRole('pharmacy'), wrap((re
  * back a week later when the visit is long closed. Either way the counter
  * needs the lines, the stock against each, and who it is for.
  */
+/**
+ * The lines of a prescription as the counter needs to see them: what was
+ * written, what is left to give, and the batches it would come out of.
+ *
+ * The batches are carried because the price on the bill is the batch's MRP and
+ * not the formulary's — a strip bought last year is sold at what is printed on
+ * it — so a till that quotes the master rate quotes a figure the bill will not
+ * match. Oldest expiry first, which is the order the sale will take them in.
+ */
+function rxLines(column, id) {
+  // Named, not interpolated: the two ways in are a visit and a sheet, and a
+  // column name is not something a request gets to choose.
+  const SQL = {
+    visit_id: `SELECT rx.*, d.name AS master_name, d.form, d.strength, d.mrp, d.tax_pct,
+                      d.schedule_type,
+                      COALESCE((SELECT SUM(b.qty_available) FROM drug_batches b
+                                 WHERE b.drug_id = rx.drug_id
+                                   AND date(b.expiry_date) >= date('now')), 0) AS on_hand
+                 FROM prescriptions rx LEFT JOIN drugs d ON d.id = rx.drug_id
+                WHERE rx.visit_id = ? ORDER BY rx.id`,
+    sheet_id: `SELECT rx.*, d.name AS master_name, d.form, d.strength, d.mrp, d.tax_pct,
+                      d.schedule_type,
+                      COALESCE((SELECT SUM(b.qty_available) FROM drug_batches b
+                                 WHERE b.drug_id = rx.drug_id
+                                   AND date(b.expiry_date) >= date('now')), 0) AS on_hand
+                 FROM prescriptions rx LEFT JOIN drugs d ON d.id = rx.drug_id
+                WHERE rx.sheet_id = ? ORDER BY rx.id`,
+  };
+  const rows = db.prepare(SQL[column]).all(id);
+
+  const batches = db.prepare(
+    `SELECT id, batch_no, expiry_date, qty_available AS qty, mrp
+       FROM drug_batches
+      WHERE drug_id = ? AND qty_available > 0 AND date(expiry_date) >= date('now')
+      ORDER BY date(expiry_date), id`
+  );
+  for (const r of rows) r.batches = r.drug_id ? batches.all(r.drug_id) : [];
+  return rows;
+}
+
 router.get('/sheet/:sheetId', rxRoles, wrap((req, res) => {
   const sheetId = int(req.params.sheetId);
   const sheet = db.prepare(
@@ -210,13 +250,7 @@ router.get('/sheet/:sheetId', rxRoles, wrap((req, res) => {
   ).get(sheetId);
   if (!sheet) throw notFound('Prescription not found');
 
-  const rows = db.prepare(
-    `SELECT rx.*, d.name AS master_name, d.form, d.strength, d.mrp, d.tax_pct, d.schedule_type,
-            COALESCE((SELECT SUM(b.qty_available) FROM drug_batches b
-                       WHERE b.drug_id = rx.drug_id AND date(b.expiry_date) >= date('now')), 0) AS on_hand
-       FROM prescriptions rx LEFT JOIN drugs d ON d.id = rx.drug_id
-      WHERE rx.sheet_id = ? ORDER BY rx.id`
-  ).all(sheetId);
+  const rows = rxLines('sheet_id', sheetId);
 
   res.json({
     visit: {
@@ -230,13 +264,7 @@ router.get('/sheet/:sheetId', rxRoles, wrap((req, res) => {
 
 router.get('/prescriptions/:visitId', rxRoles, wrap((req, res) => {
   const visitId = int(req.params.visitId);
-  const rows = db.prepare(
-    `SELECT rx.*, d.name AS master_name, d.form, d.strength, d.mrp, d.tax_pct, d.schedule_type,
-            COALESCE((SELECT SUM(b.qty_available) FROM drug_batches b
-                       WHERE b.drug_id = rx.drug_id AND date(b.expiry_date) >= date('now')), 0) AS on_hand
-       FROM prescriptions rx LEFT JOIN drugs d ON d.id = rx.drug_id
-      WHERE rx.visit_id = ? ORDER BY rx.id`
-  ).all(visitId);
+  const rows = rxLines('visit_id', visitId);
   const visit = db.prepare(
     `SELECT v.*, p.uhid, (p.first_name || ' ' || COALESCE(p.last_name,'')) AS patient_name, p.allergies
        FROM visits v JOIN patients p ON p.id = v.patient_id WHERE v.id = ?`

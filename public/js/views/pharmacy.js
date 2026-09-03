@@ -52,6 +52,83 @@
     return parts;
   }
 
+  /**
+   * The discount, offered both ways because a counter thinks in both — "give
+   * him twenty rupees off" and "ten percent for staff" — and recorded as
+   * rupees whichever way it was entered, so the bill says what was actually
+   * given rather than a percentage that would drift if a line changed.
+   */
+  function discountFields(value = 0) {
+    return `
+      <div class="grid c2">
+        ${UI.field({ name: 'discountMode', label: 'Discount', value: 'amount',
+          options: [{ value: 'amount', label: 'Rupees off' }, { value: 'pct', label: 'A percentage' }] })}
+        ${UI.field({ name: 'discountValue', label: 'How much', type: 'number',
+          step: '0.01', min: '0', value })}
+      </div>`;
+  }
+
+  /** What those two boxes come to in rupees, against this bill's MRP total. */
+  function discountAsked(scope, mrpTotal) {
+    const mode = scope.querySelector('[name=discountMode]');
+    const box = scope.querySelector('[name=discountValue]');
+    if (!box) return 0;
+    const v = Math.max(Number(box.value) || 0, 0);
+    // A percentage over a hundred is a typo, not a giveaway. It is left as
+    // typed so the total says the discount is more than the bill and the
+    // button refuses, rather than quietly making the medicines free.
+    if (mode && mode.value === 'pct') return UI.round2(mrpTotal * (v / 100));
+    return UI.round2(v);
+  }
+
+  /**
+   * What the patient pays, worked out the way the bill works it out.
+   *
+   * MRP already contains the GST, so the tax is extracted from the price
+   * rather than added to it, and the discount comes off before the extraction
+   * — a discount shown on an invoice reduces the value the tax is charged on,
+   * which is what section 15(3)(a) of the CGST Act requires. Only a thermal
+   * cash bill settles to the rupee; a prescription bill is paid to the paisa.
+   */
+  function billTotals(lines, discount, { roundToRupee = false } = {}) {
+    const totals = lines.map((l) => UI.round2(l.total));
+    const mrpTotal = UI.round2(totals.reduce((a, n) => a + n, 0));
+    const asked = UI.round2(Math.max(discount, 0));
+    const off = Math.min(asked, mrpTotal);
+    const shares = apportion(totals, off);
+
+    let taxable = 0;
+    let tax = 0;
+    lines.forEach((l, i) => {
+      const rate = Number(l.taxPct) || 0;
+      const net = Math.max(totals[i] - shares[i], 0);
+      const t = UI.round2((net * 100) / (100 + rate));
+      taxable = UI.round2(taxable + t);
+      tax = UI.round2(tax + UI.round2(net - t));
+    });
+
+    const payable = UI.round2(taxable + tax);
+    const net = roundToRupee ? Math.round(payable) : payable;
+    return { mrpTotal, asked, discount: off, taxable, tax, payable, net,
+      roundOff: UI.round2(net - payable), tooMuch: asked > mrpTotal };
+  }
+
+  /** The same total, shown the same way, wherever the pharmacy bills. */
+  function totalsBlock(t) {
+    return `
+      <div class="row-between"><span>MRP total</span><b>${UI.money(t.mrpTotal)}</b></div>
+      ${t.discount ? `<div class="row-between" style="color:var(--orange-dark)">
+        <span>Discount</span><span>− ${UI.money(t.discount)}</span></div>` : ''}
+      <div class="row-between muted small"><span>Taxable value</span><span>${UI.money(t.taxable)}</span></div>
+      <div class="row-between muted small"><span>GST included</span><span>${UI.money(t.tax)}</span></div>
+      ${t.roundOff ? `<div class="row-between muted small"><span>Round off</span>
+        <span>${t.roundOff > 0 ? '+' : '−'} ${UI.money(Math.abs(t.roundOff))}</span></div>` : ''}
+      <div class="row-between" style="font-size:17px;border-top:1px solid var(--line);margin-top:6px;padding-top:8px">
+        <b>To pay</b><b>${UI.money(t.net)}</b></div>
+      ${t.tooMuch ? `<div class="alert warn mt">A discount of ${UI.money(t.asked)} is more
+        than the bill. At most ${UI.money(t.mrpTotal)} can be taken off.</div>` : ''}`;
+  }
+
   APP.register('pharmacy', {
     title: 'Pharmacy',
     subtitle: 'Dispensing, stock and formulary',
@@ -102,6 +179,9 @@
         async counter() {
           const drugs = await API.get('/api/pharmacy/drugs?limit=400');
           const cart = [];
+          // The discount in rupees, however it was entered — the percentage is
+          // a way of typing it, not a thing the bill records.
+          let cartDiscount = 0;
 
           body.innerHTML = `
             <div class="grid sidebar-right">
@@ -136,7 +216,7 @@
                   <div class="card-body">
                     <div id="cs-total" class="mb"></div>
                     <form id="cs-pay">
-                      ${UI.field({ name: 'discount', label: 'Discount', type: 'number', step: '0.01', value: 0 })}
+                      ${discountFields()}
                       ${UI.field({ name: 'paymentMode', label: 'Paid by', value: 'cash',
                         options: ['cash', 'upi', 'card', 'netbanking'].map((m) => ({ value: m, label: UI.titleise(m) })) })}
                       ${UI.field({ name: 'paidAmount', label: 'Amount received', type: 'number', step: '0.01',
@@ -183,54 +263,23 @@
               cart.splice(Number(b.dataset.rm), 1); drawCart();
             }));
 
-            /*
-             * The same arithmetic the bill will use, so the figure on screen is
-             * the figure that prints. MRP already contains the GST, so the tax
-             * is extracted from the price rather than added to it, and the
-             * discount is taken off before the extraction — a discount shown on
-             * the invoice reduces the value the tax is charged on. Cash bills
-             * settle to the rupee, and the round-off is shown rather than
-             * quietly absorbed.
-             */
-            const totals = cart.map((c) => priceLine(c, c.qty));
-            const mrpTotal = UI.round2(totals.reduce((a, n) => a + n, 0));
-            const discountBox = body.querySelector('[name=discount]');
-            const asked = Math.max(Number(discountBox.value || 0), 0);
-            const discount = Math.min(asked, mrpTotal);
-            const shares = apportion(totals, discount);
-
-            let taxable = 0;
-            let tax = 0;
-            cart.forEach((c, i) => {
-              const rate = Number(c.tax_pct) || 0;
-              const line = Math.max(totals[i] - shares[i], 0);
-              const t = UI.round2((line * 100) / (100 + rate));
-              taxable = UI.round2(taxable + t);
-              tax = UI.round2(tax + UI.round2(line - t));
-            });
-            const payable = UI.round2(taxable + tax);
-            const net = Math.round(payable);
-            const roundOff = UI.round2(net - payable);
+            // The same arithmetic the bill will use, so the figure on screen is
+            // the figure that prints. A thermal cash bill settles to the rupee,
+            // and the round-off is shown rather than quietly absorbed.
+            const lines = cart.map((c) => ({ total: priceLine(c, c.qty), taxPct: c.tax_pct }));
+            const mrpTotal = UI.round2(lines.reduce((a, l) => a + l.total, 0));
+            const t = billTotals(lines, discountAsked(body, mrpTotal), { roundToRupee: true });
             const scheduled = cart.filter((c) => ['H', 'H1', 'X'].includes(String(c.schedule_type || '').toUpperCase()));
 
-            body.querySelector('#cs-total').innerHTML = `
-              <div class="row-between"><span>MRP total</span><b>${UI.money(mrpTotal)}</b></div>
-              ${discount ? `<div class="row-between" style="color:var(--orange-dark)">
-                <span>Discount</span><span>− ${UI.money(discount)}</span></div>` : ''}
-              <div class="row-between muted small"><span>Taxable value</span><span>${UI.money(taxable)}</span></div>
-              <div class="row-between muted small"><span>GST included</span><span>${UI.money(tax)}</span></div>
-              ${roundOff ? `<div class="row-between muted small"><span>Round off</span>
-                <span>${roundOff > 0 ? '+' : '−'} ${UI.money(Math.abs(roundOff))}</span></div>` : ''}
-              <div class="row-between" style="font-size:17px;border-top:1px solid var(--line);margin-top:6px;padding-top:8px">
-                <b>To pay</b><b>${UI.money(net)}</b></div>
-              ${asked > mrpTotal ? `<div class="alert warn mt">A discount of ${UI.money(asked)} is more
-                than the bill. At most ${UI.money(mrpTotal)} can be taken off.</div>` : ''}
-              ${scheduled.length ? `<div class="alert warn mt">
-                ${UI.esc(scheduled.map((c) => c.name).join(', '))} ${scheduled.length > 1 ? 'are' : 'is'}
-                prescription-only. Record the outside prescription before completing the sale.</div>` : ''}`;
+            body.querySelector('#cs-total').innerHTML = totalsBlock(t) + (scheduled.length
+              ? `<div class="alert warn mt">
+                  ${UI.esc(scheduled.map((c) => c.name).join(', '))} ${scheduled.length > 1 ? 'are' : 'is'}
+                  prescription-only. Record the outside prescription before completing the sale.</div>`
+              : '');
             // A discount bigger than the bill would be refused by the server
             // anyway; better to say so before the cashier presses the button.
-            body.querySelector('#cs-save').disabled = asked > mrpTotal;
+            body.querySelector('#cs-save').disabled = t.tooMuch;
+            cartDiscount = t.discount;
           };
 
           /** Add a medicine to the bill, respecting what is actually in stock. */
@@ -294,7 +343,8 @@
             }, 200);
           });
 
-          body.querySelector('[name=discount]').addEventListener('input', drawCart);
+          body.querySelectorAll('[name=discountValue], [name=discountMode]').forEach((f) =>
+            f.addEventListener('input', drawCart));
 
           body.querySelector('#cs-pay').addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -303,8 +353,11 @@
             const payload = {
               ...UI.formValues(body.querySelector('#cs-form')),
               ...UI.formValues(body.querySelector('#cs-pay')),
+              discount: cartDiscount,
               items: cart.map((c) => ({ drugId: c.id, qty: c.qty })),
             };
+            delete payload.discountMode;
+            delete payload.discountValue;
             try {
               const res = await API.post('/api/pharmacy/counter-sale', payload);
               body.querySelector('#cs-out').innerHTML = `<div class="alert ok mt">
@@ -545,20 +598,57 @@
           </tbody></table></div>
         </div>
         <div class="card-body">
-          <div class="grid c4">
-            ${UI.field({ name: 'discount', label: 'Discount on this bill', type: 'number', min: 0, value: 0 })}
-            ${UI.field({ name: 'paymentMode', label: 'Paid by', value: 'cash',
-              options: ['cash','upi','card','netbanking','wallet'].map((m) => ({ value: m, label: UI.titleise(m) })) })}
-            ${UI.field({ name: 'paymentReference', label: 'Reference', placeholder: 'UPI / card reference' })}
-            <div style="display:flex;align-items:flex-end">
+          <div class="grid sidebar-right">
+            <div>
+              ${discountFields()}
+              <div class="grid c2">
+                ${UI.field({ name: 'paymentMode', label: 'Paid by', value: 'cash',
+                  options: ['cash','upi','card','netbanking','wallet'].map((m) => ({ value: m, label: UI.titleise(m) })) })}
+                ${UI.field({ name: 'paymentReference', label: 'Reference', placeholder: 'UPI / card reference' })}
+              </div>
+              <div class="muted small">The money is taken here. The patient has already left the cash
+                counter, so this bill is settled at the pharmacy and the receipt is printed with it.</div>
+            </div>
+            <div>
+              <div id="disp-total" class="mb"></div>
               <button class="btn block" id="do-dispense">Dispense, bill &amp; collect</button>
             </div>
           </div>
-          <div class="muted small">The money is taken here. The patient has already left the cash
-            counter, so this bill is settled at the pharmacy and the receipt is printed with it.</div>
           <div id="disp-out"></div>
         </div>
       </div>`;
+
+    /*
+     * What the patient will be asked for, kept in step with the boxes above.
+     * The quantities are the pharmacist's to change and the discount is theirs
+     * to give, so the total has to be re-read from the screen each time rather
+     * than worked out once when it was drawn.
+     */
+    const chosen = () => [...el.querySelectorAll('[data-rx]:checked')].map((cb) => {
+      const rx = data.prescriptions.find((p) => String(p.id) === cb.dataset.rx);
+      const qty = Number(el.querySelector(`[data-qty="${cb.dataset.rx}"]`).value) || 0;
+      return { rx, qty };
+    }).filter((c) => c.rx && c.qty > 0);
+
+    const drawTotal = () => {
+      const lines = chosen().map((c) => ({ total: priceLine(c.rx, c.qty), taxPct: c.rx.tax_pct }));
+      const mrpTotal = UI.round2(lines.reduce((a, l) => a + l.total, 0));
+      const t = billTotals(lines, discountAsked(el, mrpTotal));
+      el.querySelector('#disp-total').innerHTML = lines.length
+        ? totalsBlock(t)
+        : '<div class="muted small">Tick a medicine to see what the bill comes to.</div>';
+      el.querySelector('#do-dispense').disabled = t.tooMuch;
+      billDiscount = t.discount;
+    };
+
+    // The discount in rupees, whichever way it was typed.
+    let billDiscount = 0;
+    el.querySelectorAll('[data-rx], [data-qty], [name=discountValue], [name=discountMode]')
+      .forEach((f) => {
+        f.addEventListener('input', drawTotal);
+        f.addEventListener('change', drawTotal);
+      });
+    drawTotal();
 
     el.querySelector('#do-dispense').addEventListener('click', async (e) => {
       const items = [...el.querySelectorAll('[data-rx]:checked')].map((cb) => {
@@ -577,7 +667,7 @@
         // Without a visit the sale stands on its own; the medicines are still
         // billed and paid for at this counter either way.
         patientId: visit.patient_id, visitId: visitId || undefined,
-        discount: Number(el.querySelector('[name=discount]').value || 0),
+        discount: billDiscount,
         paymentMode: el.querySelector('[name=paymentMode]').value,
         paymentReference: el.querySelector('[name=paymentReference]').value || undefined,
         items, acknowledgeWarnings: acknowledge,
