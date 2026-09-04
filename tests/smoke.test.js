@@ -315,15 +315,23 @@ test('full OPD journey: arrive → screen → check-in → vitals → consult �
     }, 'cashier');
     assert.strictEqual(over.status, 400);
 
-    // ---- part payment + payment-plan agreement for the rest --------------
-    const part = await api('POST', `/api/billing/invoices/${invoiceId}/payments`, {
-      amount: Math.round(bill.body.balance / 2), mode: 'upi', reference: 'UPI-TEST-1',
+    /*
+     * ---- a short payment is refused before an agreement exists ----------
+     * The counter takes the whole of a bill. Where a patient cannot manage
+     * it, the answer is a decision somebody records — a discount, or the
+     * instalment agreement below — not a smaller number typed into the box
+     * with no account of why.
+     */
+    const half = Math.round(bill.body.balance / 2);
+    const short = await api('POST', `/api/billing/invoices/${invoiceId}/payments`, {
+      amount: half, mode: 'upi', reference: 'UPI-TEST-1',
     }, 'cashier');
-    assert.strictEqual(part.status, 201, JSON.stringify(part.body));
-    assert.strictEqual(part.body.invoice.status, 'partial');
+    assert.strictEqual(short.status, 400, JSON.stringify(short.body));
+    assert.match(short.body.error, /full|payment-plan/i);
 
+    // ---- the agreement, and then the part of it they can pay today -------
     const plan = await api('POST', `/api/billing/invoices/${invoiceId}/payment-plan`, {
-      installments: 3, frequency: 'monthly',
+      installments: 3, frequency: 'monthly', downPayment: half,
     }, 'cashier');
     assert.strictEqual(plan.status, 201, JSON.stringify(plan.body));
     assert.strictEqual(plan.body.schedule.length, 3);

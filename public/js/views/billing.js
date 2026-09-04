@@ -968,14 +968,24 @@
     }));
   }
 
-  /** Branch: "Accept Payment". */
+  /**
+   * Accept payment — the whole of it.
+   *
+   * The counter does not take part of a bill. What the patient owes is settled
+   * in one go, and where they cannot manage the full figure the answer is a
+   * decision somebody makes and records — a discount on the bill, or a written
+   * payment-plan agreement — not a smaller number typed into this box and no
+   * account of why. So the amount is the balance, shown and not editable.
+   */
   function openPayment(inv, refresh) {
     UI.modal({
       title: 'Accept payment', size: 'narrow',
-      body: `<div class="alert info">Outstanding balance: <b>${UI.money(inv.balance)}</b></div>
+      body: `<div class="alert info">To collect: <b>${UI.money(inv.balance)}</b></div>
         <form id="pay-form">
-          ${UI.field({ name: 'amount', label: 'Amount', type: 'number', step: '0.01', min: '0.01',
-            max: inv.balance, value: inv.balance.toFixed(2), required: true })}
+          <label class="field"><span>Amount</span>
+            <input type="text" value="${UI.money(inv.balance)}" readonly
+              style="font-size:18px;font-weight:700;background:var(--line-2)"></label>
+          <input type="hidden" name="amount" value="${inv.balance.toFixed(2)}">
           ${UI.field({ name: 'mode', label: 'Mode', required: true,
             options: ['cash','upi','card','netbanking','cheque','insurance','wallet'].map((m) => ({ value: m, label: UI.titleise(m) })) })}
           ${UI.field({ name: 'reference', label: 'Reference / transaction ID' })}

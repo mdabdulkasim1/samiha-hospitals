@@ -35,10 +35,11 @@
             <div class="value">${UI.money(rateOf(groups, 'CONS-FU'))}</div></div>
         </div>
 
+        ${mayEdit ? '<div id="rt-reprice" class="mb"></div>' : ''}
+
         ${mayEdit ? `<div class="alert info mb">
-          The rates below are starting figures, not the clinic's tariff — set your own.
-          A rate takes effect on the next bill; bills already raised keep the rate they were
-          charged at. ${unpriced ? `<b>${UI.num(unpriced)} item(s) have no rate</b> and will add
+          A rate takes effect on the next bill. Bills already raised keep the rate they were
+          charged at, and the panel above brings the unpaid ones onto this card when you want it. ${unpriced ? `<b>${UI.num(unpriced)} item(s) have no rate</b> and will add
           nothing to a bill until you give them one.` : ''}
           <div class="small mt">An item marked <b>Reported</b> is one analyte inside a panel —
             it prints on the report but is not sold on its own. Give it a rate and it becomes a
@@ -97,8 +98,78 @@
 
       el.querySelector('#rt-q').addEventListener('input', (e) => draw(e.target.value));
       draw('');
+      if (mayEdit) drawReprice(el.querySelector('#rt-reprice'));
     },
   });
+
+  /**
+   * Bringing bills that are still owing onto this card.
+   *
+   * Shown in full before it is done, and never done on its own — a rate card
+   * changing under a deploy is one thing, a hundred patients' bills changing
+   * with it is quite another, and the second should be somebody pressing a
+   * button having read what it will do.
+   *
+   * Settled bills are not offered at all. The money is collected and the
+   * receipt is in the patient's hand; a rewrite would leave the invoice, the
+   * receipt and the day book disagreeing.
+   */
+  async function drawReprice(host) {
+    if (!host) return;
+    let plan;
+    try { plan = await API.get('/api/billing/tariff/repricing'); }
+    catch { return; }
+    if (!plan.totals.invoices && !plan.skipped.length) return;
+
+    const t = plan.totals;
+    host.innerHTML = `<div class="card">
+      <div class="card-head"><h3>Bills still owing, at the old rates</h3>
+        <span class="muted small">Settled bills are never touched</span></div>
+      <div class="card-body">
+        ${t.invoices ? `<div class="alert warn">
+          <b>${UI.num(t.invoices)} unpaid bill(s)</b> carry ${UI.num(t.lines)} line(s) priced before
+          this card. Repricing them takes ${UI.money(t.was)} down to ${UI.money(t.becomes)} —
+          <b>${UI.money(Math.abs(t.delta))} ${t.delta < 0 ? 'less' : 'more'}</b> to collect.
+        </div>` : '<div class="alert ok">Every unpaid bill is already on this card.</div>'}
+
+        ${t.invoices ? `<div class="table-wrap" style="max-height:260px;overflow-y:auto">${UI.table([
+          { label: 'Bill', render: (r) => `<code>${UI.esc(r.invoiceNo)}</code>` },
+          { label: 'Patient', render: (r) => `<b>${UI.esc(r.patient)}</b>` +
+            `<div class="muted small">${UI.esc(r.uhid)}</div>` },
+          { label: 'Lines', render: (r) => `<div class="small">${r.lines.map((l) =>
+            `${UI.esc(l.description)} ${UI.money(l.was)} → <b>${UI.money(l.now)}</b>`).join('<br>')}</div>` },
+          { label: 'Now', num: true, render: (r) => UI.money(r.net) },
+          { label: 'Becomes', num: true, render: (r) => `<b>${UI.money(r.newNet)}</b>` },
+        ], plan.invoices)}</div>` : ''}
+
+        ${plan.skipped.length ? `<div class="alert info mt">
+          <b>${UI.num(plan.skipped.length)} bill(s) are left for a person to look at.</b>
+          ${plan.skipped.map((sk) => `<div class="small mt"><code>${UI.esc(sk.invoiceNo)}</code>
+            ${UI.esc(sk.patient)} — ${UI.esc(sk.reason)}</div>`).join('')}
+        </div>` : ''}
+
+        ${t.invoices ? '<button class="btn mt" id="rt-do">Reprice these bills</button>' : ''}
+        <div id="rt-out"></div>
+      </div></div>`;
+
+    const go = host.querySelector('#rt-do');
+    if (!go) return;
+    go.addEventListener('click', async () => {
+      if (!await UI.confirm(
+        `Reprice ${t.invoices} unpaid bill(s) to this card? `
+        + `What the clinic is owed changes by ${UI.money(Math.abs(t.delta))}. Settled bills are not touched.`,
+        { title: 'Reprice unpaid bills' })) return;
+      go.disabled = true;
+      try {
+        const done = await API.post('/api/billing/tariff/reprice', {});
+        UI.ok(`${done.totals.invoices} bill(s) repriced.`);
+        drawReprice(host);
+      } catch (err) {
+        host.querySelector('#rt-out').innerHTML = `<div class="alert danger mt">${UI.esc(err.message)}</div>`;
+        go.disabled = false;
+      }
+    });
+  }
 
   /** The panel an analyte belongs to, by name rather than by code. */
   function panelName(groups, code) {

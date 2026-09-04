@@ -10,6 +10,7 @@ const whatsapp = require('../services/whatsapp');
 const audit = require('../lib/audit');
 const clinic = require('../services/clinic');
 const upi = require('../services/upi');
+const repricing = require('../services/repricing');
 
 const router = express.Router();
 /*
@@ -294,6 +295,25 @@ router.post('/diagnostics/:orderId/release', cashRoles, wrap((req, res) => {
   res.json(db.prepare('SELECT * FROM lab_orders WHERE id = ?').get(orderId));
 }));
 
+/* ------------------------------------------ bringing old bills onto the card
+ * Admin's, not the counter's. Repricing is a decision about the clinic's own
+ * rate card applied across many patients at once, and it is shown in full
+ * before it is made — the preview runs the identical walk inside a transaction
+ * that is then thrown away, so it cannot promise a figure the change declines
+ * to produce.
+ */
+router.get('/tariff/repricing', requireRole('admin'), wrap((_req, res) => {
+  res.json(repricing.plan());
+}));
+
+router.post('/tariff/reprice', requireRole('admin'), wrap((req, res) => {
+  const done = repricing.apply(req.user.id);
+  audit.log(req, 'reprice_to_tariff', 'invoice', null, {
+    invoices: done.totals.invoices, lines: done.totals.lines, delta: done.totals.delta,
+  });
+  res.json(done);
+}));
+
 router.get('/invoices/:id', viewRoles, wrap((req, res) => {
   const inv = billing.fullInvoice(int(req.params.id));
   if (!inv) throw notFound('Invoice not found');
@@ -444,6 +464,29 @@ router.post('/invoices/:id/payments', cashRoles, wrap((req, res) => {
   if (amount <= 0) throw badRequest('Payment amount must be greater than zero.');
   if (amount - inv.balance > 0.009) {
     throw badRequest(`Payment of ${amount} exceeds the outstanding balance of ${inv.balance.toFixed(2)}.`);
+  }
+
+  /*
+   * The counter takes the whole of what is owed.
+   *
+   * A part payment leaves a balance nobody agreed to and nobody owns: the
+   * patient thinks the bill is dealt with, the day book says otherwise, and
+   * there is no record of why the difference was let go. Where the patient
+   * cannot manage the figure the clinic has two answers and both are
+   * decisions somebody makes and signs — a discount on the bill, or a written
+   * payment-plan agreement with a schedule behind it. An instalment against
+   * such a plan comes through its own route, which is why this rule does not
+   * reach it.
+   */
+  if (inv.balance - amount > 0.009 && !req.body.installmentOf) {
+    const plan = db.prepare("SELECT 1 FROM payment_plans WHERE invoice_id = ? AND status = 'active'").get(id);
+    if (!plan) {
+      throw badRequest(
+        `Collect the full ${inv.balance.toFixed(2)}. To take less, give a discount on the bill `
+        + 'or record a payment-plan agreement first — a part payment on its own leaves a balance '
+        + 'with nothing behind it.'
+      );
+    }
   }
 
   const { receiptNo, invoice } = billing.addPayment(id, {

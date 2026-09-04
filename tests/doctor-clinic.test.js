@@ -370,7 +370,11 @@ test('the monthly report counts appointments and bills doctor by doctor', async 
   await api('POST', `/api/billing/invoices/${i2.id}/items`, {
     description: 'Nebulisation', unitPrice: 250, refType: 'service',
   });
-  await api('POST', `/api/billing/invoices/${i2.id}/payments`, { amount: 300, mode: 'upi' });
+  /*
+   * Left unpaid rather than part-paid: the counter takes the whole of a bill
+   * now, so an outstanding figure comes from a bill nobody has settled, which
+   * is exactly what this column is for.
+   */
 
   const report = (await api('GET', '/api/reports/doctor-monthly?months=3')).body;
   const thisMonth = report.months.at(-1).key;
@@ -386,8 +390,8 @@ test('the monthly report counts appointments and bills doctor by doctor', async 
 
   const sara = report.rows.find((r) => r.id === ids.sara);
   assert.strictEqual(sara.months[thisMonth].billed, 700, 'every line on the bill counts to the doctor');
-  assert.strictEqual(sara.months[thisMonth].collected, 300);
-  assert.strictEqual(sara.months[thisMonth].outstanding, 400, 'the gap between billed and taken is visible');
+  assert.strictEqual(sara.months[thisMonth].collected, 0);
+  assert.strictEqual(sara.months[thisMonth].outstanding, 700, 'the gap between billed and taken is visible');
 
   // Per-patient value, and never a division by zero for a doctor who billed in
   // the window but has no appointment counted in it.

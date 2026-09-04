@@ -163,6 +163,8 @@ on this table at all.
 | GET | `/billing/diagnostics/pending` | cashier — ordered tests waiting to be priced |
 | POST | `/billing/diagnostics/:orderId/bill` | cashier — set a rate per line and post to the bill |
 | POST | `/billing/diagnostics/:orderId/release` | cashier — send through unpaid, with a reason |
+| GET | `/billing/tariff/repricing` | **admin only** — what repricing unpaid bills would do |
+| POST | `/billing/tariff/reprice` | **admin only** — bring unpaid bills onto the current card |
 
 ## In-patient
 | Method | Path | Roles |

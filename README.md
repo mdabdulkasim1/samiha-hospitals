@@ -203,6 +203,21 @@ These are enforced in the API, not just the interface:
   by hand is kept and reported, never silently replaced. Once published, the card only
   fills in items that carry no rate at all, so a test added next month still gets
   priced while nothing the clinic has decided is revisited.
+- **The counter takes the whole of a bill.** A part payment leaves a balance nobody
+  agreed to and nobody owns — the patient thinks it is dealt with, the day book says
+  otherwise, and there is no record of why the difference was let go. Where a patient
+  cannot manage the figure the clinic has two answers and both are decisions somebody
+  makes and signs: a **discount on the bill**, set by the cashier or management, or a
+  written **payment-plan agreement** with a schedule behind it. The payment box shows
+  the balance and cannot be edited down, and the server refuses a short payment unless
+  a plan exists.
+- **Old bills are repriced, never rewritten.** Publishing a rate card leaves bills
+  already raised alone. Under Services & Rates an administrator can bring the ones
+  **still owing** onto the new card — shown in full first, and the preview is the same
+  walk as the change, run in a transaction that is thrown away. Settled bills are never
+  offered: the money is collected and the receipt is in the patient's hand. Concessions
+  the clinic agreed as a percentage are re-agreed at the new figures; an insurer's
+  approval or a rupee discount the counter shook hands on is handed back for a person.
 - **A diagnostic order is paid for before the bench touches it.** The doctor orders
   what the patient needs and names no price; the cashier prices each line — from the
   tariff where the clinic has set one, by hand where it has not — and posts it to the

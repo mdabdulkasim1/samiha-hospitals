@@ -184,21 +184,28 @@ test('a discount cannot exceed the bill, or undo money already taken', async () 
   assert.strictEqual((await api('POST', `/api/billing/invoices/${inv.id}/bill-discount`,
     { pct: 140 }, 'cashier')).status, 400, 'no such percentage');
 
-  // Take 300, then try to discount 200 — that would owe the patient money.
+  /*
+   * The order the counter actually works in: decide the discount, then take
+   * what is left, in full. Discounting down to what is still owed is fine.
+   */
+  const ok = await api('POST', `/api/billing/invoices/${inv.id}/bill-discount`,
+    { amount: 100 }, 'cashier');
+  assert.strictEqual(ok.status, 200);
+  assert.strictEqual(ok.body.net, 300);
+  assert.strictEqual(ok.body.balance, 300);
+
   await api('POST', `/api/billing/invoices/${inv.id}/payments`,
     { amount: 300, mode: 'cash' }, 'cashier');
+
+  // And once the money is in, a further discount would owe the patient a refund.
   const tooLate = await api('POST', `/api/billing/invoices/${inv.id}/bill-discount`,
     { amount: 200 }, 'cashier');
   assert.strictEqual(tooLate.status, 409);
   assert.match(tooLate.body.error || tooLate.body.message || '', /refund/i);
 
-  // Discounting down to exactly what is still owed is fine.
-  const ok = await api('POST', `/api/billing/invoices/${inv.id}/bill-discount`,
-    { amount: 100 }, 'cashier');
-  assert.strictEqual(ok.status, 200);
-  assert.strictEqual(ok.body.net, 300);
-  assert.strictEqual(ok.body.balance, 0);
-  assert.strictEqual(ok.body.status, 'paid');
+  const settled = (await api('GET', `/api/billing/invoices/${inv.id}`, undefined, 'cashier')).body;
+  assert.strictEqual(settled.status, 'paid', 'and the refusal left the settled bill alone');
+  assert.strictEqual(settled.balance, 0);
 });
 
 test('a doctor cannot discount a bill', async () => {
@@ -609,9 +616,9 @@ test('a bill carries a UPI code for what is still owed', async () => {
   assert.strictEqual(q.get('tr'), inv.invoice_no, 'so the money that lands names the bill it paid');
   assert.ok(pay.svg.startsWith('<svg'), 'and it is drawn ready for the printed bill');
 
-  // Part-paid: the code asks for the remainder, not the whole bill again.
-  await api('POST', `/api/billing/invoices/${inv.id}/payments`,
-    { amount: 100, mode: 'cash' }, 'cashier');
+  // Discounted: the code asks for what is owed after it, not the gross. This
+  // is the whole point of drawing it from the balance rather than the bill.
+  await api('POST', `/api/billing/invoices/${inv.id}/bill-discount`, { amount: 100 }, 'cashier');
   const rest = (await api('GET', `/api/billing/invoices/${inv.id}/upi`, undefined, 'cashier')).body;
   assert.strictEqual(rest.amount, 150);
   assert.strictEqual(new URLSearchParams(rest.uri.slice(10)).get('am'), '150.00');
@@ -872,28 +879,49 @@ test('a receipt carries the breakdown of the bill it settles', async () => {
   const full = (await api('GET', `/api/billing/invoices/${inv.id}`, undefined, 'cashier')).body;
   assert.strictEqual(full.net, 475);
 
-  // A part payment first — the case a receipt most easily misrepresents.
   const first = (await api('POST', `/api/billing/invoices/${inv.id}/payments`,
-    { amount: 200, mode: 'cash' }, 'cashier')).body;
+    { amount: 475, mode: 'cash' }, 'cashier')).body;
   const r1 = (await api('GET', `/api/billing/receipts/${first.receiptNo}`, undefined, 'cashier')).body;
 
   assert.strictEqual(r1.items.length, 3, 'every line of the bill is on the receipt');
   assert.deepStrictEqual(r1.items.map((i) => i.amount), [150, 100, 225]);
   assert.strictEqual(r1.invoice.net, 475, 'and what the bill came to');
-  assert.strictEqual(r1.amount, 200, 'against what was handed over now');
+  assert.strictEqual(r1.amount, 475);
   assert.strictEqual(r1.paid_before, 0);
-  assert.strictEqual(r1.paid_total, 200);
-  assert.strictEqual(r1.balance, 275, 'so the receipt cannot read as a settled bill');
+  assert.strictEqual(r1.balance, 0);
 
-  // The second receipt has to say what was already paid, or it looks like the
-  // patient only ever paid 275 for a 475 bill.
-  const second = (await api('POST', `/api/billing/invoices/${inv.id}/payments`,
-    { amount: 275, mode: 'upi', reference: 'UPI/TEST/9' }, 'cashier')).body;
-  const r2 = (await api('GET', `/api/billing/receipts/${second.receiptNo}`, undefined, 'cashier')).body;
+  assert.strictEqual(r1.paid_total, 475);
 
-  assert.strictEqual(r2.paid_before, 200, 'what had already been collected');
-  assert.strictEqual(r2.amount, 275);
-  assert.strictEqual(r2.paid_total, 475, 'which together settle the bill');
-  assert.strictEqual(r2.balance, 0);
-  assert.strictEqual(r2.items.length, 3, 'and it still says what the money was for');
+  /*
+   * More than one receipt against one bill only happens under a payment-plan
+   * agreement now — the counter does not take part of a bill otherwise. Each
+   * instalment still has to say what had already been collected, or the last
+   * receipt reads as though that instalment was all the patient ever paid.
+   */
+  const planned = (await api('POST', '/api/billing/invoices',
+    { patientId: patient.id, kind: 'opd' }, 'cashier')).body;
+  await api('POST', `/api/billing/invoices/${planned.id}/items`,
+    { refType: 'service', description: 'Suturing — minor', qty: 1, unitPrice: 600 }, 'cashier');
+  const plan = await api('POST', `/api/billing/invoices/${planned.id}/payment-plan`,
+    { installments: 2, frequency: 'monthly', downPayment: 300 }, 'cashier');
+  assert.strictEqual(plan.status, 201, JSON.stringify(plan.body));
+
+  // The agreement takes its own down payment, so that is the first receipt.
+  const downReceipt = db.prepare(
+    'SELECT receipt_no FROM payments WHERE invoice_id = ? ORDER BY id DESC LIMIT 1'
+  ).get(planned.id);
+  const rd = (await api('GET', `/api/billing/receipts/${downReceipt.receipt_no}`, undefined, 'cashier')).body;
+  assert.strictEqual(rd.amount, 300);
+  assert.strictEqual(rd.paid_before, 0);
+  assert.strictEqual(rd.balance, 300, 'and the receipt says what is still owed');
+  assert.strictEqual(rd.items.length, 1, 'with the line it was for');
+
+  // The instalment that clears it has to name what came before.
+  const inst = await api('POST', `/api/billing/payment-plans/${plan.body.plan.id}/installments/1/pay`,
+    { amount: 300, mode: 'cash' }, 'cashier');
+  assert.strictEqual(inst.status, 200, JSON.stringify(inst.body));
+  const ri = (await api('GET', `/api/billing/receipts/${inst.body.receiptNo}`, undefined, 'cashier')).body;
+  assert.strictEqual(ri.paid_before, 300, 'what the down payment had already covered');
+  assert.strictEqual(ri.paid_total, 600);
+  assert.strictEqual(ri.balance, 0);
 });

@@ -160,7 +160,7 @@ test('the whole journey: ordered → priced by the cashier → paid → on the b
   assert.ok(collect.body.barcode);
 });
 
-test('a part payment does not open the gate', async () => {
+test('a payment plan\'s down payment does not open the gate', async () => {
   const { patientId, visitId } = await newVisit('Part');
   const order = (await api('POST', '/api/lab/orders', {
     patientId, visitId, tests: [{ testId: ids.priced.id }],
@@ -169,11 +169,18 @@ test('a part payment does not open the gate', async () => {
     prices: [{ itemId: db.prepare('SELECT id FROM lab_order_items WHERE order_id = ?').get(order.id).id, unitPrice: 400 }],
   }, 'cashier')).body;
 
-  await api('POST', `/api/billing/invoices/${billed.invoice.id}/payments`,
-    { amount: 100, mode: 'cash' }, 'cashier');
-  assert.strictEqual(db.prepare('SELECT released_at FROM lab_orders WHERE id = ?').get(order.id).released_at, null);
+  /*
+   * The counter does not take part of a bill any more; an agreement is what
+   * lets it, and an agreement is not payment. A patient paying by instalments
+   * has not paid for the test yet, so the bench does not get it yet.
+   */
+  const plan = await api('POST', `/api/billing/invoices/${billed.invoice.id}/payment-plan`,
+    { installments: 2, frequency: 'monthly', downPayment: 100 }, 'cashier');
+  assert.strictEqual(plan.status, 201, JSON.stringify(plan.body));
+  assert.strictEqual(db.prepare('SELECT released_at FROM lab_orders WHERE id = ?').get(order.id).released_at,
+    null, 'a hundred rupees down is not a paid bill');
 
-  await api('POST', `/api/billing/invoices/${billed.invoice.id}/payments`,
+  await api('POST', `/api/billing/payment-plans/${plan.body.plan.id}/installments/1/pay`,
     { amount: 300, mode: 'cash' }, 'cashier');
   assert.ok(db.prepare('SELECT released_at FROM lab_orders WHERE id = ?').get(order.id).released_at,
     'settling the rest lets it through');

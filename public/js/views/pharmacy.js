@@ -139,19 +139,33 @@
       // never booked in, or collected long after the visit closed.
       if (params.sheetId) return renderDispense(el, null, Number(params.sheetId));
 
-      const [queue, alerts] = await Promise.all([
+      /*
+       * The register is asked for its totals only — every medicine, so the
+       * value on the tile is the whole shelf and not the page of it somebody
+       * happens to be looking at. It is skipped for anyone who may not see a
+       * price, who would be shown an empty tile otherwise.
+       */
+      const [queue, alerts, shelf] = await Promise.all([
         API.get('/api/pharmacy/queue'),
         API.get('/api/pharmacy/stock/alerts'),
+        APP.seesPrices()
+          ? API.get('/api/stock/register').catch(() => null)
+          : null,
       ]);
+      const worth = shelf && shelf.totals ? shelf.totals : null;
 
       el.innerHTML = `
-        <div class="grid c3 mb">
+        <div class="grid ${worth ? 'c4' : 'c3'} mb">
           <div class="stat crimson"><div class="label">Waiting to be dispensed</div>
             <div class="value">${UI.num(queue.length)}</div><div class="foot">Prescriptions from today</div></div>
           <div class="stat orange"><div class="label">At or below reorder level</div>
             <div class="value">${UI.num(alerts.lowStock.length)}</div><div class="foot">Raise a purchase order</div></div>
           <div class="stat teal"><div class="label">Expiring within 90 days</div>
             <div class="value">${UI.num(alerts.expiringSoon.length)}</div><div class="foot">Batches to rotate</div></div>
+          ${worth ? `<div class="stat ok"><div class="label">Stock on hand</div>
+            <div class="value">${UI.money(worth.stockValue)}</div>
+            <div class="foot">${UI.num(worth.onHand)} unit(s) across ${UI.num(worth.medicines)} medicine(s)${
+              worth.unrated ? ` · ${UI.num(worth.unrated)} unrated` : ''}</div></div>` : ''}
         </div>
 
         <div class="tabs" id="ph-tabs">
