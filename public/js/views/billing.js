@@ -1371,6 +1371,62 @@
    * own counter — but the treating doctor appears only as their code, the same
    * rule the bill it settles follows.
    */
+  /**
+   * What the money was for, printed under the receipt.
+   *
+   * A receipt that says only "received 685" answers the wrong question. The
+   * patient wants to know what the 685 was made up of, and so does whoever
+   * they show it to afterwards — a relative settling up, an employer, an
+   * insurer. So the bill's own lines come with it.
+   *
+   * The tail is where the care is. A part payment is ordinary here, and a
+   * receipt that showed the bill total next to "received" without saying how
+   * much of it that cleared would read as though the account was closed. When
+   * something was already paid, or something is still owed, the receipt says
+   * so in as many words.
+   */
+  function receiptBreakdown(r) {
+    const items = r.items || [];
+    if (!items.length) return '';
+    const inv = r.invoice || {};
+    const concession = (inv.discount || 0) + (inv.bill_discount || 0) + (inv.sliding_discount || 0);
+    const covered = (inv.assistance_covered || 0) + (inv.insurance_covered || 0);
+    const part = r.balance > 0.009 || (r.paid_before || 0) > 0.009;
+
+    return `
+      <h4 class="mt">What this bill covers</h4>
+      <table><thead><tr>
+        <th>Item</th><th class="num">Qty</th><th class="num">Rate</th><th class="num">Amount</th>
+      </tr></thead><tbody>
+        ${items.map((i) => `<tr>
+          <td>${UI.esc(i.description)}</td>
+          <td class="num">${UI.esc(i.qty)}</td>
+          <td class="num">${UI.money(i.unit_price)}</td>
+          <td class="num">${UI.money(i.amount)}</td></tr>`).join('')}
+      </tbody></table>
+
+      <div class="totals" style="margin-left:auto;width:270px">
+        <div class="row-between"><span>Gross</span><span>${UI.money(inv.gross)}</span></div>
+        ${concession ? `<div class="row-between"><span>Concession</span>
+          <span>− ${UI.money(concession)}</span></div>` : ''}
+        ${covered ? `<div class="row-between"><span>Assistance / insurer</span>
+          <span>− ${UI.money(covered)}</span></div>` : ''}
+        ${inv.tax ? `<div class="row-between"><span>Tax</span><span>${UI.money(inv.tax)}</span></div>` : ''}
+        <div class="row-between" style="border-top:1px solid #999;margin-top:5px;padding-top:5px">
+          <b>Bill total</b><b>${UI.money(inv.net)}</b></div>
+        ${part ? `
+          ${(r.paid_before || 0) > 0.009 ? `<div class="row-between"><span>Already paid</span>
+            <span>${UI.money(r.paid_before)}</span></div>` : ''}
+          <div class="row-between"><b>Paid on this receipt</b><b>${UI.money(r.amount)}</b></div>
+          <div class="row-between"><span>${r.balance > 0.009 ? 'Still to pay' : 'Balance'}</span>
+            <span>${UI.money(r.balance)}</span></div>` : ''}
+      </div>
+      ${r.balance > 0.009
+        ? `<div class="foot-note"><b>${UI.money(r.balance)} is still outstanding on
+             ${UI.esc(r.invoice_no)}.</b> This receipt is for the amount shown above, not the whole bill.</div>`
+        : ''}`;
+  }
+
   async function printReceipt(receiptNo, windowRef = null) {
     const win = windowRef || UI.openPrintWindow();
     let r;
@@ -1387,6 +1443,9 @@
         <tr><th>Amount received</th><td style="font-size:19px"><b>${UI.money(r.amount)}</b></td></tr>
         <tr><th>Invoice balance</th><td>${UI.money(r.balance)}</td></tr>
       </tbody></table>
+
+      ${receiptBreakdown(r)}
+
       <div class="sign"><div></div><div>${UI.esc(r.received_by_name || '')}<br>Received by</div></div>
       <div class="foot-note">Thank you. Cheques are subject to realisation.</div>
     </div>`;

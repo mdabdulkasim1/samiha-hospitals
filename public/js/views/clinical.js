@@ -317,8 +317,23 @@
        * diagnostics or open the full record, both of which stand on their own
        * without a visit.
        */
+      /*
+       * A doctor's own list comes first.
+       *
+       * Everyone booked with them today is on it, whether or not they have
+       * walked in yet — the queue only holds people who have arrived and been
+       * through the desk, and a doctor wanting to look at their two o'clock
+       * before the clinic starts should not have to go and search for them by
+       * name. Their own patients, then whoever is waiting, then everybody else.
+       */
+      const mine = APP.user.role === 'doctor'
+        ? await API.get('/api/appointments/my-day').catch(() => null)
+        : null;
+
       el.innerHTML = `
-        <div class="card mb">
+        ${mine ? '<div id="cs-mine" class="mb"></div>' : ''}
+        <div id="cs-queue" class="mb"></div>
+        <div class="card">
           <div class="card-head"><h3>Anyone else</h3>
             <span class="muted small">Search by name, UHID or mobile — order tests without a visit</span></div>
           <div class="card-body">
@@ -327,8 +342,9 @@
             </div>
             <div id="cs-results"></div>
           </div>
-        </div>
-        <div id="cs-queue"></div>`;
+        </div>`;
+
+      if (mine) drawMyList(el.querySelector('#cs-mine'), mine);
 
       let t;
       const results = el.querySelector('#cs-results');
@@ -371,6 +387,168 @@
         (id) => APP.navigate('consult', { visitId: id }));
     },
   });
+
+  /**
+   * The doctor's own list for today: everybody booked with them, arrived or
+   * not, in the order they are due.
+   *
+   * A row is a patient rather than a stage, because that is the question the
+   * doctor is asking — who am I seeing, and what for. What they have not done
+   * yet is on the row too, so the list doubles as the running order: no
+   * vitals, no note written, nothing ordered.
+   */
+  function drawMyList(host, day) {
+    const live = day.rows.filter((r) => !['cancelled', 'no_show'].includes(r.status));
+    host.innerHTML = `<div class="card">
+      <div class="card-head"><h3>My patients today</h3>
+        <span class="muted small">${UI.esc(day.label)}${day.hours ? ' · ' + UI.esc(day.hours) : ''} ·
+          ${UI.num(day.summary.booked)} booked, ${UI.num(day.summary.arrived)} arrived</span>
+        <a class="btn ghost sm" href="#/myclinic">My clinic</a></div>
+      <div class="card-body tight" id="cs-mine-list"></div></div>`;
+
+    const list = host.querySelector('#cs-mine-list');
+    list.innerHTML = UI.table([
+      { label: 'Time', render: (r) => `<b>${UI.esc(r.time)}</b>` +
+        (r.token_no ? `<div class="muted small">Token ${UI.esc(r.token_no)}</div>` : '') },
+      { label: 'Patient', render: (r) => `<b>${UI.esc(r.display_name)}</b>` +
+        `<div class="muted small">${UI.esc(r.uhid || 'not registered')}${
+          r.age_years ? ' · ' + UI.esc(r.age_years) + UI.esc((r.gender || '').charAt(0).toUpperCase()) : ''}</div>` },
+      { label: 'For', render: (r) => UI.esc(UI.titleise(r.visit_kind || '')) +
+        (r.reason ? `<div class="muted small">${UI.esc(r.reason)}</div>` : '') },
+      { label: 'Flags', render: (r) => (r.allergies ? UI.badge('⚠ Allergy', 'danger') : '') },
+      { label: 'Where', render: (r) => (r.visit_status
+        ? UI.statusBadge(r.visit_status)
+        : UI.badge(UI.titleise(r.status), r.status === 'checked_in' ? 'teal' : 'info')) },
+      { label: '', render: (r) => (r.patient_id
+        ? `<button class="btn sm" data-summary="${r.patient_id}" data-appt="${r.id}"
+             data-visit="${r.visit_id || ''}">Open</button>`
+        : '<span class="muted small">Register first</span>') },
+    ], live, { emptyText: 'Nobody is booked with you today.' });
+
+    const open = (b) => openPatientSummary({
+      patientId: Number(b.dataset.summary),
+      appointmentId: Number(b.dataset.appt) || null,
+      visitId: Number(b.dataset.visit) || null,
+    });
+    list.querySelectorAll('[data-summary]').forEach((b) => b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      open(b);
+    }));
+    UI.bindRows(list, live, (r) => {
+      if (!r.patient_id) return;
+      openPatientSummary({
+        patientId: r.patient_id, appointmentId: r.id, visitId: r.visit_id || null,
+      });
+    });
+  }
+
+  /**
+   * The patient in front of the doctor, on one screen.
+   *
+   * Two things happen here and they are the two the doctor actually needs
+   * before anything else: a line about why the patient came, and the tests
+   * that line calls for.
+   *
+   * The note is the hospital's own record. It is not the prescription's
+   * "complaints" box — that one is printed on a sheet the patient carries out
+   * to a pharmacist — and it is not the consultation's chief complaint, which
+   * needs a visit to exist at all. This can be written about a patient who has
+   * not arrived yet, and the screen says plainly where it does and does not go.
+   */
+  async function openPatientSummary({ patientId, appointmentId = null, visitId = null }) {
+    let patient;
+    let notes = [];
+    try {
+      [patient, notes] = await Promise.all([
+        API.get(`/api/patients/${patientId}`),
+        API.get(`/api/patients/${patientId}/notes`).catch(() => []),
+      ]);
+    } catch (err) { return void UI.err(err.message); }
+
+    const noteList = (rows) => (rows.length
+      ? rows.map((n) => `<div class="mb small" style="border-left:2px solid var(--line);padding-left:10px">
+          ${UI.esc(n.note)}
+          <div class="muted small">${UI.esc(n.by_name || 'Staff')} · ${UI.esc(UI.dateTime(n.created_at))}${
+            n.visit_no ? ' · ' + UI.esc(n.visit_no) : ''}</div>
+        </div>`).join('')
+      : '<div class="muted small">Nothing on file yet.</div>');
+
+    UI.modal({
+      title: `${patient.first_name} ${patient.last_name || ''} — ${patient.uhid}`,
+      size: 'wide',
+      body: `
+        ${patient.allergies ? `<div class="alert danger">⚠ <b>Allergies:</b> ${UI.esc(patient.allergies)}</div>` : ''}
+        ${patient.chronic_conditions ? `<div class="alert info"><b>Chronic:</b> ${UI.esc(patient.chronic_conditions)}</div>` : ''}
+        <div class="grid c2">
+          <div>
+            <dl class="kv">
+              <dt>Age / Sex</dt><dd>${UI.esc(patient.age_years || '—')} / ${UI.esc(UI.titleise(patient.gender || '—'))}</dd>
+              <dt>Phone</dt><dd>${UI.esc(patient.phone || '—')}</dd>
+              <dt>Blood group</dt><dd>${UI.esc(patient.blood_group || '—')}</dd>
+              <dt>Last seen</dt><dd>${patient.visits && patient.visits.length
+                ? UI.esc(UI.date(patient.visits[0].arrived_at)) : 'First visit'}</dd>
+            </dl>
+          </div>
+          <div>
+            <h4>On file</h4>
+            <div id="ps-notes" style="max-height:170px;overflow-y:auto">${noteList(notes)}</div>
+          </div>
+        </div>
+
+        <h4 class="mt">Why they came today</h4>
+        <textarea id="ps-note" rows="3" style="width:100%"
+          placeholder="e.g. Fever four days, not settling with paracetamol. Sugars up since Deepavali."></textarea>
+        <div class="muted small">Kept on the hospital record. It is not printed on the prescription —
+          what goes on that sheet is written on the prescription itself.</div>
+        <div id="ps-out"></div>`,
+      footer: `<button class="btn ghost" data-act="__close">Close</button>
+        <button class="btn ghost" data-act="record">Full record</button>
+        ${visitId ? '<button class="btn ghost" data-act="consult">Open consultation</button>' : ''}
+        <button class="btn ghost" data-act="labs">+ Order tests</button>
+        <button class="btn" data-act="save">Save note</button>`,
+      async onAction(act, modal) {
+        const out = modal.querySelector('#ps-out');
+
+        if (act === 'record') { UI.closeAllModals(); APP.navigate('patients', { id: patientId }); return; }
+        if (act === 'consult') { UI.closeAllModals(); APP.navigate('consult', { visitId }); return; }
+
+        if (act === 'labs') {
+          /*
+           * Saving first, so a doctor who typed the reason and then reached
+           * for the tests does not lose the line they just wrote. Ordering is
+           * usually the next thing after writing it, which is why the button
+           * is here rather than a screen away.
+           */
+          const typed = modal.querySelector('#ps-note').value.trim();
+          if (typed) {
+            try {
+              await API.post(`/api/patients/${patientId}/notes`, { note: typed, visitId, appointmentId });
+              modal.querySelector('#ps-note').value = '';
+            } catch (err) { UI.err(err.message); }
+          }
+          openLabOrder({
+            patientId, visitId,
+            patientName: `${patient.first_name} ${patient.last_name || ''}`.trim(),
+            onPlaced: () => { UI.closeAllModals(); APP.reload(); },
+          });
+          return 'keep';
+        }
+
+        if (act !== 'save') return;
+        const note = modal.querySelector('#ps-note').value.trim();
+        if (!note) { out.innerHTML = '<div class="alert warn mt">Write the note first.</div>'; return 'keep'; }
+        try {
+          await API.post(`/api/patients/${patientId}/notes`, { note, visitId, appointmentId });
+          UI.ok('Noted on the record.');
+          modal.querySelector('#ps-note').value = '';
+          modal.querySelector('#ps-notes').innerHTML =
+            noteList(await API.get(`/api/patients/${patientId}/notes`).catch(() => []));
+          out.innerHTML = '';
+          return 'keep';
+        } catch (err) { out.innerHTML = `<div class="alert danger mt">${UI.esc(err.message)}</div>`; return 'keep'; }
+      },
+    });
+  }
 
   async function renderConsult(el, visitId) {
     const [visit, drugs, tests] = await Promise.all([

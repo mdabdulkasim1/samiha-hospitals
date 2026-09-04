@@ -301,6 +301,28 @@ CREATE TABLE IF NOT EXISTS consultations (
 );
 CREATE INDEX IF NOT EXISTS idx_consult_patient ON consultations(patient_id);
 
+/*
+ * Why the patient came, in the doctor's own words.
+ *
+ * Kept apart from the consultation and from the prescription on purpose. A
+ * consultation needs a visit, and plenty of this is written before there is
+ * one — a patient rings about their sugars, someone booked for Thursday
+ * mentions something on the phone, a doctor wants a line on the record before
+ * the clinic starts. And a prescription is a document that goes home with the
+ * patient and on to a pharmacist; this is the hospital's own note about them
+ * and is never printed on it.
+ */
+CREATE TABLE IF NOT EXISTS patient_notes (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  patient_id     INTEGER NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+  visit_id       INTEGER REFERENCES visits(id),
+  appointment_id INTEGER REFERENCES appointments(id),
+  note           TEXT NOT NULL,
+  created_by     INTEGER REFERENCES users(id),
+  created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_patient_notes ON patient_notes(patient_id, id DESC);
+
 CREATE TABLE IF NOT EXISTS consultation_diagnoses (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
   consultation_id INTEGER NOT NULL REFERENCES consultations(id) ON DELETE CASCADE,

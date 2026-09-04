@@ -641,7 +641,13 @@
         { label: 'Status', render: (v) => UI.statusBadge(v.status) },
       ], p.visits, { emptyText: 'No visits yet.' })),
 
-      clinical: () => card('Consultations', p.consultations.length
+      clinical: () => card('Why they came', (p.notes || []).length
+        ? (p.notes || []).map((n) => `<div class="mb" style="border-left:2px solid var(--line);padding-left:10px">
+            ${UI.esc(n.note)}
+            <div class="muted small">${UI.esc(n.by_name || 'Staff')} · ${UI.esc(UI.dateTime(n.created_at))}${
+              n.visit_no ? ' · ' + UI.esc(n.visit_no) : ''}</div></div>`).join('')
+        : '<div class="muted small">Nothing noted yet.</div>')
+      + card('Consultations', p.consultations.length
         ? p.consultations.map((c) => `<fieldset><legend>${UI.esc(UI.date(c.created_at))} · ${UI.esc(c.doctor_name || '')}</legend>
             <dl class="kv">
               <dt>Complaint</dt><dd>${UI.esc(c.chief_complaint || '—')}</dd>

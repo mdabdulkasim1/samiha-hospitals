@@ -858,3 +858,42 @@ test('the screening packages are sold as one line, naming what they cover', asyn
   assert.strictEqual(added.body.net, tariffRate('PKG-MAN'),
     'the package price, not the sum of its tests');
 });
+
+/* --------------------------------------------------- what the money was for */
+test('a receipt carries the breakdown of the bill it settles', async () => {
+  const patient = db.prepare('SELECT id FROM patients ORDER BY id LIMIT 1').get();
+  const inv = (await api('POST', '/api/billing/invoices',
+    { patientId: patient.id, kind: 'opd' }, 'cashier')).body;
+
+  for (const [description, unitPrice] of [['Consultation', 150], ['Dressing', 100], ['X-Ray Chest', 225]]) {
+    await api('POST', `/api/billing/invoices/${inv.id}/items`,
+      { refType: 'service', description, qty: 1, unitPrice }, 'cashier');
+  }
+  const full = (await api('GET', `/api/billing/invoices/${inv.id}`, undefined, 'cashier')).body;
+  assert.strictEqual(full.net, 475);
+
+  // A part payment first — the case a receipt most easily misrepresents.
+  const first = (await api('POST', `/api/billing/invoices/${inv.id}/payments`,
+    { amount: 200, mode: 'cash' }, 'cashier')).body;
+  const r1 = (await api('GET', `/api/billing/receipts/${first.receiptNo}`, undefined, 'cashier')).body;
+
+  assert.strictEqual(r1.items.length, 3, 'every line of the bill is on the receipt');
+  assert.deepStrictEqual(r1.items.map((i) => i.amount), [150, 100, 225]);
+  assert.strictEqual(r1.invoice.net, 475, 'and what the bill came to');
+  assert.strictEqual(r1.amount, 200, 'against what was handed over now');
+  assert.strictEqual(r1.paid_before, 0);
+  assert.strictEqual(r1.paid_total, 200);
+  assert.strictEqual(r1.balance, 275, 'so the receipt cannot read as a settled bill');
+
+  // The second receipt has to say what was already paid, or it looks like the
+  // patient only ever paid 275 for a 475 bill.
+  const second = (await api('POST', `/api/billing/invoices/${inv.id}/payments`,
+    { amount: 275, mode: 'upi', reference: 'UPI/TEST/9' }, 'cashier')).body;
+  const r2 = (await api('GET', `/api/billing/receipts/${second.receiptNo}`, undefined, 'cashier')).body;
+
+  assert.strictEqual(r2.paid_before, 200, 'what had already been collected');
+  assert.strictEqual(r2.amount, 275);
+  assert.strictEqual(r2.paid_total, 475, 'which together settle the bill');
+  assert.strictEqual(r2.balance, 0);
+  assert.strictEqual(r2.items.length, 3, 'and it still says what the money was for');
+});

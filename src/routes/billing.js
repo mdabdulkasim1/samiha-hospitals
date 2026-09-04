@@ -646,6 +646,35 @@ router.get('/receipts/:receiptNo', viewRoles, wrap((req, res) => {
       WHERE pay.receipt_no = ?`
   ).get(str(req.params.receiptNo));
   if (!receipt) throw notFound('Receipt not found');
+
+  /*
+   * What the money was for.
+   *
+   * A receipt that says only "received 685" answers the wrong question. The
+   * patient standing at the counter wants to know what the 685 was made up of,
+   * and so does whoever they show it to afterwards — a family member paying
+   * them back, an employer, an insurer. So the lines of the bill come with it,
+   * and the totals underneath say plainly how much of the bill this particular
+   * payment settled: a part payment is common here, and a receipt that hid
+   * that would read as though the bill was closed.
+   */
+  receipt.items = db.prepare(
+    'SELECT description, qty, unit_price, discount, tax_pct, amount FROM invoice_items WHERE invoice_id = ? ORDER BY id'
+  ).all(receipt.invoice_id);
+
+  const inv = db.prepare(
+    `SELECT gross, discount, bill_discount, sliding_discount, assistance_covered,
+            insurance_covered, tax, net, paid
+       FROM invoices WHERE id = ?`
+  ).get(receipt.invoice_id);
+  receipt.invoice = inv;
+
+  // What had already been collected before this receipt was written.
+  receipt.paid_before = billing.round2(db.prepare(
+    'SELECT COALESCE(SUM(amount), 0) AS s FROM payments WHERE invoice_id = ? AND id < ?'
+  ).get(receipt.invoice_id, receipt.id).s);
+  receipt.paid_total = billing.round2(receipt.paid_before + receipt.amount);
+
   res.json(receipt);
 }));
 

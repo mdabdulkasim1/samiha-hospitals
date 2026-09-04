@@ -333,6 +333,15 @@ router.get('/:id', deskRoles, wrap((req, res) => {
        FROM consultations c LEFT JOIN users u ON u.id = c.doctor_id
       WHERE c.patient_id = ? ORDER BY c.id DESC LIMIT 20`
   ).all(id);
+  // The clinic's own notes about them — see the notes routes below for why
+  // these sit apart from the consultation and the prescription.
+  patient.notes = db.prepare(
+    `SELECT n.*, u.name AS by_name, v.visit_no
+       FROM patient_notes n
+       LEFT JOIN users u ON u.id = n.created_by
+       LEFT JOIN visits v ON v.id = n.visit_id
+      WHERE n.patient_id = ? ORDER BY n.id DESC LIMIT 50`
+  ).all(id);
   patient.prescriptions = db.prepare(
     'SELECT * FROM prescriptions WHERE patient_id = ? ORDER BY id DESC LIMIT 40'
   ).all(id);
@@ -415,6 +424,56 @@ router.patch('/:id', requireRole('reception', 'nurse', 'doctor', 'counselor'), w
   }
   audit.log(req, 'update', 'patient', id, { fields: entries.map(([k]) => k) });
   res.json(db.prepare('SELECT * FROM patients WHERE id = ?').get(id));
+}));
+
+/* ---------------------------------------------------- why they came, on file
+ *
+ * A line the clinic keeps about a patient, written by whoever saw them.
+ *
+ * It is deliberately not the prescription's "complaints" box and not the
+ * consultation's chief complaint. Those two belong to a document: the
+ * prescription goes home with the patient and on to a pharmacist, and the
+ * consultation needs a visit to hang off. This is the hospital's own note —
+ * written before the patient has arrived, or after they have left, or about a
+ * phone call that never became a visit at all — and it is never printed on
+ * anything the patient carries out.
+ */
+router.get('/:id/notes', deskRoles, wrap((req, res) => {
+  const rows = db.prepare(
+    `SELECT n.*, u.name AS by_name, u.role AS by_role, v.visit_no
+       FROM patient_notes n
+       LEFT JOIN users u ON u.id = n.created_by
+       LEFT JOIN visits v ON v.id = n.visit_id
+      WHERE n.patient_id = ? ORDER BY n.id DESC LIMIT 50`
+  ).all(int(req.params.id));
+  res.json(rows);
+}));
+
+router.post('/:id/notes', requireRole('doctor', 'nurse', 'reception'), wrap((req, res) => {
+  const patientId = int(req.params.id);
+  if (!db.prepare('SELECT 1 FROM patients WHERE id = ?').get(patientId)) throw notFound('Patient not found');
+  const note = str(req.body.note);
+  if (!note) throw badRequest('Write the note before saving it.');
+  if (note.length > 4000) throw badRequest('That note is too long — keep it to what matters.');
+
+  const info = db.prepare(
+    `INSERT INTO patient_notes (patient_id, visit_id, appointment_id, note, created_by)
+     VALUES (?, ?, ?, ?, ?)`
+  ).run(patientId, int(req.body.visitId) || null, int(req.body.appointmentId) || null, note, req.user.id);
+
+  /*
+   * A visit gets the same line on its trail, so the note is findable from the
+   * visit as well as from the patient — the two ways anybody looks for it.
+   */
+  if (int(req.body.visitId)) {
+    db.prepare("INSERT INTO visit_events (visit_id, stage, detail, actor_id) VALUES (?, 'note', ?, ?)")
+      .run(int(req.body.visitId), note.slice(0, 200), req.user.id);
+  }
+  audit.log(req, 'create', 'patient_note', info.lastInsertRowid, { patientId });
+  res.status(201).json(db.prepare(
+    `SELECT n.*, u.name AS by_name FROM patient_notes n LEFT JOIN users u ON u.id = n.created_by
+      WHERE n.id = ?`
+  ).get(info.lastInsertRowid));
 }));
 
 router.post('/:id/history', requireRole('reception', 'nurse', 'doctor'), wrap((req, res) => {

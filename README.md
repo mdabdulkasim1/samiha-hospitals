@@ -134,6 +134,13 @@ orders. Signing the note routes the patient to
 diagnostics, pharmacy or the check-out desk depending on what is outstanding. The **results
 page** is the printable sheet the patient carries forward.
 
+**The doctor's own list** — Consultation opens on everyone booked with that doctor today,
+arrived or not, so nobody has to be searched for. Clicking a patient gives a summary:
+allergies and history, a box for **why they came** — the clinic's own note, kept on the
+record and never printed on the prescription — and an **Order tests** button, because
+ordering is usually the next thing after writing that line. It works before the patient
+arrives, when there is no visit to hang a consultation off.
+
 **Diagnostics** — A doctor orders tests from the whole catalogue with no rates on the form,
 for a patient in the queue or for anyone found by search — a review patient needing a repeat
 panel has no visit open, and used to mean a request on paper. The order goes to the cashier,

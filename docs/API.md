@@ -140,6 +140,8 @@ status: `400` invalid input · `401` not signed in · `403` wrong role · `404` 
 | GET | `/prescriptions/patients/search?q=` | doctor (their own patients) |
 | POST | `/patients/:id/vitals` | reception, nurse, doctor |
 | GET | `/patients/by-phone?phone=` | desk roles |
+| GET | `/patients/:id/notes` | desk roles — why they came, on the hospital record |
+| POST | `/patients/:id/notes` | doctor, nurse, reception — never printed on the prescription |
 
 ## Billing
 Only the cashier raises a bill or takes money. The counsellor reads bills and
