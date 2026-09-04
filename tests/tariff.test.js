@@ -136,3 +136,35 @@ test('syncing the catalogue does not disturb what the clinic owns', () => {
     'no stock moves because the app restarted');
   assert.strictEqual(db.prepare('SELECT COUNT(*) AS c FROM patients').get().c, patients);
 });
+
+test('the consultation fee comes off the rate card, not the doctor\'s profile', () => {
+  /*
+   * This was the hole the card fell through. The commonest line on every bill
+   * was priced from doctor_profiles, which the card never touched — so a
+   * clinic that had just published "new consultation, 150" went on billing
+   * whatever figure had sat on that doctor since the day they were set up.
+   */
+  const card = db.prepare("SELECT price FROM services WHERE code = 'CONS-NEW'").get().price;
+  const followUp = db.prepare("SELECT price FROM services WHERE code = 'CONS-FU'").get().price;
+  assert.strictEqual(card, 150);
+  assert.strictEqual(followUp, 100);
+
+  const fees = db.prepare('SELECT consult_fee, follow_up_fee FROM doctor_profiles').all();
+  assert.ok(fees.length, 'the seed has doctors');
+  assert.ok(fees.every((f) => f.consult_fee <= card),
+    'no doctor is quoted above the published card');
+  assert.ok(fees.every((f) => f.follow_up_fee <= followUp));
+});
+
+test('publishing a card never raises a fee, and leaves a lower one alone', () => {
+  const one = db.prepare('SELECT user_id FROM doctor_profiles LIMIT 1').get().user_id;
+  db.prepare('UPDATE doctor_profiles SET consult_fee = 80, follow_up_fee = 60 WHERE user_id = ?').run(one);
+
+  // Re-publishing: the guard is "higher than the card", so 80 stays 80.
+  db.prepare("DELETE FROM settings WHERE key = 'tariff.2026_09'").run();
+  catalogue.sync({ quiet: true });
+
+  const after = db.prepare('SELECT consult_fee, follow_up_fee FROM doctor_profiles WHERE user_id = ?').get(one);
+  assert.strictEqual(after.consult_fee, 80, 'a doctor priced below the card keeps their figure');
+  assert.strictEqual(after.follow_up_fee, 60);
+});

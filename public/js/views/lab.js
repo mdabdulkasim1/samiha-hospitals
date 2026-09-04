@@ -529,13 +529,21 @@
   }
 
   /**
-   * The diagnostic report, in the same form as the prescription: the
-   * polyclinic's name and address at the top, the results in the middle, and a
-   * blank box at the bottom for the reporting doctor to stamp and sign by hand.
+   * The diagnostic report: the polyclinic's name and address at the top, the
+   * results in the middle, and a blank box at the bottom to be stamped and
+   * signed by hand.
    *
-   * No doctor is named on it. The referring doctor appears as their code —
-   * SPC-MHD-002 — which tells the clinic who ordered the test and tells a
-   * patient nothing they could use to reach a doctor directly.
+   * The signature is the laboratory's, not a doctor's. Whoever ran the sample
+   * and released the result is the one answering for what the report says, and
+   * on a report a patient carries to another hospital the question asked of
+   * that box is "which lab issued this" — so it names the lab in charge.
+   *
+   * The referring doctor is named in full at the top. A report travels: to a
+   * specialist, to another hospital, back to the doctor who asked for it —
+   * and every one of those readers needs to know who ordered it and why. A
+   * code alone means nothing outside this building. (The prescription is the
+   * opposite case and still carries the code: it goes home with the patient
+   * and on to a pharmacist.)
    */
   async function printReport(order, windowRef = null) {
     /*
@@ -595,7 +603,8 @@
           <div><div class="k">Reported</div>
             <div class="v">${UI.esc(UI.dateTime(o.reported_at || o.ordered_at))}</div></div>
           <div><div class="k">Order</div><div class="v">${UI.esc(o.order_no)}</div></div>
-          <div><div class="k">Referred by</div><div class="v">${UI.esc(o.doctor_code || '—')}</div></div>
+          <div><div class="k">Referred by</div><div class="v">${
+            UI.esc(o.doctor_name || o.doctor_code || '—')}</div></div>
         </div>
 
         ${measured.length ? `<table>
@@ -633,7 +642,7 @@
 
         <div class="stamp-row">
           <div class="stamp"><div class="box"></div>
-            <div class="cap">Doctor's stamp &amp; signature</div></div>
+            <div class="cap">Lab in-charge · stamp &amp; signature</div></div>
         </div>
 
         <div class="note">

@@ -476,10 +476,19 @@ test('printed sheets carry the code and never the doctor', async () => {
     .find((r) => r.id === order.id);
   assert.strictEqual(listed.doctor_code, placed.doctor_code);
 
+  /*
+   * The report is the one document that names the doctor, and deliberately.
+   * It travels — to a specialist, to another hospital, back to whoever asked
+   * for it — and a code means nothing to any of those readers. The
+   * prescription is the opposite: it goes home with the patient and on to a
+   * pharmacist, and carries the code alone.
+   */
   const report = (await api('GET', `/api/lab/orders/${order.id}/report`, undefined, 'admin')).body;
   assert.match(report.doctor_code, /^SPC-[A-Z]{3}-\d{3}$/);
   assert.strictEqual(report.doctor_code,
     (await api('GET', `/api/masters/staff/${ids.imran}`, undefined, 'admin')).body.doctor_code);
+  assert.match(report.doctor_name, /Imran/,
+    'and the referring doctor by name, which is what the sheet prints');
 });
 
 test('the bill and the discharge summary carry the code, not the doctor', async () => {

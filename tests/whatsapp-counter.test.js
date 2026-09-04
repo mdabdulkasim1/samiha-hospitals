@@ -16,6 +16,7 @@ process.env.BACKUP_HOUR = '';
 process.env.SESSION_SECRET = 'test-secret';
 
 require('../src/db/seed');
+const { db } = require('../src/db');
 const app = require('../src/server');
 const config = require('../src/config');
 const scheduling = require('../src/services/scheduling');
@@ -91,7 +92,17 @@ test('booking accepts a typed date and time, like a real chat line', async () =>
   const doctors = await say('1');
   assert.match(doctors.reply, /choose the doctor number/i);
   assert.match(doctors.reply, /Dr\. Imran Sheikh/);
-  assert.match(doctors.reply, /Consultation ₹500/);
+  /*
+   * The fee quoted on WhatsApp is the one on the published rate card, read
+   * here rather than written in — the card changes, and a patient being told
+   * one figure by the bot and charged another at the counter is the failure
+   * this asserts against.
+   */
+  const fee = db.prepare(
+    "SELECT consult_fee FROM doctor_profiles dp JOIN users u ON u.id = dp.user_id WHERE u.name LIKE 'Dr. Imran%'"
+  ).get().consult_fee;
+  assert.match(doctors.reply, new RegExp(`Consultation ₹${fee}`),
+    'the bot quotes what the counter will charge');
 
   const datePrompt = await say('1');
   assert.match(datePrompt.reply, /Consulting hours/);

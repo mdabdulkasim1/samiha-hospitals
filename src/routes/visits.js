@@ -450,13 +450,26 @@ router.post('/:id/prepare-bill', requireRole('cashier'), wrap((req, res) => {
     invoice = billing.createInvoice({ patientId: visit.patient_id, visitId: id, kind: 'opd', createdBy: req.user.id });
   }
 
-  // Consultation fee
+  /*
+   * The consultation fee, off the published rate card.
+   *
+   * This used to come from the doctor's own profile, which quietly put the
+   * commonest line on every bill outside the tariff altogether: the clinic
+   * published a card saying a new consultation is 150, and bills went on
+   * charging whatever figure had been sitting on that doctor's profile since
+   * the day they were set up. One rate card, one rate — so the services row
+   * decides, and the profile is the fallback for a clinic that has not priced
+   * consultations at all.
+   */
   const consultation = db.prepare('SELECT * FROM consultations WHERE visit_id = ?').get(id);
   if (consultation && !billing.hasItem(invoice.id, 'consultation', consultation.id)) {
     const profile = db.prepare('SELECT * FROM doctor_profiles WHERE user_id = ?').get(visit.doctor_id);
-    const fee = visit.is_new_patient
+    const card = db.prepare('SELECT price FROM services WHERE code = ? AND active = 1')
+      .get(visit.is_new_patient ? 'CONS-NEW' : 'CONS-FU');
+    const fallback = visit.is_new_patient
       ? (profile ? profile.consult_fee : 0)
       : (profile ? (profile.follow_up_fee || profile.consult_fee) : 0);
+    const fee = card && card.price > 0 ? card.price : fallback;
     const doctor = db.prepare('SELECT name FROM users WHERE id = ?').get(visit.doctor_id);
     if (fee > 0) {
       billing.addItem(invoice.id, {

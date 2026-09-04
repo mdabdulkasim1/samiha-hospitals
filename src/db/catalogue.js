@@ -265,7 +265,32 @@ function sync({ quiet = false } = {}) {
    */
   const published = db.prepare("SELECT value FROM settings WHERE key = ?").get(TARIFF_KEY);
   const tariff = rates.apply(db, { revalue: !published });
+
+  /*
+   * A doctor's own consultation fee is quoted at the front desk all day, and
+   * it sat outside the rate card entirely — every profile still carrying the
+   * figure it was set up with. Bills now take the fee from the card, so the
+   * profile is what reception quotes; leaving the two disagreeing would have
+   * the desk saying 500 and the bill printing 150.
+   *
+   * Only on the boot that publishes a new card, and only where a fee is
+   * higher than it — a doctor the clinic has deliberately priced above the
+   * card keeps their figure, and nothing here ever raises a fee.
+   */
+  let fees = 0;
   if (!published) {
+    const rate = (code) => {
+      const row = db.prepare('SELECT price FROM services WHERE code = ?').get(code);
+      return row && row.price > 0 ? row.price : null;
+    };
+    const consult = rate('CONS-NEW');
+    const followUp = rate('CONS-FU');
+    if (consult && followUp) {
+      fees = db.prepare(
+        `UPDATE doctor_profiles SET consult_fee = ?, follow_up_fee = ?
+          WHERE consult_fee > ? OR follow_up_fee > ?`
+      ).run(consult, followUp, consult, followUp).changes;
+    }
     db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)')
       .run(TARIFF_KEY, new Date().toISOString());
   }
@@ -274,12 +299,13 @@ function sync({ quiet = false } = {}) {
     tests: db.prepare('SELECT COUNT(*) AS c FROM lab_tests').get().c - before.tests,
   };
 
-  if (!quiet && (added.services || added.tests || tariff.updated || tariff.kept.length)) {
+  if (!quiet && (added.services || added.tests || tariff.updated || tariff.kept.length || fees)) {
     const bits = [];
     if (added.services) bits.push(`${added.services} service(s) added`);
     if (added.tests) bits.push(`${added.tests} diagnostic(s) added`);
     if (tariff.updated) bits.push(`${tariff.updated} rate(s) set from the tariff`);
     if (tariff.kept.length) bits.push(`${tariff.kept.length} rate(s) left as the clinic set them`);
+    if (fees) bits.push(`${fees} consultation fee(s) brought onto the card`);
     console.log(`[catalogue] ${bits.join(', ')}.`);
     for (const k of tariff.kept) {
       console.log(`[catalogue]   kept ${k.code} at ${k.at} — the tariff says ${k.wanted}`);

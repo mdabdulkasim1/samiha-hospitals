@@ -311,9 +311,14 @@ router.post('/orders/:id/cancel', requireRole('lab', 'doctor'), wrap((req, res) 
 router.get('/orders/:id/report', viewRoles, wrap((req, res) => {
   const id = int(req.params.id);
   /*
-   * A report leaves the building, so the referring doctor appears on it as
-   * their code and nothing else. `doctor_name` is kept for the screens inside
-   * the ERP; the printed sheet uses only `doctor_code`.
+   * The referring doctor is named on a report, and named in full.
+   *
+   * A report travels — to a specialist, to another hospital, back to whoever
+   * asked for it — and every one of those readers has to know who ordered it.
+   * A code means nothing outside this building. The prescription is the
+   * opposite case and still carries the code alone: it goes home with the
+   * patient and on to a pharmacist, neither of whom needs a way to reach the
+   * doctor directly. Both fields travel; the sheet decides which it prints.
    */
   const order = db.prepare(
     `SELECT o.*, p.uhid, p.first_name, p.last_name, p.age_years, p.gender, p.phone,
