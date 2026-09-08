@@ -137,7 +137,7 @@
    * from the company, which is what makes swapping the artwork a one-line
    * change rather than a search through the source.
    */
-  const LOGO_FULL = '/assets/logo.svg';
+  const LOGO_FULL = '/api/branding/full';
 
   // ------------------------------------------------------------------ login
   function renderLogin() {
@@ -145,7 +145,8 @@
     document.getElementById('root').innerHTML = `
       <div class="login-shell">
         <div class="login-hero">
-          <img class="logo-full" src="${LOGO_FULL}" alt="AKR General Trading L.L.C">
+          <img class="logo-full" src="${LOGO_FULL}" alt="AKR General Trading L.L.C"
+               onerror="this.onerror=null;this.src='/assets/logo.svg'">
           <h1>Trading ERP</h1>
           <p>One system for both sides of the trade — the quotation you ask a manufacturer for and
              the LPO you send them, and the quotation you give a client and the LPO they send back —
@@ -221,7 +222,8 @@
       <div class="app">
         <aside class="sidebar">
           <div class="brand">
-            <div class="mark"><img src="${UI.esc(APP.company.logo || '/assets/logo-icon.svg')}" alt=""></div>
+            <div class="mark"><img src="${UI.esc(APP.company.logo || '/assets/logo-icon.svg')}" alt=""
+                 onerror="this.onerror=null;this.src='/assets/logo-icon.svg'"></div>
             <div class="brand-text"><strong>AKR</strong><span>General Trading</span></div>
           </div>
           <nav class="nav" id="nav"></nav>

@@ -12,6 +12,7 @@
     ['terms', 'Payment terms'],
     ['conditions', 'Terms & conditions'],
     ['numbers', 'Document numbers'],
+    ['branding', 'Logo'],
     ['locations', 'Locations'],
     ['heads', 'Expense heads'],
   ];
@@ -116,6 +117,7 @@
         }
         if (tab === 'conditions') { paintConditions(pane); return; }
         if (tab === 'numbers') { paintNumbers(pane, isAdmin); return; }
+        if (tab === 'branding') { paintBranding(pane, isAdmin); return; }
         if (tab === 'locations') {
           APP.actions(isAdmin ? [{ id: 'add', label: '+ Location', kind: 'gold', onClick: () => editLocation() }] : []);
           pane.innerHTML = `<div class="card">${UI.table([
@@ -372,6 +374,88 @@
         APP.reload();
       },
     });
+  }
+
+  /*
+   * The company's own artwork.
+   *
+   * A logo is a fact about the company, not source code, so it is uploaded
+   * here rather than committed and deployed. Whatever is put here goes on the
+   * sidebar, the sign-in page, the head of every printed document and the
+   * watermark behind them, at once.
+   */
+  async function paintBranding(pane, isAdmin) {
+    APP.actions([]);
+    pane.innerHTML = UI.loading();
+    const data = await API.get('/api/masters/branding');
+
+    pane.innerHTML = `
+      <div class="card">
+        <h3>Logo</h3>
+        <div class="card-sub">Upload the company's own artwork. It replaces the drawn placeholder
+          everywhere at once — the sidebar, the sign-in page, the head of every printed document,
+          and the watermark ghosted behind them. SVG is sharpest; a PNG with a transparent
+          background works just as well.</div>
+        <div class="grid g2">
+          ${data.slots.map((s) => `
+            <div class="brand-slot">
+              <div class="k">${esc(s.label)}</div>
+              <div class="brand-preview"><img src="${esc(s.url)}" alt=""></div>
+              <div class="row-between mt">
+                <span class="muted small">${s.uploaded
+                  ? `${esc((s.mime || '').replace('image/', '').toUpperCase())} ·
+                     ${Math.max(1, Math.round((s.size_bytes || 0) / 1024))} KB`
+                  : 'the drawn placeholder'}</span>
+                ${isAdmin ? `<span class="btn-row">
+                  <label class="btn ghost sm" style="cursor:pointer;margin:0">Upload
+                    <input type="file" hidden data-slot="${esc(s.slot)}"
+                           accept=".svg,.png,.jpg,.jpeg,.webp"></label>
+                  ${s.uploaded ? `<button class="btn ghost sm" data-clear="${esc(s.slot)}">Revert</button>` : ''}
+                </span>` : ''}
+              </div>
+            </div>`).join('')}
+        </div>
+        <div id="brand-out"></div>
+        <div class="muted small mt">The watermark uses the mark on its own, at four per cent —
+          faint enough not to compete with a line of text.</div>
+      </div>`;
+
+    if (!isAdmin) return;
+    const out = pane.querySelector('#brand-out');
+
+    pane.querySelectorAll('input[data-slot]').forEach((input) => {
+      input.addEventListener('change', async () => {
+        const file = input.files[0];
+        if (!file) return;
+        out.innerHTML = UI.loading();
+        try {
+          const reader = new FileReader();
+          const data64 = await new Promise((resolve, reject) => {
+            reader.onload = () => resolve(String(reader.result).replace(/^data:[^;]+;base64,/, ''));
+            reader.onerror = () => reject(new Error('That file could not be read.'));
+            reader.readAsDataURL(file);
+          });
+          await API.post(`/api/masters/branding/${input.dataset.slot}`, {
+            data: data64, mime: file.type || null, filename: file.name,
+          });
+          out.innerHTML = '';
+          UI.ok('Logo updated. It is on every screen and every document from now on.');
+          // The shell is holding the old one.
+          await APP.loadMasters(true);
+          window.location.reload();
+        } catch (err) {
+          out.innerHTML = `<div class="alert danger mt">${esc(err.message)}</div>`;
+        }
+      });
+    });
+
+    pane.querySelectorAll('[data-clear]').forEach((b) => b.addEventListener('click', async () => {
+      const sure = await UI.confirm('Go back to the drawn placeholder?', { danger: true });
+      if (!sure) return;
+      await API.del(`/api/masters/branding/${b.dataset.clear}`);
+      UI.ok('Reverted.');
+      window.location.reload();
+    }));
   }
 
   const save = async (label, fn) => {

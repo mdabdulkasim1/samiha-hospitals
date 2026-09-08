@@ -357,6 +357,9 @@ router.post('/terms/reorder', keeper, wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// -------------------------------------------------------------------- branding
+router.use('/branding', require('./branding').admin);
+
 // ---------------------------------------------------------- document numbers
 /*
  * The reference each kind of document carries.

@@ -10,7 +10,8 @@ const app = express();
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
 
-app.use(express.json({ limit: '8mb' }));       // room for a pasted item list
+// Room for a pasted item list, and for an LPO scanned to PDF arriving as base64.
+app.use(express.json({ limit: '32mb' }));
 app.use(express.text({ type: 'text/csv', limit: '8mb' }));
 app.use(express.urlencoded({ extended: false }));
 
@@ -52,6 +53,8 @@ app.get('/api/health', (_req, res) => {
 });
 
 app.use('/api/auth', require('./routes/auth'));
+// The logo is served before anybody signs in — it is on the sign-in page.
+app.use('/api/branding', require('./routes/branding'));
 
 app.use('/api', auth.requireAuth);
 app.use('/api/me', require('./routes/me'));
@@ -61,6 +64,7 @@ app.use('/api/partners', require('./routes/partners'));
 app.use('/api/purchase', require('./routes/purchase'));
 app.use('/api/sales', require('./routes/sales'));
 app.use('/api/stock', require('./routes/stock'));
+app.use('/api/attachments', require('./routes/attachments'));
 app.use('/api/accounts', require('./routes/accounts'));
 app.use('/api/reports', require('./routes/reports'));
 app.use('/api/admin', require('./routes/admin'));

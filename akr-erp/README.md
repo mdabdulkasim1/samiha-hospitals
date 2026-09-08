@@ -130,6 +130,35 @@ than the volume.
   and commit the result. The lockfile records the `engines` range too, so even a Node-version change
   de-synchronises it.
 
+## Attachments
+
+The client's LPO arrives as a PDF, and a year later somebody needs to see **the document they
+actually signed**, not our transcription of it. So it is kept: on the **Client LPOs** screen, drop
+the file onto the form as the order is recorded, or onto the order afterwards, and it opens in a tab
+from then on.
+
+Files live beside the database on the same volume, so one backup covers both. PDF, image, Word or
+Excel, up to 12 MB. What a file *is* is decided by its bytes, not by its name — a shell script called
+`invoice.pdf` is refused — and the stored name is generated here, because a filename from outside has
+no business deciding a path.
+
+The same mechanism is available on quotations, LPOs, goods receipts, invoices, payments and expenses;
+the desk that owns the document is the desk that may attach to it, and everyone who can see the
+document can read what is filed against it.
+
+### Who to ring
+
+A client's LPO carries two different people, and a delivery note with only one of them sends the
+driver back to the office:
+
+| | |
+|---|---|
+| **Purchase officer** + mobile | settles a query about the order itself |
+| **Site contact** + mobile, and the **delivery location** | who the driver rings at the gate |
+
+The site contact and the location print on the delivery note, which is what the driver has in his
+hand.
+
 ## The five applications
 
 Everything the company trades is for one of five jobs, and that is a field on the item and a title on
@@ -428,9 +457,11 @@ would hide them.
 The falcon is ghosted behind every printed page at four to five per cent — enough to tint the paper,
 not enough to compete with a line of text, and repeated on each sheet of a document that runs long.
 
-The mark itself is `public/assets/logo.svg` and `logo-icon.svg`, drawn here as SVG. **Drop the
-company's own artwork over those two files** and the whole system and every printed document picks
-it up; nothing else refers to them.
+**Upload the company's own artwork under Masters → Logo.** A logo is a fact about the company, not
+source code, so it is stored beside the database rather than committed and deployed: whatever is
+uploaded goes on the sidebar, the sign-in page, the head of every printed document and the watermark
+behind them, at once and with no redeploy. SVG is sharpest; a PNG with a transparent background works
+just as well. The drawn placeholder in `public/assets` is only what shows until then.
 
 ## How the code is laid out
 

@@ -387,7 +387,12 @@
             ['Their LPO', `<b>${esc(o.client_lpo_no)}</b> · ${UI.date(o.client_lpo_date)}`],
             ['Our quotation', esc(o.quote_no || '—')],
             ['Project', esc(o.project || '—')],
+            ['Their purchase officer', esc([o.purchase_officer, o.purchase_officer_mobile]
+              .filter(Boolean).join(' · ') || '—')],
             ['Delivery by', o.delivery_date ? UI.date(o.delivery_date) : '—'],
+            ['Delivery location', esc(o.delivery_location || '—')],
+            ['Site contact', esc([o.delivery_contact, o.delivery_mobile]
+              .filter(Boolean).join(' · ') || '—')],
             ['Deliver to', esc(o.delivery_address || '—')],
             ['Payment terms', esc(d.termsText)],
           ])}</div>
@@ -429,7 +434,14 @@
         ${d.purchaseOrders.length ? `<h4 class="mt">Bought in against this order</h4>${UI.table([
           { label: 'LPO', key: 'lpo_no' }, { label: 'Date', render: (r) => UI.date(r.lpo_date) },
           { label: 'Total', num: true, render: (r) => UI.money(r.total, { symbol: false }) },
-          { label: 'Status', render: (r) => UI.statusBadge(r.status) }], d.purchaseOrders)}` : ''}`,
+          { label: 'Status', render: (r) => UI.statusBadge(r.status) }], d.purchaseOrders)}` : ''}
+        <div id="so-attachments"></div>`,
+      onMount(modal) {
+        ATTACH.panel(modal.querySelector('#so-attachments'), {
+          entityType: 'sales_order', entityId: o.id, kind: "Client's LPO",
+          title: 'Their paperwork',
+        });
+      },
       footer: `<button class="btn ghost" data-act="__close">Close</button>
         ${APP.can(['kam']) ? '<button class="btn ghost" data-act="plan">What to buy in</button>' : ''}
         ${APP.can(['accounts']) && d.schedule.advance > o.advance_received
@@ -515,13 +527,32 @@
             hint: 'Decides the advance, the cheque at the gate and the due date.' })}
           ${UI.field({ name: 'delivery_date', label: 'Delivery wanted by', type: 'date' })}
         </div>
-        <div class="grid g2">
+        <div class="grid g3">
           ${UI.field({ name: 'project', label: 'Project', value: q ? q.project || '' : '' })}
-          ${UI.field({ name: 'delivery_address', label: 'Deliver to', rows: 2 })}
+          ${UI.field({ name: 'purchase_officer', label: 'Their purchase officer',
+            placeholder: 'Name' })}
+          ${UI.field({ name: 'purchase_officer_mobile', label: "Purchase officer's mobile",
+            type: 'tel', placeholder: '05X XXX XXXX',
+            hint: 'Who to ring about the order itself.' })}
         </div>
+        <div class="grid g3">
+          ${UI.field({ name: 'delivery_location', label: 'Delivery location',
+            placeholder: 'Mirdif, Dubai', hint: 'Where, in short — for the driver.' })}
+          ${UI.field({ name: 'delivery_contact', label: 'Site contact', placeholder: 'Name' })}
+          ${UI.field({ name: 'delivery_mobile', label: 'Delivery mobile', type: 'tel',
+            placeholder: '05X XXX XXXX', hint: 'Who the driver rings at the gate.' })}
+        </div>
+        ${UI.field({ name: 'delivery_address', label: 'Full delivery address', rows: 2 })}
         <h4 class="mt">Lines</h4>
         <div id="lines"></div>
         ${UI.field({ name: 'notes', label: 'Notes', rows: 2 })}
+        <h4 class="mt">The client's LPO document</h4>
+        <div class="muted small mb">Attach their PDF once the order is saved — it is kept with the
+          order so it can be opened years later.</div>
+        <label class="dropzone" id="lpo-drop">
+          <input type="file" hidden id="lpo-file" accept=".pdf,.jpg,.jpeg,.png,.webp,.docx,.xlsx">
+          <span id="lpo-drop-text">Drop their LPO here, or <b>choose the file</b></span>
+        </label>
         ${q ? `<input type="hidden" name="quotation_id" value="${q.id}">` : ''}
       </form>`,
       footer: `<button class="btn ghost" data-act="__close">Cancel</button>
@@ -530,6 +561,30 @@
         modal._lines = LINES.LineEditor(modal.querySelector('#lines'), {
           side: 'sell', lines: quotation ? quotation.items : [],
         });
+
+        /*
+         * The file is held until the order exists, because an attachment needs
+         * something to be attached to. Chosen or dropped, either way.
+         */
+        const zone = modal.querySelector('#lpo-drop');
+        const input = modal.querySelector('#lpo-file');
+        const label = modal.querySelector('#lpo-drop-text');
+        const take = (file) => {
+          if (!file) return;
+          modal._lpoFile = file;
+          label.innerHTML = `<b>${UI.esc(file.name)}</b> — ${ATTACH.size(file.size)}, `
+            + 'attached when the order is saved';
+        };
+        input.addEventListener('change', () => take(input.files[0]));
+        ['dragenter', 'dragover'].forEach((e) => zone.addEventListener(e, (ev) => {
+          ev.preventDefault();
+          zone.classList.add('over');
+        }));
+        ['dragleave', 'drop'].forEach((e) => zone.addEventListener(e, (ev) => {
+          ev.preventDefault();
+          zone.classList.remove('over');
+        }));
+        zone.addEventListener('drop', (ev) => take(ev.dataTransfer.files[0]));
       },
       async onAction(act, modal) {
         if (act !== 'save') return;
@@ -539,6 +594,26 @@
         if (!items.length) { UI.err('An order needs at least one line.'); return 'keep'; }
         const saved = await API.post('/api/sales/orders', { ...UI.formValues(form), items });
         UI.ok(`${saved.so_no} confirmed — the material is now committed in the stock register.`);
+
+        // The order exists now, so the file has something to hang on. A failure
+        // here must not read as a failure to record the order.
+        if (modal._lpoFile) {
+          try {
+            const reader = new FileReader();
+            const data = await new Promise((resolve, reject) => {
+              reader.onload = () => resolve(String(reader.result).replace(/^data:[^;]+;base64,/, ''));
+              reader.onerror = () => reject(new Error('That file could not be read.'));
+              reader.readAsDataURL(modal._lpoFile);
+            });
+            await API.post(`/api/attachments/sales_order/${saved.id}`, {
+              data, filename: modal._lpoFile.name, mime: modal._lpoFile.type || null,
+              kind: "Client's LPO",
+            });
+            UI.ok('Their LPO is attached to the order.');
+          } catch (err) {
+            UI.err(`${saved.so_no} was saved, but the file was not attached: ${err.message}`);
+          }
+        }
         APP.reload();
       },
     });
@@ -587,6 +662,8 @@
             ['Against', esc(n.so_no ? `${n.so_no} · their LPO ${n.client_lpo_no || ''}` : '—')],
             ['Delivered on', UI.date(n.delivery_date)],
             ['Address', esc(n.delivery_address || '—')],
+            ['Site contact', esc([n.delivery_contact, n.delivery_mobile]
+              .filter(Boolean).join(' · ') || '—')],
             ['Vehicle / driver', esc([n.vehicle_no, n.driver_name].filter(Boolean).join(' · ') || '—')],
           ])}</div>
           <div>${UI.facts([

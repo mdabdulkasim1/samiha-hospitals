@@ -449,12 +449,15 @@ router.post('/orders', seller, wrap(async (req, res) => {
     const soNo = ids.docNo('salesOrder', company.code);
     const info = db.prepare(`
       INSERT INTO sales_orders (company_id, so_no, client_lpo_no, client_lpo_date, partner_id,
-        quotation_id, application_id, project, order_date, delivery_date, delivery_address,
-        payment_terms_id, currency, subtotal, discount, vat_amount, total, advance_required,
-        notes, created_by)
+        quotation_id, application_id, project, order_date, delivery_date, purchase_officer,
+        purchase_officer_mobile, delivery_contact, delivery_mobile, delivery_location,
+        delivery_address, payment_terms_id, currency, subtotal, discount, vat_amount, total,
+        advance_required, notes, created_by)
       VALUES (@company_id, @so_no, @client_lpo_no, @client_lpo_date, @partner_id, @quotation_id,
-        @application_id, @project, @order_date, @delivery_date, @delivery_address, @payment_terms_id,
-        @currency, @subtotal, @discount, @vat_amount, @total, @advance_required, @notes, @created_by)`).run({
+        @application_id, @project, @order_date, @delivery_date, @purchase_officer,
+        @purchase_officer_mobile, @delivery_contact, @delivery_mobile, @delivery_location,
+        @delivery_address, @payment_terms_id, @currency, @subtotal, @discount, @vat_amount, @total,
+        @advance_required, @notes, @created_by)`).run({
       company_id: company.id,
       so_no: soNo,
       client_lpo_no: v.str(b.client_lpo_no),
@@ -465,6 +468,11 @@ router.post('/orders', seller, wrap(async (req, res) => {
       project: v.str(b.project),
       order_date: orderDate,
       delivery_date: v.date(b.delivery_date),
+      purchase_officer: v.str(b.purchase_officer) || client.contact_person,
+      purchase_officer_mobile: v.phone(b.purchase_officer_mobile) || client.mobile,
+      delivery_contact: v.str(b.delivery_contact),
+      delivery_mobile: v.phone(b.delivery_mobile),
+      delivery_location: v.str(b.delivery_location),
       delivery_address: v.str(b.delivery_address) || client.address,
       payment_terms_id: paymentTermsId,
       currency: v.str(b.currency, client.currency || 'AED'),
@@ -575,6 +583,8 @@ router.get('/deliveries/:id', wrap(async (req, res) => {
   const row = db.prepare(`
     SELECT d.*, p.name AS client_name, p.code AS client_code, p.trn AS client_trn,
            p.address AS client_address, o.so_no, o.client_lpo_no, o.project,
+           o.delivery_contact, o.delivery_mobile, o.delivery_location,
+           o.purchase_officer, o.purchase_officer_mobile,
            a.name AS application_name, c.name AS company_name, c.code AS company_code,
            c.trn AS company_trn, c.address AS company_address, c.phone AS company_phone,
            t.name AS terms_name, u.name AS created_by_name
@@ -664,7 +674,8 @@ router.post('/deliveries', shipper, wrap(async (req, res) => {
       location_id: location ? location.id : null,
       application_id: b.application_id || (order ? order.application_id : null),
       delivery_date: deliveredOn,
-      delivery_address: v.str(b.delivery_address) || (order ? order.delivery_address : null),
+      delivery_address: v.str(b.delivery_address)
+        || (order ? [order.delivery_location, order.delivery_address].filter(Boolean).join(' — ') : null),
       vehicle_no: v.str(b.vehicle_no),
       driver_name: v.str(b.driver_name),
       received_by: v.str(b.received_by),

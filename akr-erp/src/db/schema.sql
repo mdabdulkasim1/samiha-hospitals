@@ -553,6 +553,19 @@ CREATE TABLE IF NOT EXISTS sales_orders (
   project          TEXT,
   order_date       TEXT NOT NULL DEFAULT (date('now')),
   delivery_date    TEXT,
+  /*
+   * Who to ring, on each side of the order.
+   *
+   * The client's purchase officer settles a query about the order itself; the
+   * site contact is who the driver rings when he is at the gate and nobody is
+   * expecting him. They are different people, and a delivery note carrying
+   * only one of them sends the driver back to the office.
+   */
+  purchase_officer        TEXT,
+  purchase_officer_mobile TEXT,
+  delivery_contact        TEXT,
+  delivery_mobile         TEXT,
+  delivery_location       TEXT,           -- 'Mirdif, Dubai' — where, in short
   delivery_address TEXT,
   payment_terms_id INTEGER REFERENCES payment_terms(id),
   currency         TEXT NOT NULL DEFAULT 'AED',
@@ -864,6 +877,33 @@ CREATE TABLE IF NOT EXISTS document_series (
   updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE (company_id, doc_kind)
 );
+
+/*
+ * The paperwork behind a document.
+ *
+ * A client's LPO arrives as a PDF, and a year later somebody needs to see the
+ * thing they actually signed — not our transcription of it. The file is kept
+ * beside the database on the same volume, so a backup of one is a backup of
+ * both, and the row here records what it is and who put it there.
+ *
+ * `stored_name` is generated, never the name the file arrived with: a filename
+ * from outside is untrusted input, and it has no business deciding a path.
+ */
+CREATE TABLE IF NOT EXISTS attachments (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  company_id   INTEGER REFERENCES companies(id),
+  entity_type  TEXT NOT NULL,              -- sales_order, purchase_order, ...
+  entity_id    INTEGER NOT NULL,
+  kind         TEXT,                       -- 'Client LPO', 'Signed DN', ...
+  filename     TEXT NOT NULL,              -- as it arrived, for display only
+  stored_name  TEXT NOT NULL UNIQUE,       -- what it is called on disk
+  mime         TEXT,
+  size_bytes   INTEGER NOT NULL DEFAULT 0,
+  notes        TEXT,
+  uploaded_by  INTEGER REFERENCES users(id),
+  uploaded_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_attachments_entity ON attachments(entity_type, entity_id);
 
 -- Notifications: work arriving at somebody's desk.
 CREATE TABLE IF NOT EXISTS notifications (

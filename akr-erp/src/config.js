@@ -50,6 +50,14 @@ module.exports = {
   dbFile,
   volumePath,
   /*
+   * Where uploaded paperwork is kept: beside the database, on the same volume,
+   * so that backing one up backs up the other and neither can survive without
+   * the other making sense.
+   */
+  attachmentsDir: path.resolve(root, env.ATTACHMENTS_DIR
+    || (volumePath ? path.join(volumePath, 'attachments') : './data/attachments')),
+  maxAttachmentMb: Number(env.MAX_ATTACHMENT_MB || 12),
+  /*
    * True when the database sits inside the application directory in production
    * — which on a container platform means it is rebuilt away on the next
    * deploy, taking the books with it.

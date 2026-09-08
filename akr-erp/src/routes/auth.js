@@ -6,6 +6,7 @@ const auth = require('../lib/auth');
 const audit = require('../lib/audit');
 const v = require('../lib/validate');
 const { wrap, badRequest, unauthorized } = require('../lib/http');
+const branding = require('../services/branding');
 
 const router = express.Router();
 
@@ -26,7 +27,8 @@ function context(user) {
       id: company.id, code: company.code, name: company.name, legalName: company.legal_name,
       trn: company.trn, address: company.address, phone: company.phone, email: company.email,
       website: company.website, currency: company.currency, vatPercent: company.vat_percent,
-      logo: config.company.logo, logoFull: config.company.logoFull,
+      // Whatever the company has uploaded, falling back to the bundled file.
+      logo: branding.urlFor('mark'), logoFull: branding.urlFor('full'),
       bankName: company.bank_name, bankAccount: company.bank_account, iban: company.iban, swift: company.swift,
     } : null,
     group: {

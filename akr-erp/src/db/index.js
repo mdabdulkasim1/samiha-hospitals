@@ -28,6 +28,10 @@ function migrate() {
   for (const col of ['attention', 'incoterms', 'authority']) {
     ensureColumn('purchase_orders', col, 'TEXT');
   }
+  for (const col of ['purchase_officer', 'purchase_officer_mobile', 'delivery_contact',
+    'delivery_mobile', 'delivery_location']) {
+    ensureColumn('sales_orders', col, 'TEXT');
+  }
   return db;
 }
 

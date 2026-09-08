@@ -385,6 +385,8 @@
         ${meta([
           ['Delivery note no.', d.dn_no],
           ['Date', UI.date(d.delivery_date)],
+          ['Location', d.delivery_location || '—'],
+          ['Site contact', [d.delivery_contact, d.delivery_mobile].filter(Boolean).join(' · ') || '—'],
           ['Vehicle', d.vehicle_no || '—'],
           ['Driver', d.driver_name || '—'],
         ])}
