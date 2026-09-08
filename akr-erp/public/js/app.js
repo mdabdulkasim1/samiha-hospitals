@@ -19,6 +19,9 @@
       { id: 'invoices', label: 'Tax Invoices', icon: '₳', roles: ['accounts', 'kam', 'sales'] },
     ] },
     { group: 'Buying — from manufacturers', items: [
+      // The buy side starts here: nothing is quoted by a maker that we did not
+      // ask for, so the enquiry sits above the quotation on the menu too.
+      { id: 'supplier-enquiries', label: 'Enquiries to Manufacturers', icon: '☏', roles: ['kam', 'accounts'] },
       { id: 'supplier-quotations', label: 'Supplier Quotations', icon: '◨', roles: ['kam', 'accounts'] },
       { id: 'purchase-orders', label: 'Our LPOs', icon: '⇧', roles: ['kam', 'logistics', 'accounts'] },
       { id: 'goods-receipts', label: 'Goods Receipts', icon: '⇤', roles: ['logistics', 'kam', 'accounts'] },

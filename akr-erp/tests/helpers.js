@@ -57,4 +57,19 @@ async function start() {
   return { app, server, base, client, signIn, stop: () => new Promise((r) => server.close(r)) };
 }
 
-module.exports = { freshEnv, start };
+/**
+ * The buy side begins with an enquiry: the company's rule is that a
+ * manufacturer's quotation is always the answer to one, so a test that wants a
+ * price raises the enquiry first, the way a key account manager does.
+ */
+async function askForPrice(client, body = {}) {
+  const enquiry = await client.post('/api/purchase/enquiries', {
+    partner_id: body.partner_id,
+    subject: body.subject || 'Price please',
+    application_id: body.application_id,
+    project: body.project,
+  });
+  return client.post('/api/purchase/quotations', { ...body, enquiry_id: enquiry.id });
+}
+
+module.exports = { freshEnv, start, askForPrice };

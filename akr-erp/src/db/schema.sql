@@ -267,6 +267,7 @@ CREATE TABLE IF NOT EXISTS supplier_quotations (
   quote_no         TEXT NOT NULL UNIQUE,
   partner_id       INTEGER NOT NULL REFERENCES partners(id),
   application_id   INTEGER REFERENCES applications(id),
+  enquiry_id       INTEGER REFERENCES enquiries(id),  -- the RFQ it answers
   supplier_ref     TEXT,                      -- their own quotation number
   subject          TEXT,
   project          TEXT,
@@ -456,10 +457,23 @@ CREATE TABLE IF NOT EXISTS supplier_invoice_items (
 -- SELL SIDE — AKR to the client
 -- =============================================================================
 
+/*
+ * An enquiry, on either side of the trade.
+ *
+ *   side = 'client'   — what a client has asked us to price
+ *   side = 'supplier' — what we have asked a manufacturer to price (an RFQ)
+ *
+ * They are the same document read in two directions, so they are one table:
+ * somebody wants a price, it is logged against a partner and an application,
+ * and it stays open until a quotation answers it. The company's rule is that
+ * no manufacturer's quotation exists without one, which is enforced where the
+ * supplier quotation is raised.
+ */
 CREATE TABLE IF NOT EXISTS enquiries (
   id             INTEGER PRIMARY KEY AUTOINCREMENT,
   company_id     INTEGER NOT NULL REFERENCES companies(id),
   enquiry_no     TEXT NOT NULL UNIQUE,
+  side           TEXT NOT NULL DEFAULT 'client' CHECK (side IN ('client','supplier')),
   partner_id     INTEGER REFERENCES partners(id),
   client_name    TEXT,                        -- before they are on the books
   contact_person TEXT,

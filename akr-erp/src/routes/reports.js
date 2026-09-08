@@ -25,7 +25,8 @@ router.get('/dashboard', wrap(async (req, res) => {
   const one = (sql, params = []) => db.prepare(sql).get(...params);
 
   const sell = {
-    enquiries_open: one("SELECT COUNT(*) AS c FROM enquiries WHERE status IN ('open','quoted')").c,
+    enquiries_open: one(
+      "SELECT COUNT(*) AS c FROM enquiries WHERE side = 'client' AND status IN ('open','quoted')").c,
     quotations_open: one("SELECT COUNT(*) AS c FROM sales_quotations WHERE status IN ('draft','sent','under_review')").c,
     quotations_value: money
       ? one("SELECT COALESCE(SUM(total), 0) AS t FROM sales_quotations WHERE status IN ('sent','under_review')").t
@@ -48,6 +49,9 @@ router.get('/dashboard', wrap(async (req, res) => {
   };
 
   const buy = {
+    // What we have asked the makers to price and not yet had an answer to.
+    enquiries_open: one(
+      "SELECT COUNT(*) AS c FROM enquiries WHERE side = 'supplier' AND status = 'open'").c,
     quotations_awaiting: one("SELECT COUNT(*) AS c FROM supplier_quotations WHERE status = 'requested'").c,
     quotations_to_approve: one("SELECT COUNT(*) AS c FROM supplier_quotations WHERE status = 'received'").c,
     lpos_draft: one("SELECT COUNT(*) AS c FROM purchase_orders WHERE status = 'draft'").c,

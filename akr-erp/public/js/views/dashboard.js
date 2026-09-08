@@ -28,6 +28,9 @@
       ];
 
       const buy = [
+        UI.stat({ label: 'Enquiries out', value: UI.num(d.buy.enquiries_open),
+          note: 'asked of the makers, no price back yet', route: '#/supplier-enquiries',
+          kind: 'info' }),
         UI.stat({ label: 'Prices to confirm', value: UI.num(d.buy.quotations_to_approve),
           note: 'supplier quotations in, not yet approved', route: '#/supplier-quotations',
           kind: d.buy.quotations_to_approve ? 'gold' : '' }),

@@ -21,8 +21,12 @@
               .map((s) => `<option value="${s}">${UI.titleise(s)}</option>`).join('')}
           </select></label>`,
         actions: APP.can(['kam'])
-          ? [{ id: 'new', label: '+ Ask for a price', kind: 'gold',
-            onClick: () => openSupplierQuotation() }] : [],
+          ? [{ id: 'new', label: '+ Enter a price we asked for', kind: 'gold',
+            onClick: async () => {
+              // Their price answers an enquiry we raised; ask which one.
+              const enquiry = await ENQUIRIES.pickOpen('supplier');
+              if (enquiry) openSupplierQuotation(null, { enquiry });
+            } }] : [],
         async onLoad(box, values) {
           const v = values();
           box.innerHTML = UI.loading();
@@ -61,6 +65,8 @@
           + 'No LPO can be raised from this quotation until somebody approves the price.</div>' : ''}
         <div class="grid g2 mb">
           <div>${UI.facts([
+            ['Against our enquiry', q.enquiry_no
+              ? `<span class="mono">${esc(q.enquiry_no)}</span>` : '—'],
             ['Their reference', esc(q.supplier_ref || '—')],
             ['Subject', esc(q.subject || '—')],
             ['Project', esc(q.project || '—')],
@@ -102,21 +108,30 @@
     });
   }
 
-  async function openSupplierQuotation(existing, { fromQuotation } = {}) {
+  async function openSupplierQuotation(existing, { fromQuotation, enquiry } = {}) {
     const suppliers = (await API.get('/api/partners?type=supplier&limit=500')).rows;
     const q = existing ? existing.quotation : null;
     const sq = fromQuotation ? fromQuotation.quotation : null;
+    // A new quotation always answers an enquiry: if the caller did not bring
+    // one, ask which, rather than letting a price appear out of nowhere.
+    if (!q && !enquiry) {
+      enquiry = await ENQUIRIES.pickOpen('supplier');
+      if (!enquiry) return;
+    }
 
     UI.modal({
-      title: q ? `${q.quote_no} — enter their prices` : 'Ask a manufacturer for a price',
+      title: q ? `${q.quote_no} — enter their prices`
+        : `Their price against ${enquiry.enquiry_no}`,
       size: 'wide',
       body: `<form id="sq-form">
         <div class="grid g3">
           ${UI.field({ name: 'partner_id', label: 'Manufacturer / supplier', required: true,
-            value: q ? q.partner_id : '', blank: 'Choose…',
-            options: suppliers.map((s) => ({ value: s.id, label: s.name })), disabled: !!q })}
+            value: q ? q.partner_id : (enquiry ? enquiry.partner_id : ''), blank: 'Choose…',
+            options: suppliers.map((s) => ({ value: s.id, label: s.name })),
+            disabled: Boolean(q || (enquiry && enquiry.partner_id)) })}
           ${UI.field({ name: 'application_id', label: 'Application', blank: 'Take it from the lines',
-            value: q ? q.application_id : (sq ? sq.application_id : ''), options: APP.applicationOptions() })}
+            value: q ? q.application_id : (enquiry && enquiry.application_id)
+              || (sq ? sq.application_id : ''), options: APP.applicationOptions() })}
           ${UI.field({ name: 'payment_terms_id', label: 'Their payment terms',
             blank: 'The terms on their account', value: q ? q.payment_terms_id : '',
             options: APP.termsOptions('supplier') })}
@@ -131,19 +146,24 @@
         </div>
         <div class="grid g2">
           ${UI.field({ name: 'subject', label: 'Subject',
-            value: q ? q.subject || '' : (sq ? sq.subject || '' : '') })}
+            value: q ? q.subject || '' : (enquiry && enquiry.subject) || (sq ? sq.subject || '' : '') })}
           ${UI.field({ name: 'project', label: 'Project',
-            value: q ? q.project || '' : (sq ? sq.project || '' : '') })}
+            value: q ? q.project || '' : (enquiry && enquiry.project) || (sq ? sq.project || '' : '') })}
         </div>
-        <h4 class="mt">What we want priced</h4>
-        <div class="muted small mb">Leave the rate at zero until their quotation comes back — then come
-          in here and enter it. Their price is also remembered against the item.</div>
+        ${enquiry ? `<div class="alert info">Against our enquiry
+          <b class="mono">${esc(enquiry.enquiry_no)}</b>${enquiry.requirement
+            ? ` — ${esc(enquiry.requirement)}` : ''}</div>` : ''}
+        <h4 class="mt">${q ? 'What we asked them to price' : 'What they have priced'}</h4>
+        <div class="muted small mb">Enter the rate against each line as their quotation shows it. A
+          line they have not priced yet can stay at zero and be filled in later — their price is also
+          remembered against the item.</div>
         <div id="lines"></div>
         ${UI.field({ name: 'notes', label: 'Notes', rows: 2, value: q ? q.notes || '' : '' })}
         ${q ? UI.field({ name: 'status', label: 'Status', value: q.status,
           options: ['requested', 'received', 'approved', 'rejected', 'expired']
             .map((s) => ({ value: s, label: UI.titleise(s) })) }) : ''}
         ${sq ? `<input type="hidden" name="linked_sales_quotation_id" value="${sq.id}">` : ''}
+        ${enquiry ? `<input type="hidden" name="enquiry_id" value="${enquiry.id}">` : ''}
       </form>`,
       onMount(modal) {
         const lines = existing ? existing.items
@@ -154,7 +174,7 @@
         modal._lines = LINES.LineEditor(modal.querySelector('#lines'), { side: 'buy', lines });
       },
       footer: `<button class="btn ghost" data-act="__close">Cancel</button>
-               <button class="btn" data-act="save">${q ? 'Save' : 'Log the request'}</button>`,
+               <button class="btn" data-act="save">${q ? 'Save' : 'Log their price'}</button>`,
       async onAction(act, modal) {
         if (act !== 'save') return;
         const form = modal.querySelector('#sq-form');
@@ -162,6 +182,7 @@
         const values = UI.formValues(form);
         // A disabled select is not submitted, and the supplier must not change.
         if (q) values.partner_id = q.partner_id;
+        else if (enquiry && enquiry.partner_id) values.partner_id = enquiry.partner_id;
         const items = modal._lines.value();
         if (!items.length) { UI.err('List at least one item to be priced.'); return 'keep'; }
         const saved = q

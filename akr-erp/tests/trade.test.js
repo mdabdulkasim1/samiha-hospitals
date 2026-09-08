@@ -9,7 +9,7 @@
  */
 const test = require('node:test');
 const assert = require('node:assert');
-const { freshEnv, start } = require('./helpers');
+const { freshEnv, start, askForPrice } = require('./helpers');
 
 freshEnv('trade');
 require('../src/db/seed');
@@ -50,7 +50,7 @@ test('an item code carries its product line', () => {
 });
 
 test('no LPO may be raised until the manufacturer\'s price is confirmed', async () => {
-  const quote = await admin.post('/api/purchase/quotations', {
+  const quote = await askForPrice(admin, {
     partner_id: ctx.supplier.id,
     application_id: ctx.pw.id,
     payment_terms_id: ctx.net60.id,
@@ -117,7 +117,7 @@ test('a goods receipt moves it out of "on order" and into the yard', async () =>
 });
 
 test('a short delivery leaves the LPO open', async () => {
-  const quote = await admin.post('/api/purchase/quotations', {
+  const quote = await askForPrice(admin, {
     partner_id: ctx.supplier.id,
     items: [{ item_id: ctx.item.id, qty: 10, unit_price: 640 }],
   });
@@ -286,7 +286,7 @@ test('an order on advance terms is held at the gate until the advance is in', as
 });
 
 test('cancelling an LPO takes the material back off order', async () => {
-  const quote = await admin.post('/api/purchase/quotations', {
+  const quote = await askForPrice(admin, {
     partner_id: ctx.supplier.id,
     items: [{ item_id: ctx.item.id, qty: 5, unit_price: 600 }],
   });

@@ -15,8 +15,12 @@ const { db } = require('../db');
 
 /** Where each reference lives, and what to call it on screen. */
 const SOURCES = [
+  // An enquiry is one table read two ways, so its screen depends on the side
+  // it was raised on: a client's is on the sell side, ours is on the buy side.
   { kind: 'enquiry', table: 'enquiries', col: 'enquiry_no', label: 'Enquiry',
-    dateCol: 'received_on', route: 'enquiries' },
+    dateCol: 'received_on', route: 'enquiries',
+    sideRoute: (row) => (row.side === 'supplier' ? 'supplier-enquiries' : 'enquiries'),
+    sideLabel: (row) => (row.side === 'supplier' ? 'Our enquiry to the maker' : 'Client enquiry') },
   { kind: 'salesQuotation', table: 'sales_quotations', col: 'quote_no', label: 'Our quotation',
     dateCol: 'quote_date', route: 'quotations' },
   { kind: 'salesOrder', table: 'sales_orders', col: 'so_no', label: "Client's LPO",
@@ -45,6 +49,19 @@ const SOURCES = [
     dateCol: 'expense_date', route: 'expenses' },
 ];
 
+/** One hit, with the label and screen that suit the row that matched. */
+function describe(src, row) {
+  const { sideRoute, sideLabel, ...rest } = src;
+  return {
+    ...rest,
+    id: row.id,
+    ref: row[src.col],
+    on_date: row[src.dateCol],
+    label: sideLabel ? sideLabel(row) : src.label,
+    route: sideRoute ? sideRoute(row) : src.route,
+  };
+}
+
 /** Find every document whose reference matches, exactly or as a fragment. */
 function find(reference) {
   const ref = String(reference || '').trim();
@@ -52,10 +69,9 @@ function find(reference) {
   const hits = [];
   for (const src of SOURCES) {
     const rows = db.prepare(
-      `SELECT id, ${src.col} AS ref, ${src.dateCol} AS on_date, partner_id
-         FROM ${src.table} WHERE ${src.col} = ? COLLATE NOCASE`
+      `SELECT * FROM ${src.table} WHERE ${src.col} = ? COLLATE NOCASE`
     ).all(ref);
-    for (const row of rows) hits.push({ ...src, id: row.id, ref: row.ref, on_date: row.on_date });
+    for (const row of rows) hits.push(describe(src, row));
   }
   if (hits.length) return hits;
 
@@ -63,12 +79,10 @@ function find(reference) {
   // number is still useful.
   for (const src of SOURCES) {
     const rows = db.prepare(
-      `SELECT id, ${src.col} AS ref, ${src.dateCol} AS on_date FROM ${src.table}
-        WHERE ${src.col} LIKE ? COLLATE NOCASE ORDER BY id DESC LIMIT 8`
+      `SELECT * FROM ${src.table} WHERE ${src.col} LIKE ? COLLATE NOCASE
+        ORDER BY id DESC LIMIT 8`
     ).all(`%${ref}%`);
-    for (const row of rows) {
-      hits.push({ ...src, id: row.id, ref: row.ref, on_date: row.on_date, partial: true });
-    }
+    for (const row of rows) hits.push({ ...describe(src, row), partial: true });
   }
   return hits.slice(0, 25);
 }
@@ -93,6 +107,12 @@ function chain(kind, id) {
   // ---------------------------------------------------------------- anchors
   let salesOrder = null;
   let purchaseOrder = null;
+  // The buy side starts before the LPO: an enquiry we raised, and the price
+  // that came back against it. Both are worth reading on their own, because
+  // most of the time somebody is tracing exactly the part that has not turned
+  // into an order yet.
+  let supplierQuote = null;
+  let enquiry = null;
 
   if (kind === 'salesOrder') salesOrder = one('SELECT * FROM sales_orders WHERE id = ?', id);
   if (kind === 'purchaseOrder') purchaseOrder = one('SELECT * FROM purchase_orders WHERE id = ?', id);
@@ -103,8 +123,14 @@ function chain(kind, id) {
     if (!salesOrder && q) out.quotationOnly = q;
   }
   if (kind === 'enquiry') {
-    const q = one('SELECT * FROM sales_quotations WHERE enquiry_id = ? ORDER BY id DESC', id);
-    if (q) salesOrder = one('SELECT * FROM sales_orders WHERE quotation_id = ?', q.id);
+    // A client's enquiry leads to our quotation; ours leads to the maker's.
+    enquiry = one('SELECT * FROM enquiries WHERE id = ?', id);
+    const sq = one('SELECT * FROM sales_quotations WHERE enquiry_id = ? ORDER BY id DESC', id);
+    if (sq) salesOrder = one('SELECT * FROM sales_orders WHERE quotation_id = ?', sq.id);
+    supplierQuote = one('SELECT * FROM supplier_quotations WHERE enquiry_id = ? ORDER BY id DESC', id);
+    if (supplierQuote) {
+      purchaseOrder = one('SELECT * FROM purchase_orders WHERE quotation_id = ?', supplierQuote.id);
+    }
   }
   if (kind === 'deliveryNote') {
     const d = one('SELECT * FROM delivery_notes WHERE id = ?', id);
@@ -115,8 +141,9 @@ function chain(kind, id) {
     salesOrder = i && i.so_id ? one('SELECT * FROM sales_orders WHERE id = ?', i.so_id) : null;
   }
   if (kind === 'supplierQuotation') {
-    const q = one('SELECT * FROM supplier_quotations WHERE id = ?', id);
-    purchaseOrder = q && one('SELECT * FROM purchase_orders WHERE quotation_id = ?', q.id);
+    supplierQuote = one('SELECT * FROM supplier_quotations WHERE id = ?', id);
+    purchaseOrder = supplierQuote
+      && one('SELECT * FROM purchase_orders WHERE quotation_id = ?', supplierQuote.id);
   }
   if (kind === 'grn') {
     const g = one('SELECT * FROM grns WHERE id = ?', id);
@@ -134,18 +161,37 @@ function chain(kind, id) {
   if (purchaseOrder && !salesOrder && purchaseOrder.sales_order_id) {
     salesOrder = one('SELECT * FROM sales_orders WHERE id = ?', purchaseOrder.sales_order_id);
   }
+  if (purchaseOrder && !supplierQuote && purchaseOrder.quotation_id) {
+    supplierQuote = one('SELECT * FROM supplier_quotations WHERE id = ?', purchaseOrder.quotation_id);
+  }
+  if (supplierQuote && !enquiry && supplierQuote.enquiry_id) {
+    enquiry = one('SELECT * FROM enquiries WHERE id = ?', supplierQuote.enquiry_id);
+  }
 
   // ------------------------------------------------------------- the buy side
-  if (purchaseOrder) {
-    const supplier = one('SELECT * FROM partners WHERE id = ?', purchaseOrder.partner_id);
-    if (purchaseOrder.quotation_id) {
-      const sq = one('SELECT * FROM supplier_quotations WHERE id = ?', purchaseOrder.quotation_id);
-      push("Supplier's quotation", sq && {
-        kind: 'supplierQuotation', id: sq.id, ref: sq.quote_no, on_date: sq.quote_date,
-        who: supplier && supplier.name, amount: sq.total, status: sq.status,
-        route: 'supplier-quotations',
+  if (purchaseOrder || supplierQuote || (enquiry && enquiry.side === 'supplier')) {
+    const supplierId = (purchaseOrder || supplierQuote || enquiry).partner_id;
+    const supplier = supplierId ? one('SELECT * FROM partners WHERE id = ?', supplierId) : null;
+    if (enquiry && enquiry.side === 'supplier') {
+      push('Our enquiry to the maker', {
+        kind: 'enquiry', id: enquiry.id, ref: enquiry.enquiry_no, on_date: enquiry.received_on,
+        who: supplier ? supplier.name : enquiry.client_name, status: enquiry.status,
+        route: 'supplier-enquiries',
+        note: enquiry.due_on ? `price wanted by ${enquiry.due_on}` : null,
       });
     }
+    if (supplierQuote) {
+      push("Supplier's quotation", {
+        kind: 'supplierQuotation', id: supplierQuote.id, ref: supplierQuote.quote_no,
+        on_date: supplierQuote.quote_date, who: supplier && supplier.name,
+        amount: supplierQuote.total, status: supplierQuote.status, route: 'supplier-quotations',
+        note: supplierQuote.supplier_ref ? `their ref ${supplierQuote.supplier_ref}` : null,
+      });
+    }
+  }
+
+  if (purchaseOrder) {
+    const supplier = one('SELECT * FROM partners WHERE id = ?', purchaseOrder.partner_id);
     push('Our LPO', {
       kind: 'purchaseOrder', id: purchaseOrder.id, ref: purchaseOrder.lpo_no,
       on_date: purchaseOrder.lpo_date, who: supplier && supplier.name,
@@ -174,6 +220,7 @@ function chain(kind, id) {
     out.partner = client || null;
     const quote = salesOrder.quotation_id
       ? one('SELECT * FROM sales_quotations WHERE id = ?', salesOrder.quotation_id) : null;
+    if (enquiry) enquiry = null;   // the client's enquiry is pushed from the quotation below
     if (quote && quote.enquiry_id) {
       const e = one('SELECT * FROM enquiries WHERE id = ?', quote.enquiry_id);
       push('Client enquiry', e && {
@@ -208,6 +255,20 @@ function chain(kind, id) {
 
   if (!out.partner && purchaseOrder) {
     out.partner = one('SELECT * FROM partners WHERE id = ?', purchaseOrder.partner_id);
+  }
+
+  // An enquiry nobody has answered yet is still the whole story so far.
+  if (enquiry && enquiry.side !== 'supplier' && !out.steps.some((st) => st.kind === 'enquiry')) {
+    const who = enquiry.partner_id
+      ? one('SELECT * FROM partners WHERE id = ?', enquiry.partner_id) : null;
+    if (!out.partner) out.partner = who || null;
+    push('Client enquiry', {
+      kind: 'enquiry', id: enquiry.id, ref: enquiry.enquiry_no, on_date: enquiry.received_on,
+      who: who ? who.name : enquiry.client_name, status: enquiry.status, route: 'enquiries',
+    });
+  }
+  if (!out.partner && supplierQuote) {
+    out.partner = one('SELECT * FROM partners WHERE id = ?', supplierQuote.partner_id);
   }
 
   // Oldest first — the story reads forwards.

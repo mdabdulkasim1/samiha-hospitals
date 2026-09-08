@@ -10,7 +10,7 @@
  */
 const test = require('node:test');
 const assert = require('node:assert');
-const { freshEnv, start } = require('./helpers');
+const { freshEnv, start, askForPrice } = require('./helpers');
 
 freshEnv('references');
 require('../src/db/seed');
@@ -36,7 +36,7 @@ const yy = thisYear.slice(-2);
 const mmyyyy = `${String(new Date().getMonth() + 1).padStart(2, '0')}${thisYear}`;
 
 test('the reference shapes are the company\'s own', async () => {
-  const quote = await admin.post('/api/purchase/quotations', {
+  const quote = await askForPrice(admin, {
     partner_id: ctx.supplier.id, items: [{ item_id: ctx.item.id, qty: 2, unit_price: 100 }],
   });
   await admin.post(`/api/purchase/quotations/${quote.id}/approve`);
@@ -59,7 +59,7 @@ test('the reference shapes are the company\'s own', async () => {
 
 test('every kind of document carries its own series', async () => {
   const series = await admin.get('/api/masters/document-numbers');
-  assert.equal(series.rows.length, 14, 'every document is numbered');
+  assert.equal(series.rows.length, 15, 'every document is numbered');
   for (const row of series.rows) {
     assert.ok(row.next_reference, `${row.doc_kind} has a reference`);
     assert.ok(/\{n(:\d+)?\}/.test(row.pattern), `${row.doc_kind} has a serial in its pattern`);
@@ -93,7 +93,7 @@ test('a series that carries a month counts within it; the LPO counts by year', a
   const lpo = series.rows.find((r) => r.doc_kind === 'purchaseOrder');
   assert.equal(lpo.reset_on, 'yearly', 'its reference names a year and no month');
   assert.match(lpo.note || '', /Fabrication Division/, 'and FD is written down, not left as a riddle');
-  assert.equal(series.rows.filter((r) => r.reset_on === 'monthly').length, 13);
+  assert.equal(series.rows.filter((r) => r.reset_on === 'monthly').length, 14);
 });
 
 test('a serial cannot be made to restart on something the reference does not say', async () => {
@@ -160,7 +160,7 @@ test('a series can be continued from a number already on paper', async () => {
   });
   assert.equal(saved.next_reference, `AKR-FD${yy}-200`);
 
-  const quote = await admin.post('/api/purchase/quotations', {
+  const quote = await askForPrice(admin, {
     partner_id: ctx.supplier.id, items: [{ item_id: ctx.item.id, qty: 1, unit_price: 50 }],
   });
   await admin.post(`/api/purchase/quotations/${quote.id}/approve`);

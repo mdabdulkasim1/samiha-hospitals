@@ -13,18 +13,25 @@ const stock = require('../services/stock');
 const settlement = require('../services/settlement');
 const notify = require('../services/notify');
 const clauses = require('../services/clauses');
+const enquiries = require('../services/enquiries');
 
 const router = express.Router();
 
 /*
  * The buy side, in the order the company works it:
  *
- *   1. ask the manufacturer for a price          (supplier quotation)
+ *   0. raise the enquiry                         (RFQ to the manufacturer)
+ *   1. their price against it                    (supplier quotation)
  *   2. confirm the price                         (approve the quotation)
  *   3. send the LPO                              (purchase order)      -> ON ORDER
  *   4. take the material in                      (goods receipt note)  -> IN STOCK
  *   5. book their invoice, on their terms        (supplier invoice)
  *   6. pay them when it falls due                (payment out)
+ *
+ * Step 0 is the company's own rule: a manufacturer's quotation is always the
+ * answer to an enquiry we raised, so there is a record of what was asked, when,
+ * and of whom — including the makers who never came back. The rule is enforced
+ * where the quotation is created, not left to the screen.
  *
  * Step 3 is the one that touches the stock register: the company treats
  * material on an outstanding LPO as stock it has coming, so the LPO writes it
@@ -42,9 +49,42 @@ const bookkeeper = auth.requireRole('accounts');          // books and pays
  */
 const billReader = auth.requireRole('accounts', 'kam');
 
+// ========================================================= enquiries we send
+/*
+ * The enquiry that starts the buying side. Same table, same shape and the same
+ * screen as a client's enquiry — read the other way round: this is what we
+ * have asked a manufacturer to price. Nothing but an enquiry can be quoted
+ * against, so this is where the buy side begins.
+ */
+router.get('/enquiries', wrap(async (req, res) => {
+  res.json(enquiries.list('supplier', req.query));
+}));
+
+router.get('/enquiries/:id', wrap(async (req, res) => {
+  const row = enquiries.get(req.params.id, 'supplier');
+  if (!row) throw notFound('No such enquiry.');
+  res.json({
+    enquiry: row,
+    quotations: db.prepare(`SELECT id, quote_no, quote_date, supplier_ref, total, status
+        FROM supplier_quotations WHERE enquiry_id = ? ORDER BY id`).all(row.id),
+  });
+}));
+
+router.post('/enquiries', buyer, wrap(async (req, res) => {
+  const company = docs.companyFor(req, req.body);
+  const made = enquiries.create('supplier', req.body, { company, user: req.user });
+  audit.log(req, 'supplier_enquiry.created', 'enquiry', made.id, { enquiryNo: made.enquiryNo });
+  res.status(201).json(made.row);
+}));
+
+router.patch('/enquiries/:id', buyer, wrap(async (req, res) => {
+  res.json(enquiries.update('supplier', req.params.id, req.body));
+}));
+
 // ============================================================ supplier quotes
 const SQ_SELECT = `
   SELECT q.*, p.name AS supplier_name, p.code AS supplier_code, p.trn AS supplier_trn,
+         e.enquiry_no, e.requirement AS enquiry_requirement, e.due_on AS enquiry_due_on,
          a.name AS application_name, a.code AS application_code,
          t.name AS terms_name, c.code AS company_code, c.name AS company_name,
          u.name AS created_by_name
@@ -53,7 +93,8 @@ const SQ_SELECT = `
     LEFT JOIN applications a ON a.id = q.application_id
     LEFT JOIN payment_terms t ON t.id = q.payment_terms_id
     LEFT JOIN companies c ON c.id = q.company_id
-    LEFT JOIN users u ON u.id = q.created_by`;
+    LEFT JOIN users u ON u.id = q.created_by
+    LEFT JOIN enquiries e ON e.id = q.enquiry_id`;
 
 router.get('/quotations', wrap(async (req, res) => {
   const { limit, offset, page } = v.paging(req.query, 50);
@@ -91,10 +132,17 @@ router.get('/quotations/:id', wrap(async (req, res) => {
 
 router.post('/quotations', buyer, wrap(async (req, res) => {
   const b = req.body;
-  v.required(b, ['partner_id']);
+  // The company's rule: their price is the answer to an enquiry we raised.
+  const enquiry = enquiries.forQuotation('supplier', b.enquiry_id);
   const company = docs.companyFor(req, b);
-  const supplier = db.prepare('SELECT * FROM partners WHERE id = ?').get(b.partner_id);
+  const supplierId = b.partner_id || enquiry.partner_id;
+  if (!supplierId) throw badRequest('Say which manufacturer has quoted.');
+  const supplier = db.prepare('SELECT * FROM partners WHERE id = ?').get(supplierId);
   if (!supplier) throw notFound('No such supplier.');
+  if (enquiry.partner_id && Number(enquiry.partner_id) !== supplier.id) {
+    throw badRequest(`${enquiry.enquiry_no} was raised with somebody else. `
+      + 'Raise an enquiry with this manufacturer, or log the price against theirs.');
+  }
 
   // A request for a price may legitimately carry no prices at all yet.
   const rawLines = Array.isArray(b.items) ? b.items : [];
@@ -109,21 +157,23 @@ router.post('/quotations', buyer, wrap(async (req, res) => {
   const result = tx(() => {
     const quoteNo = ids.docNo('supplierQuotation', company.code);
     const info = db.prepare(`
-      INSERT INTO supplier_quotations (company_id, quote_no, partner_id, application_id, supplier_ref,
-        subject, project, quote_date, valid_until, payment_terms_id, delivery_days, currency,
-        subtotal, discount, vat_amount, total, status, notes, terms_text,
+      INSERT INTO supplier_quotations (company_id, quote_no, partner_id, enquiry_id, application_id,
+        supplier_ref, subject, project, quote_date, valid_until, payment_terms_id, delivery_days,
+        currency, subtotal, discount, vat_amount, total, status, notes, terms_text,
         linked_sales_quotation_id, created_by)
-      VALUES (@company_id, @quote_no, @partner_id, @application_id, @supplier_ref, @subject, @project,
-        @quote_date, @valid_until, @payment_terms_id, @delivery_days, @currency,
+      VALUES (@company_id, @quote_no, @partner_id, @enquiry_id, @application_id, @supplier_ref,
+        @subject, @project, @quote_date, @valid_until, @payment_terms_id, @delivery_days, @currency,
         @subtotal, @discount, @vat_amount, @total, @status, @notes, @terms_text,
         @linked_sales_quotation_id, @created_by)`).run({
       company_id: company.id,
       quote_no: quoteNo,
       partner_id: supplier.id,
-      application_id: docs.resolveApplication(b.application_id, priced.lines),
+      enquiry_id: enquiry.id,
+      application_id: docs.resolveApplication(b.application_id, priced.lines)
+        || enquiry.application_id || null,
       supplier_ref: v.str(b.supplier_ref),
-      subject: v.str(b.subject),
-      project: v.str(b.project),
+      subject: v.str(b.subject) || enquiry.subject,
+      project: v.str(b.project) || enquiry.project,
       quote_date: quoteDate,
       valid_until: v.date(b.valid_until) || v.addDays(quoteDate, 30),
       payment_terms_id: b.payment_terms_id || supplier.payment_terms_id || null,
@@ -138,10 +188,12 @@ router.post('/quotations', buyer, wrap(async (req, res) => {
     });
     docs.insertLines('supplier_quotation_items', 'quotation_id', info.lastInsertRowid,
       priced.lines, docs.LINE_COLUMNS.quotationBuy);
+    enquiries.markQuoted(enquiry.id);
     return { id: info.lastInsertRowid, quoteNo };
   })();
 
-  audit.log(req, 'supplier_quotation.created', 'supplier_quotation', result.id, { quoteNo: result.quoteNo });
+  audit.log(req, 'supplier_quotation.created', 'supplier_quotation', result.id,
+    { quoteNo: result.quoteNo, against: enquiry.enquiry_no });
   res.status(201).json(db.prepare(`${SQ_SELECT} WHERE q.id = ?`).get(result.id));
 }));
 

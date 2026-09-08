@@ -10,12 +10,18 @@
 Two sides, one system:
 
 ```
-BUY   manufacturer's quotation → price confirmed → our LPO → goods received → their invoice → we pay
-                                                      ↓
-                                          ONE ITEM CODE · ONE STOCK REGISTER
-                                                      ↓
-SELL  our quotation → the client's LPO → delivery note → tax invoice → they pay
+BUY   our enquiry → their quotation → price confirmed → our LPO → goods received → their invoice → we pay
+                                                           ↓
+                                               ONE ITEM CODE · ONE STOCK REGISTER
+                                                           ↓
+SELL  client's enquiry → our quotation → the client's LPO → delivery note → tax invoice → they pay
 ```
+
+Both sides start with an **enquiry**, and it is the same screen read in two directions: on the sell
+side it is what a client has asked us to price, on the buy side what we have asked a manufacturer to
+price. **No supplier quotation exists without one** — the system refuses to log a maker's price that
+does not answer an enquiry we raised, so there is always a record of what was asked, of whom and
+when, including the makers who never came back.
 
 Every document carries the **application** it belongs to — potable water, storm water, sewerage,
 district cooling or irrigation — and 5% UAE VAT. Payment terms are chosen per document from a list
@@ -279,7 +285,7 @@ AKR-FD26-016                     AKR-SO-082026-014
  └───────────── company
 ```
 
-**Every series that carries a month counts within it** — thirteen of the fourteen. A number that
+**Every series that carries a month counts within it** — fourteen of the fifteen. A number that
 names a month but counts through the year invites the reader to work out which of the two it means.
 
 The LPO is the exception, and not an oversight: its reference names the year and no month, so
@@ -295,7 +301,8 @@ pieces of paper — a serial may only restart on something the reference actuall
 
 The meaning of `FD` is recorded against the series, so nobody has to ask what it stands for.
 
-Everything else is numbered in the same family — `AKR-QT-082026-004`, `AKR-DN-082026-011`,
+Everything else is numbered in the same family — `AKR-ENQ-082026-002` for a client's enquiry and
+`AKR-RFQ-082026-007` for one we send a maker, then `AKR-QT-082026-004`, `AKR-DN-082026-011`,
 `AKR-INV-082026-009`, `AKR-GRN-082026-003`, `AKR-RV-082026-021`.
 
 The patterns are records, not constants: **Masters → Document numbers** shows every series with the
@@ -322,8 +329,8 @@ oldest first:
 08 Sep 2026   They paid             AKR-RV-092026-001     31,550.40   cheque 004521
 ```
 
-It works from either end and from either side — search our LPO and you get the supplier's quotation,
-the goods receipt and their invoice; search the client's own LPO number, or a supplier's own invoice
+It works from either end and from either side — search our LPO and you get the enquiry we raised,
+the supplier's quotation, the goods receipt and their invoice; search the client's own LPO number, or a supplier's own invoice
 number, and it finds those too. Part of a number offers the candidates rather than guessing.
 
 ## Terms & conditions
@@ -485,6 +492,7 @@ akr-erp/
 │   │   ├── documents.js       the parts every document shares
 │   │   ├── settlement.js      matching money to invoices
 │   │   ├── clauses.js         the terms & conditions library
+│   │   ├── enquiries.js       the enquiry, on both sides of the trade
 │   │   ├── numbering.js       the company's own reference shapes
 │   │   ├── trace.js           following a reference through the chain
 │   │   └── ledger.js          ledgers, ageing, VAT return, profit
@@ -505,7 +513,7 @@ Everything under `/api` needs a session except `/api/health` and `/api/auth/*`.
 | `GET /api/masters/bootstrap` | every dropdown's contents in one call |
 | `GET/POST /api/items`, `POST /api/items/import/csv` | the item master |
 | `GET/POST /api/partners`, `/:id/ledger`, `/:id/statement` | suppliers and clients |
-| `/api/purchase/quotations`, `/orders`, `/grns`, `/invoices` | the buy side |
+| `/api/purchase/enquiries`, `/quotations`, `/orders`, `/grns`, `/invoices` | the buy side |
 | `/api/sales/enquiries`, `/quotations`, `/orders`, `/deliveries`, `/invoices` | the sell side |
 | `/api/stock`, `/api/stock/items/:id`, `/receipts`, `/deliveries`, `/adjustments` | the register |
 | `/api/accounts/payments`, `/cheques`, `/expenses`, `/ageing/:side`, `/vat-return`, `/profit-and-loss` | the books |

@@ -67,19 +67,24 @@ async function main() {
   });
   say(1, `The client enquires — ${enquiry.enquiry_no}`);
 
-  const sq = await post('/api/purchase/quotations', {
+  const rfq = await post('/api/purchase/enquiries', {
     partner_id: supplier.id, application_id: app_('PW').id,
-    payment_terms_id: terms('NET60').id, supplier_ref: 'GVM/Q/26/1188',
-    subject: 'DI resilient seated gate valves', project: enquiry.project,
+    project: enquiry.project, subject: 'DI resilient seated gate valves',
+    requirement: 'DN100 × 24 nos and DN150 × 12 nos, PN16, to BS EN 1171, with mill certificates.',
+  });
+  say(2, `We ask the manufacturer to price it — ${rfq.enquiry_no}`);
+
+  const sq = await post('/api/purchase/quotations', {
+    enquiry_id: rfq.id, payment_terms_id: terms('NET60').id, supplier_ref: 'GVM/Q/26/1188',
     items: [
       { item_id: v100.id, qty: 24, unit_price: 545, lead_days: 35 },
       { item_id: v150.id, qty: 12, unit_price: 865, lead_days: 35 },
     ],
   });
-  say(2, `We ask the manufacturer for a price — ${sq.quote_no} (${sq.total.toFixed(2)} AED)`);
+  say(3, `Their price comes back — ${sq.quote_no} (${sq.total.toFixed(2)} AED)`);
 
   await post(`/api/purchase/quotations/${sq.id}/approve`);
-  say(3, 'The price is confirmed. Only now can an LPO be raised from it.');
+  say(4, 'The price is confirmed. Only now can an LPO be raised from it.');
 
   const quote = await post('/api/sales/quotations', {
     partner_id: client.id, enquiry_id: enquiry.id, application_id: app_('PW').id,
@@ -91,7 +96,7 @@ async function main() {
     ],
   });
   await post(`/api/sales/quotations/${quote.id}/send`);
-  say(4, `We quote the client — ${quote.quote_no} (${quote.total.toFixed(2)} AED incl. VAT)`);
+  say(5, `We quote the client — ${quote.quote_no} (${quote.total.toFixed(2)} AED incl. VAT)`);
 
   const lpo = await post('/api/purchase/orders', {
     partner_id: supplier.id, quotation_id: sq.id, application_id: app_('PW').id,
@@ -103,7 +108,7 @@ async function main() {
     ],
   });
   await post(`/api/purchase/orders/${lpo.id}/send`);
-  say(5, `Our LPO goes to the manufacturer — ${lpo.lpo_no}. The material is now ON ORDER in stock.`);
+  say(6, `Our LPO goes to the manufacturer — ${lpo.lpo_no}. The material is now ON ORDER in stock.`);
 
   const order = await post('/api/sales/orders', {
     partner_id: client.id, quotation_id: quote.id, client_lpo_no: 'ASC/LPO/2026/0912',
@@ -115,7 +120,7 @@ async function main() {
       { item_id: v150.id, qty: 12, unit_price: 1120, cost_price: 865, discount_percent: 5 },
     ],
   });
-  say(6, `The client's LPO arrives — ${order.so_no}. The material is now COMMITTED.`);
+  say(7, `The client's LPO arrives — ${order.so_no}. The material is now COMMITTED.`);
 
   const poFull = await get(`/api/purchase/orders/${lpo.id}`);
   const grn = await post('/api/purchase/grns', {
@@ -123,25 +128,25 @@ async function main() {
     vehicle_no: 'SHJ 44120',
     items: poFull.items.map((i) => ({ po_item_id: i.id, qty: i.qty, rate: i.unit_price })),
   });
-  say(7, `The goods arrive — ${grn.grn_no}. Off "on order", into the yard.`);
+  say(8, `The goods arrive — ${grn.grn_no}. Off "on order", into the yard.`);
 
   const bill = await post('/api/purchase/invoices', {
     partner_id: supplier.id, po_id: lpo.id, grn_id: grn.id,
     supplier_inv_no: 'GVM-2026-8842',
     items: poFull.items.map((i) => ({ item_id: i.item_id, qty: i.qty, unit_price: i.unit_price })),
   });
-  say(8, `Their invoice is booked — ${bill.bill_no}, due ${bill.due_date} on 60-day terms.`);
+  say(9, `Their invoice is booked — ${bill.bill_no}, due ${bill.due_date} on 60-day terms.`);
 
   const soFull = await get(`/api/sales/orders/${order.id}`);
   const dn = await post('/api/sales/deliveries', {
     partner_id: client.id, so_id: order.id, vehicle_no: 'DXB 61204', driver_name: 'Rashid Khan',
     items: soFull.items.map((i) => ({ so_item_id: i.id, qty: i.qty })),
   });
-  say(9, `Delivered — ${dn.dn_no}. Out of the yard, and off the committed list.`);
+  say(10, `Delivered — ${dn.dn_no}. Out of the yard, and off the committed list.`);
 
   const invoice = await post('/api/sales/invoices', {
     partner_id: client.id, so_id: order.id, dn_id: dn.id });
-  say(10, `Tax invoice ${invoice.invoice_no} — ${invoice.vat_amount.toFixed(2)} VAT on `
+  say(11, `Tax invoice ${invoice.invoice_no} — ${invoice.vat_amount.toFixed(2)} VAT on `
     + `${(invoice.subtotal - invoice.discount).toFixed(2)}, total ${invoice.total.toFixed(2)} AED.`);
 
   const receipt = await post('/api/accounts/payments', {
@@ -149,13 +154,13 @@ async function main() {
     cheque_no: '004521', cheque_date: new Date().toISOString().slice(0, 10),
     bank_name: 'Emirates NBD',
   });
-  say(11, `The cheque is collected against the delivery note — ${receipt.payment_no}.`);
+  say(12, `The cheque is collected against the delivery note — ${receipt.payment_no}.`);
 
   await post('/api/accounts/expenses', {
     description: 'Transport — Al Barsha site delivery', amount: 850, vat_amount: 42.5,
     mode: 'cash', project: enquiry.project,
   });
-  say(12, 'The transport that got it there is booked as an expense.');
+  say(13, 'The transport that got it there is booked as an expense.');
 
   const stock = await get(`/api/stock/items/${v100.id}`);
   const vat = await get('/api/accounts/vat-return?from=2000-01-01&to=2100-01-01');

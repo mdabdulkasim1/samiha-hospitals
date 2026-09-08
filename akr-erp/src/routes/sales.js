@@ -7,6 +7,7 @@ const ids = require('../lib/ids');
 const v = require('../lib/validate');
 const { wrap, badRequest, notFound, conflict } = require('../lib/http');
 const docs = require('../services/documents');
+const enquiries = require('../services/enquiries');
 const pricing = require('../services/pricing');
 const terms = require('../services/terms');
 const stock = require('../services/stock');
@@ -37,83 +38,29 @@ const shipper = auth.requireRole('logistics', 'kam');
 const bookkeeper = auth.requireRole('accounts');
 
 // ================================================================= enquiries
+/*
+ * What a client has asked us to price. The same screen, code and numbering
+ * serve the enquiry we send a manufacturer — see /api/purchase/enquiries.
+ */
 router.get('/enquiries', wrap(async (req, res) => {
-  const { limit, offset, page } = v.paging(req.query, 50);
-  const where = [];
-  const params = { limit, offset };
-  if (req.query.status) { where.push('e.status = @status'); params.status = req.query.status; }
-  else if (v.bool(req.query.open)) where.push("e.status IN ('open','quoted')");
-  if (req.query.owner_id) { where.push('e.owner_id = @owner_id'); params.owner_id = req.query.owner_id; }
-  if (req.query.application_id) { where.push('e.application_id = @application_id'); params.application_id = req.query.application_id; }
-  if (req.query.q) {
-    where.push('(e.enquiry_no LIKE @q OR e.subject LIKE @q OR e.project LIKE @q OR e.client_name LIKE @q OR p.name LIKE @q)');
-    params.q = `%${String(req.query.q).trim()}%`;
-  }
-  const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
-  const rows = db.prepare(`
-    SELECT e.*, p.name AS partner_name, a.name AS application_name, u.name AS owner_name
-      FROM enquiries e
-      LEFT JOIN partners p ON p.id = e.partner_id
-      LEFT JOIN applications a ON a.id = e.application_id
-      LEFT JOIN users u ON u.id = e.owner_id
-      ${clause} ORDER BY e.received_on DESC, e.id DESC LIMIT @limit OFFSET @offset`).all(params);
-  res.json({
-    rows,
-    total: db.prepare(`SELECT COUNT(*) AS c FROM enquiries e LEFT JOIN partners p ON p.id = e.partner_id ${clause}`).get(params).c,
-    page, limit,
-  });
+  res.json(enquiries.list('client', req.query));
+}));
+
+router.get('/enquiries/:id', wrap(async (req, res) => {
+  const row = enquiries.get(req.params.id, 'client');
+  if (!row) throw notFound('No such enquiry.');
+  res.json(row);
 }));
 
 router.post('/enquiries', seller, wrap(async (req, res) => {
-  const b = req.body;
-  const company = docs.companyFor(req, b);
-  if (!b.partner_id && !v.str(b.client_name)) {
-    throw badRequest('Say who the enquiry is from — pick a client, or type their name.');
-  }
-  const enquiryNo = ids.docNo('enquiry', company.code);
-  const info = db.prepare(`
-    INSERT INTO enquiries (company_id, enquiry_no, partner_id, client_name, contact_person, phone,
-      email, application_id, project, subject, requirement, received_on, due_on, owner_id, created_by)
-    VALUES (@company_id, @enquiry_no, @partner_id, @client_name, @contact_person, @phone, @email,
-      @application_id, @project, @subject, @requirement, @received_on, @due_on, @owner_id, @created_by)`).run({
-    company_id: company.id,
-    enquiry_no: enquiryNo,
-    partner_id: b.partner_id || null,
-    client_name: v.str(b.client_name),
-    contact_person: v.str(b.contact_person),
-    phone: v.str(b.phone),
-    email: v.str(b.email),
-    application_id: b.application_id || null,
-    project: v.str(b.project),
-    subject: v.str(b.subject),
-    requirement: v.str(b.requirement),
-    received_on: v.date(b.received_on) || v.today(),
-    due_on: v.date(b.due_on),
-    owner_id: b.owner_id || req.user.id,
-    created_by: req.user.id,
-  });
-  audit.log(req, 'enquiry.created', 'enquiry', info.lastInsertRowid, { enquiryNo });
-  res.status(201).json(db.prepare('SELECT * FROM enquiries WHERE id = ?').get(info.lastInsertRowid));
+  const company = docs.companyFor(req, req.body);
+  const made = enquiries.create('client', req.body, { company, user: req.user });
+  audit.log(req, 'enquiry.created', 'enquiry', made.id, { enquiryNo: made.enquiryNo });
+  res.status(201).json(made.row);
 }));
 
 router.patch('/enquiries/:id', seller, wrap(async (req, res) => {
-  const row = db.prepare('SELECT * FROM enquiries WHERE id = ?').get(req.params.id);
-  if (!row) throw notFound('No such enquiry.');
-  db.prepare(`UPDATE enquiries SET partner_id = @partner_id, subject = @subject, project = @project,
-      requirement = @requirement, application_id = @application_id, due_on = @due_on,
-      owner_id = @owner_id, status = @status, lost_reason = @lost_reason WHERE id = @id`).run({
-    id: row.id,
-    partner_id: req.body.partner_id === undefined ? row.partner_id : (req.body.partner_id || null),
-    subject: v.str(req.body.subject, row.subject),
-    project: v.str(req.body.project, row.project),
-    requirement: v.str(req.body.requirement, row.requirement),
-    application_id: req.body.application_id === undefined ? row.application_id : (req.body.application_id || null),
-    due_on: v.date(req.body.due_on) || row.due_on,
-    owner_id: req.body.owner_id === undefined ? row.owner_id : (req.body.owner_id || null),
-    status: v.oneOf(req.body.status, ['open', 'quoted', 'won', 'lost', 'closed'], 'status') || row.status,
-    lost_reason: v.str(req.body.lost_reason, row.lost_reason),
-  });
-  res.json(db.prepare('SELECT * FROM enquiries WHERE id = ?').get(row.id));
+  res.json(enquiries.update('client', req.params.id, req.body));
 }));
 
 // ============================================================ our quotations

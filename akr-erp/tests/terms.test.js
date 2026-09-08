@@ -9,7 +9,7 @@
  */
 const test = require('node:test');
 const assert = require('node:assert');
-const { freshEnv, start } = require('./helpers');
+const { freshEnv, start, askForPrice } = require('./helpers');
 
 freshEnv('terms');
 require('../src/db/seed');
@@ -36,7 +36,7 @@ test.after(async () => { if (h) await h.stop(); });
 /** Raise an LPO and hand back its detail — sent, if the caller wants it sent. */
 async function raiseLpo(client, extra = {}) {
   const supplier = extra.supplier || ctx.supplier;
-  const quote = await client.post('/api/purchase/quotations', {
+  const quote = await askForPrice(client, {
     partner_id: supplier.id, items: [{ item_id: ctx.item.id, qty: 4, unit_price: 250 }],
   });
   await client.post(`/api/purchase/quotations/${quote.id}/approve`);

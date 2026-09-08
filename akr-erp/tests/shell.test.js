@@ -11,6 +11,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { freshEnv, start } = require('./helpers');
 
@@ -49,16 +50,18 @@ test('a stamped script is still served', async () => {
 });
 
 test('the stamp moves when the front end does', () => {
-  const before = buildStamp(publicDir);
-  const file = path.join(publicDir, 'js', 'app.js');
-  const times = fs.statSync(file);
-  try {
-    fs.utimesSync(file, times.atime, new Date(times.mtime.getTime() + 60_000));
-    assert.notEqual(buildStamp(publicDir), before, 'an edited file gives a new stamp');
-  } finally {
-    fs.utimesSync(file, times.atime, times.mtime);
-  }
-  assert.equal(buildStamp(publicDir), before, 'and an unchanged front end keeps its own');
+  // On a copy, not on public/ itself: a test that edits the running app's own
+  // files fails whenever somebody happens to be editing them too.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'akr-stamp-'));
+  fs.mkdirSync(path.join(dir, 'js'));
+  fs.mkdirSync(path.join(dir, 'css'));
+  fs.writeFileSync(path.join(dir, 'js', 'app.js'), 'const NAV = [];');
+  fs.writeFileSync(path.join(dir, 'css', 'app.css'), 'body{}');
+
+  const before = buildStamp(dir);
+  assert.equal(buildStamp(dir), before, 'an unchanged front end keeps its stamp');
+  fs.writeFileSync(path.join(dir, 'js', 'app.js'), 'const NAV = [1];');
+  assert.notEqual(buildStamp(dir), before, 'an edited file gives a new one');
 });
 
 test('the menu keeps VAT & Profit to the administrator, as the server does', () => {

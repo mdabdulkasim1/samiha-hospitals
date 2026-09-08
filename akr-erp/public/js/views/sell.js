@@ -8,12 +8,12 @@
   const esc = (v) => UI.esc(v);
 
   /** A list screen with a search box and a filter row. */
-  function listPage(host, { filters = '', onLoad, actions }) {
+  function listPage(host, { filters = '', onLoad, actions, searchHint = 'Number, client, project…' }) {
     APP.actions(actions || []);
     host.innerHTML = `
       <div class="card">
         <div class="filters">
-          <label class="field grow"><span>Search</span><input id="f-q" placeholder="Number, client, project…"></label>
+          <label class="field grow"><span>Search</span><input id="f-q" placeholder="${esc(searchHint)}"></label>
           ${filters}
         </div>
         <div id="rows">${UI.loading()}</div>
@@ -35,97 +35,8 @@
     return load();
   }
 
-  // ================================================================ enquiries
-  APP.register('enquiries', {
-    title: 'Enquiries',
-    subtitle: 'What clients have asked for, and what we have quoted against it',
-
-    render(host) {
-      return listPage(host, {
-        filters: `<label class="field"><span>Status</span><select id="f-status">
-            <option value="">Open (not yet closed)</option>
-            <option value="open">Open</option><option value="quoted">Quoted</option>
-            <option value="won">Won</option><option value="lost">Lost</option>
-          </select></label>`,
-        actions: [{ id: 'new', label: '+ New enquiry', kind: 'gold', onClick: () => openEnquiry() }],
-        async onLoad(box, values) {
-          const v = values();
-          box.innerHTML = UI.loading();
-          const res = await API.get('/api/sales/enquiries' + API.qs({
-            q: v.q, status: v.status, open: v.status ? '' : '1', limit: 200 }));
-          box.innerHTML = UI.table([
-            { label: 'No.', render: (r) => `<span class="mono">${esc(r.enquiry_no)}</span>` },
-            { label: 'From', render: (r) => `<b>${esc(r.partner_name || r.client_name || '—')}</b>
-                <div class="muted small">${esc(r.contact_person || '')}</div>` },
-            { label: 'Subject / project', render: (r) => `${esc(r.subject || '—')}
-                <div class="muted small">${esc(r.project || '')}</div>` },
-            { label: 'Application', render: (r) => (r.application_name ? UI.badge(r.application_name, 'navy') : '—') },
-            { label: 'Received', render: (r) => UI.date(r.received_on) },
-            { label: 'Wanted by', render: (r) => (r.due_on ? UI.date(r.due_on) : '—') },
-            { label: 'With', key: 'owner_name' },
-            { label: 'Status', render: (r) => UI.statusBadge(r.status) },
-          ], res.rows, { onRow: true, emptyText: 'No enquiries logged yet.' });
-          UI.bindRows(box, res.rows, (row) => openEnquiry(row));
-        },
-      });
-    },
-  });
-
-  async function openEnquiry(enquiry) {
-    const m = await APP.loadMasters();
-    const clients = (await API.get('/api/partners?type=client&limit=500')).rows;
-    const isNew = !enquiry;
-
-    UI.modal({
-      title: isNew ? 'New enquiry' : `${enquiry.enquiry_no}`,
-      body: `<form id="e-form">
-        ${UI.field({ name: 'partner_id', label: 'Client', blank: 'Not on the books yet',
-          value: enquiry ? enquiry.partner_id : '',
-          options: clients.map((c) => ({ value: c.id, label: c.name })) })}
-        ${UI.field({ name: 'client_name', label: 'Or the name they gave',
-          value: enquiry ? enquiry.client_name || '' : '' })}
-        <div class="grid g2">
-          ${UI.field({ name: 'contact_person', label: 'Contact', value: enquiry ? enquiry.contact_person || '' : '' })}
-          ${UI.field({ name: 'phone', label: 'Phone', value: enquiry ? enquiry.phone || '' : '' })}
-        </div>
-        ${UI.field({ name: 'application_id', label: 'Application', blank: 'Not stated',
-          value: enquiry ? enquiry.application_id : '', options: APP.applicationOptions() })}
-        ${UI.field({ name: 'subject', label: 'Subject', value: enquiry ? enquiry.subject || '' : '' })}
-        ${UI.field({ name: 'project', label: 'Project', value: enquiry ? enquiry.project || '' : '' })}
-        ${UI.field({ name: 'requirement', label: 'What they need', rows: 4,
-          value: enquiry ? enquiry.requirement || '' : '' })}
-        <div class="grid g2">
-          ${UI.field({ name: 'received_on', label: 'Received on', type: 'date',
-            value: enquiry ? enquiry.received_on : UI.today() })}
-          ${UI.field({ name: 'due_on', label: 'Quotation wanted by', type: 'date',
-            value: enquiry ? enquiry.due_on || '' : '' })}
-        </div>
-        ${UI.field({ name: 'owner_id', label: 'Handled by', blank: 'Me',
-          value: enquiry ? enquiry.owner_id : '',
-          options: m.users.map((u) => ({ value: u.id, label: u.name })) })}
-        ${enquiry ? UI.field({ name: 'status', label: 'Status', value: enquiry.status,
-          options: ['open', 'quoted', 'won', 'lost', 'closed'].map((s) => ({ value: s, label: UI.titleise(s) })) }) : ''}
-      </form>`,
-      footer: `<button class="btn ghost" data-act="__close">Cancel</button>
-        ${enquiry ? '<button class="btn gold" data-act="quote">Quote it</button>' : ''}
-        <button class="btn" data-act="save">${isNew ? 'Log the enquiry' : 'Save'}</button>`,
-      async onAction(act, modal) {
-        if (act === 'quote') {
-          UI.closeAllModals();
-          openQuotation(null, { enquiry });
-          return;
-        }
-        if (act !== 'save') return;
-        const form = modal.querySelector('#e-form');
-        if (!form.reportValidity()) return 'keep';
-        const values = UI.formValues(form);
-        if (enquiry) await API.patch(`/api/sales/enquiries/${enquiry.id}`, values);
-        else await API.post('/api/sales/enquiries', values);
-        UI.ok('Saved.');
-        APP.reload();
-      },
-    });
-  }
+  // Enquiries live in views/enquiries.js — the same screen serves the client's
+  // enquiry and the one we send a manufacturer.
 
   // =============================================================== quotations
   APP.register('quotations', {
@@ -244,7 +155,16 @@
           return 'keep';
         }
         if (act === 'order') { UI.closeAllModals(); openOrder(null, { quotation: d }); return; }
-        if (act === 'buy') { UI.closeAllModals(); BUY.openSupplierQuotation(null, { fromQuotation: d }); }
+        if (act === 'buy') {
+          // Asking a maker to price what we have quoted starts, like everything
+          // on the buy side, with an enquiry — prefilled from this quotation.
+          UI.closeAllModals();
+          ENQUIRIES.open('supplier', null, { prefill: {
+            subject: q.subject, project: q.project, application_id: q.application_id,
+            requirement: d.items.map((i) => `${i.item_code ? i.item_code + ' — ' : ''}${
+              i.description} — ${i.qty} ${i.uom || ''}`.trim()).join('\n'),
+          } });
+        }
       },
     });
   }
