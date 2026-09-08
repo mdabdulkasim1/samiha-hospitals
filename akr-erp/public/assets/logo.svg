@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 116" role="img" aria-label="AKR General Trading L.L.C">
+  <defs>
+    <linearGradient id="wing" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2E7D4F"/><stop offset="1" stop-color="#17624B"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(8,10)">
+    <circle cx="44" cy="44" r="43" fill="none" stroke="#123A5C" stroke-width="2.5"/>
+    <path d="M20 58c8-22 24-33 46-34-6 5-9 9-11 14 9-3 17-2 24 3-11 1-19 5-25 12-6 7-14 11-24 11-4 0-8-2-10-6z"
+          fill="url(#wing)"/>
+    <path d="M55 22c5 0 9 3 10 8-4-2-8-2-12 0 0-3 1-6 2-8z" fill="#C8912A"/>
+    <circle cx="60" cy="27" r="2.2" fill="#123A5C"/>
+    <path d="M18 66h52l-6 8H24z" fill="#C8912A"/>
+  </g>
+  <g transform="translate(108,0)">
+    <text x="0" y="52" font-family="Georgia, 'Times New Roman', serif" font-size="40" font-weight="700"
+          letter-spacing="1" fill="#123A5C">AKR</text>
+    <text x="0" y="78" font-family="Georgia, 'Times New Roman', serif" font-size="21" font-weight="600"
+          letter-spacing="2.2" fill="#123A5C">GENERAL TRADING L.L.C</text>
+    <text x="0" y="99" font-family="Georgia, serif" font-size="12" font-style="italic" fill="#2E7D4F">
+      Trusted Trading Partner for Valves, Fittings &amp; Construction Materials
+    </text>
+  </g>
+</svg>

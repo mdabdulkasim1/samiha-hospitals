@@ -1,0 +1,38 @@
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const Database = require('better-sqlite3');
+const config = require('../config');
+
+fs.mkdirSync(path.dirname(config.dbFile), { recursive: true });
+
+const db = new Database(config.dbFile);
+db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
+db.pragma('busy_timeout = 5000');
+
+/** Adds a column if it is missing. Returns true when it actually added it. */
+function ensureColumn(table, column, definition) {
+  const exists = db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
+  if (exists) return false;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  return true;
+}
+
+/** Run the schema file — safe to call repeatedly (everything is IF NOT EXISTS). */
+function migrate() {
+  const sql = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
+  db.exec(sql);
+  // Columns added after the first release, for databases created before them.
+  ensureColumn('items', 'subgroup_id', 'INTEGER REFERENCES item_subgroups(id)');
+  return db;
+}
+
+/** Wrap a function in a transaction. */
+const tx = (fn) => db.transaction(fn);
+
+// Apply the schema on load. Every statement is idempotent, which removes any
+// module-ordering hazard around prepared statements.
+migrate();
+
+module.exports = { db, migrate, tx, ensureColumn };

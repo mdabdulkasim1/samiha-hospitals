@@ -1,0 +1,138 @@
+'use strict';
+const path = require('path');
+const express = require('express');
+const config = require('./config');
+const { db } = require('./db');
+const auth = require('./lib/auth');
+const { ApiError } = require('./lib/http');
+
+const app = express();
+app.disable('x-powered-by');
+app.set('trust proxy', 1);
+
+app.use(express.json({ limit: '8mb' }));       // room for a pasted item list
+app.use(express.text({ type: 'text/csv', limit: '8mb' }));
+app.use(express.urlencoded({ extended: false }));
+
+// Minimal cookie helpers — two functions, rather than another dependency.
+app.use((req, res, next) => {
+  res.cookie = (name, value, opts = {}) => {
+    const parts = [`${name}=${encodeURIComponent(value)}`, 'Path=/'];
+    if (opts.httpOnly) parts.push('HttpOnly');
+    if (opts.secure) parts.push('Secure');
+    if (opts.sameSite) parts.push(`SameSite=${opts.sameSite === true ? 'Strict' : opts.sameSite}`);
+    if (opts.maxAge) parts.push(`Max-Age=${Math.floor(opts.maxAge / 1000)}`);
+    res.append('Set-Cookie', parts.join('; '));
+    return res;
+  };
+  res.clearCookie = (name) => res.append('Set-Cookie', `${name}=; Path=/; Max-Age=0`);
+  next();
+});
+
+app.use(auth.attachUser);
+
+// ------------------------------------------------------------------- routing
+app.get('/api/health', (_req, res) => {
+  res.json({
+    ok: true,
+    app: config.company.name,
+    time: new Date().toISOString(),
+    items: db.prepare('SELECT COUNT(*) AS c FROM items').get().c,
+    companies: db.prepare('SELECT COUNT(*) AS c FROM companies WHERE active = 1').get().c,
+  });
+});
+
+app.use('/api/auth', require('./routes/auth'));
+
+app.use('/api', auth.requireAuth);
+app.use('/api/me', require('./routes/me'));
+app.use('/api/masters', require('./routes/masters'));
+app.use('/api/items', require('./routes/items'));
+app.use('/api/partners', require('./routes/partners'));
+app.use('/api/purchase', require('./routes/purchase'));
+app.use('/api/sales', require('./routes/sales'));
+app.use('/api/stock', require('./routes/stock'));
+app.use('/api/accounts', require('./routes/accounts'));
+app.use('/api/reports', require('./routes/reports'));
+app.use('/api/admin', require('./routes/admin'));
+
+// --------------------------------------------------------------- static + SPA
+app.use(express.static(path.join(config.root, 'public'), { index: false, maxAge: config.isProd ? '1h' : 0 }));
+app.get(/^\/(?!api\/).*/, (_req, res) => res.sendFile(path.join(config.root, 'public', 'index.html')));
+
+// --------------------------------------------------------------- error handler
+app.use((req, res) => res.status(404).json({ error: `No route for ${req.method} ${req.path}` }));
+
+app.use((err, req, res, _next) => {
+  if (err instanceof ApiError) {
+    return res.status(err.status).json({ error: err.message, details: err.details });
+  }
+  if (err && err.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+    return res.status(409).json({ error: 'That record already exists.', details: err.message });
+  }
+  if (err && String(err.code || '').startsWith('SQLITE_CONSTRAINT')) {
+    return res.status(400).json({ error: 'The data does not satisfy a database constraint.', details: err.message });
+  }
+  console.error('[error]', err);
+  res.status(500).json({ error: config.isProd ? 'Internal server error' : err.message });
+});
+
+// -------------------------------------------------------------- housekeeping
+function startBackgroundJobs() {
+  setInterval(() => {
+    try {
+      auth.purgeExpiredSessions();
+      // An invoice past its due date says so, without anybody having to notice.
+      db.prepare(
+        `UPDATE sales_invoices SET status = 'overdue'
+          WHERE status = 'unpaid' AND due_date IS NOT NULL AND date(due_date) < date('now')`).run();
+      // A post-dated cheque whose date has come round is ready to bank.
+      db.prepare(
+        `UPDATE payments SET status = 'deposited'
+          WHERE mode = 'cheque' AND status = 'pending' AND cheque_date IS NOT NULL
+            AND date(cheque_date) <= date('now')`).run();
+    } catch (err) {
+      console.error('[housekeeping]', err.message);
+    }
+  }, 3_600_000).unref();
+}
+
+/**
+ * A fresh deployment starts with an empty database and nobody can sign in.
+ * Seeding once, only when there are no accounts at all, turns that into a
+ * working install without ever touching an existing one.
+ */
+function seedIfEmpty() {
+  const users = db.prepare('SELECT COUNT(*) AS c FROM users').get().c;
+  if (users > 0) return;
+  if (!config.autoSeed) return;
+  console.log('[setup] No accounts found — creating the starter data.');
+  try {
+    require('./db/seed');
+    console.warn('[setup] ⚠ Change every seeded password before this touches real trading data.');
+  } catch (err) {
+    console.error('[setup] Seeding failed:', err.message);
+  }
+}
+
+if (require.main === module) {
+  seedIfEmpty();
+  const server = app.listen(config.port, () => {
+    console.log(`\n  ${config.company.name} — ERP`);
+    console.log(`  ▸ http://localhost:${config.port}`);
+    console.log(`  ▸ environment: ${config.nodeEnv}`);
+    console.log(`  ▸ database:    ${config.dbFile}`);
+    console.log(`  ▸ VAT:         ${config.vat.percent}%  ·  currency ${config.vat.currency}`);
+    console.log(`  ▸ TRN:         ${config.company.trn || '(not set — a tax invoice needs one)'}\n`);
+  });
+  startBackgroundJobs();
+
+  for (const signal of ['SIGINT', 'SIGTERM']) {
+    process.on(signal, () => {
+      console.log(`\n${signal} received — shutting down.`);
+      server.close(() => { db.close(); process.exit(0); });
+    });
+  }
+}
+
+module.exports = app;
