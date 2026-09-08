@@ -130,11 +130,32 @@ if (require.main === module) {
     console.log(`\n  ${config.company.name} — ERP`);
     console.log(`  ▸ http://localhost:${config.port}`);
     console.log(`  ▸ environment: ${config.nodeEnv}`);
-    console.log(`  ▸ database:    ${config.dbFile}`);
+    console.log(`  ▸ database:    ${config.dbFile}`
+      + (config.volumePath ? '  (on a mounted volume)' : ''));
     console.log(`  ▸ VAT:         ${config.vat.percent}%  ·  currency ${config.vat.currency}`);
     const company = db.prepare('SELECT * FROM companies WHERE is_default = 1').get() || {};
     console.log(`  ▸ Company:     ${company.name || config.company.name}`);
     console.log(`  ▸ TRN:         ${company.trn || '(not set)'}`);
+    /*
+     * The one that loses the company its books.
+     *
+     * A container platform rebuilds the application directory on every deploy.
+     * A database inside it is destroyed with it — quietly, and only noticed
+     * when somebody looks for last month's invoices. Said loudly, at every
+     * start, until a volume is mounted.
+     */
+    if (config.dbIsEphemeral) {
+      console.warn('\n  ╔══════════════════════════════════════════════════════════════════╗');
+      console.warn('  ║  THE DATABASE IS NOT ON A PERSISTENT VOLUME                      ║');
+      console.warn('  ║                                                                  ║');
+      console.warn('  ║  It is inside the application directory, which this platform     ║');
+      console.warn('  ║  rebuilds on every deploy. Every invoice, payment and stock      ║');
+      console.warn('  ║  movement will be destroyed the next time you ship a change.     ║');
+      console.warn('  ║                                                                  ║');
+      console.warn('  ║  Mount a volume and the database moves there by itself.          ║');
+      console.warn('  ║  On Railway: the service → Variables → + Volume, mount at /data. ║');
+      console.warn('  ╚══════════════════════════════════════════════════════════════════╝\n');
+    }
     if (gaps.length) {
       console.warn(`\n  ⚠ A tax invoice still needs: ${gaps.join(', ')}.`);
       console.warn('    Set them in .env and restart, or under Masters → Companies.\n');

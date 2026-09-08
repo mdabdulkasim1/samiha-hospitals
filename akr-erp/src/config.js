@@ -25,12 +25,38 @@ loadEnvFile(path.join(root, '.env'));
 
 const env = process.env;
 
+/*
+ * Where the database file lives.
+ *
+ * On a container platform the application directory is rebuilt on every
+ * deploy, so a database sitting inside it is destroyed each time the company
+ * ships a change — with every invoice, payment and stock movement in it. The
+ * only safe place is a mounted volume that survives the rebuild.
+ *
+ * Railway names the mount in RAILWAY_VOLUME_MOUNT_PATH, so when a volume is
+ * attached it is used without anybody having to remember to point at it. Set
+ * DB_FILE to override. Locally, neither exists and the file sits under ./data
+ * as it always has.
+ */
+const volumePath = env.RAILWAY_VOLUME_MOUNT_PATH || env.DATA_DIR || null;
+const defaultDbFile = volumePath ? path.join(volumePath, 'akr.db') : './data/akr.db';
+
 module.exports = {
   root,
   port: Number(env.PORT || 4000),
   nodeEnv: env.NODE_ENV || 'development',
   isProd: env.NODE_ENV === 'production',
-  dbFile: path.resolve(root, env.DB_FILE || './data/akr.db'),
+  dbFile: path.resolve(root, env.DB_FILE || defaultDbFile),
+  volumePath,
+  /*
+   * True when the database is inside the application directory, which on a
+   * container platform means it will not survive the next deploy.
+   */
+  get dbIsEphemeral() {
+    return !path.resolve(root, env.DB_FILE || defaultDbFile).startsWith(path.sep + 'data')
+      && !volumePath
+      && (env.NODE_ENV === 'production');
+  },
   autoSeed: String(env.AUTO_SEED || 'true').toLowerCase() !== 'false',
 
   session: {

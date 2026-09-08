@@ -2,10 +2,12 @@
   "name": "akr-erp",
   "version": "1.0.0",
   "private": true,
-  "description": "AKR GENERAL TRADING L.L.C — trading ERP: supplier quotation to LPO to goods receipt to payment on one side, client quotation to LPO to delivery to tax invoice to collection on the other, over one item master and one stock register.",
+  "description": "AKR GENERAL TRADING L.L.C \u2014 trading ERP: supplier quotation to LPO to goods receipt to payment on one side, client quotation to LPO to delivery to tax invoice to collection on the other, over one item master and one stock register.",
   "main": "src/server.js",
   "type": "commonjs",
-  "engines": { "node": ">=20.0.0" },
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
@@ -14,7 +16,8 @@
     "db:reset": "node src/db/reset.js",
     "setup": "npm run db:migrate && npm run db:seed",
     "demo": "node scripts/demo-walkthrough.js",
-    "test": "node --test tests/*.test.js"
+    "test": "node --test tests/*.test.js",
+    "postinstall": "node -e \"require('better-sqlite3'); console.log('better-sqlite3 ready')\""
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0",

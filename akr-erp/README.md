@@ -71,6 +71,43 @@ npm run db:reset  # wipe and start again
 npm run dev       # auto-restart on file changes
 ```
 
+## Putting it on Railway
+
+The app is a plain Node service: it listens on `PORT`, serves its own front end, and answers
+`GET /api/health`. `railway.json` sets the start command and the health check, so a deploy needs
+nothing typed into the platform beyond the variables below.
+
+**Mount a volume first.** The database is a single SQLite file. A container platform rebuilds the
+application directory on every deploy, so a database inside it is destroyed each time you ship a
+change — with every invoice, payment and stock movement in it.
+
+1. Create the service from this repository.
+2. **Add a volume, mounted at `/data`.** The app reads `RAILWAY_VOLUME_MOUNT_PATH` and puts the
+   database there by itself; nothing else to configure. Without one it starts anyway and says, in a
+   box you cannot miss, that the books will not survive the next deploy.
+3. Set the variables:
+
+```
+NODE_ENV=production
+SESSION_SECRET=<a long random string — never the default>
+COMPANY_TRN=105279558800003
+COMPANY_BANK= COMPANY_ACCOUNT= COMPANY_IBAN= COMPANY_SWIFT=
+AUTO_SEED=true          # leave true for the first deploy, then set it to false
+```
+
+4. Deploy, open the URL, sign in as `admin@akr365.com` / `akr@2026`, **and change every password.**
+5. Set `AUTO_SEED=false` once the real data is in, so a wiped database is never quietly refilled
+   with the sample catalogue.
+
+`PORT` is set by the platform. `DB_FILE` overrides the location if you ever want it somewhere other
+than the volume.
+
+### If the platform says "Failed to fetch repository files"
+
+It is looking at a repository with nothing in it, or at one its GitHub App cannot read. Check that
+the repository actually has a commit on its default branch, and that the Railway GitHub App has been
+granted access to it (**Configure GitHub App** on that same screen, then **Refresh**).
+
 ## The five applications
 
 Everything the company trades is for one of five jobs, and that is a field on the item and a title on
