@@ -101,8 +101,16 @@ COMPANY_BANK= COMPANY_ACCOUNT= COMPANY_IBAN= COMPANY_SWIFT=
 AUTO_SEED=true          # leave true for the first deploy, then set it to false
 ```
 
-4. Deploy, open the URL, sign in as `admin@akr365.com` / `akr@2026`, **and change every password.**
-5. Set `AUTO_SEED=false` once the real data is in, so a wiped database is never quietly refilled
+4. Deploy, then check the volume actually took:
+
+```
+curl https://<your-app>.up.railway.app/api/health
+{"ok":true,"storage":"volume",...}      ← the books will survive a deploy
+{"ok":true,"storage":"ephemeral",...}   ← they will not; the volume is not mounted
+```
+
+5. Open the URL, sign in as `admin@akr365.com` / `akr@2026`, **and change every password.**
+6. Set `AUTO_SEED=false` once the real data is in, so a wiped database is never quietly refilled
    with the sample catalogue.
 
 `PORT` is set by the platform. `DB_FILE` overrides the location if you ever want it somewhere other

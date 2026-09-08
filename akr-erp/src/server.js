@@ -39,6 +39,15 @@ app.get('/api/health', (_req, res) => {
     time: new Date().toISOString(),
     items: db.prepare('SELECT COUNT(*) AS c FROM items').get().c,
     companies: db.prepare('SELECT COUNT(*) AS c FROM companies WHERE active = 1').get().c,
+    /*
+     * Whether the books will survive the next deploy.
+     *
+     * On the health check because that is the one thing about a fresh
+     * deployment worth knowing from outside it, and because a volume that was
+     * meant to be mounted and is not looks exactly like one that is until the
+     * day it matters. The path itself is not reported — this endpoint is open.
+     */
+    storage: config.dbIsEphemeral ? 'ephemeral' : (config.volumePath ? 'volume' : 'local'),
   });
 });
 
