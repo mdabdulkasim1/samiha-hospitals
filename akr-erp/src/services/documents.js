@@ -134,24 +134,13 @@ const LINE_COLUMNS = {
     'unit_price', 'discount', 'taxable', 'vat_percent', 'vat_amount', 'total'],
 };
 
-/** Standard terms printed at the foot of a quotation, so nothing is forgotten. */
-const DEFAULT_QUOTE_TERMS = [
-  'Prices are in AED and exclusive of 5% VAT unless stated otherwise.',
-  'Delivery: ex-stock subject to prior sale; lead time as stated per line.',
-  'Validity: as stated above. Prices are subject to reconfirmation thereafter.',
-  'Any order placed against this quotation is subject to our standard terms of sale.',
-].join('\n');
-
-const DEFAULT_LPO_TERMS = [
-  'Please acknowledge receipt of this LPO by return.',
-  'Material must match the specification, size and standard stated against each line.',
-  'Mill / test certificates to accompany the delivery where applicable.',
-  'Delivery note and tax invoice must quote this LPO number.',
-  'Goods received are subject to inspection and may be rejected if not to specification.',
-].join('\n');
-
+/*
+ * The conditions a document carries are no longer written here. They live in
+ * the clause library (src/services/clauses.js, kept under Masters → Terms &
+ * conditions) so the key account manager can change them without a deployment,
+ * and so each document's own copy names its own supplier or client.
+ */
 module.exports = {
   defaultCompany, companyFor, buildLine, buildLines, itemDescription,
   resolveApplication, listApplications, insertLines, LINE_COLUMNS,
-  DEFAULT_QUOTE_TERMS, DEFAULT_LPO_TERMS,
 };

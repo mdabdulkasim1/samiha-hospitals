@@ -232,6 +232,9 @@
             ['Against client order', esc(o.against_sales_order
               ? `${o.against_sales_order} (their LPO ${o.against_client_lpo || ''})` : 'bought for stock')],
             ['Date', UI.date(o.lpo_date)],
+            ['For the attention of', esc(o.attention || '—')],
+            ['Incoterms', esc(o.incoterms || '—')],
+            ['Approving authority', esc(o.authority || '—')],
             ['Delivery wanted', o.delivery_date ? UI.date(o.delivery_date) : '—'],
             ['Deliver to', esc(o.delivery_location || o.delivery_address || '—')],
           ])}</div>
@@ -259,9 +262,16 @@
           { label: 'Our ref', key: 'bill_no' }, { label: 'Their no.', key: 'supplier_inv_no' },
           { label: 'Due', render: (r) => UI.date(r.due_date) },
           { label: 'Total', num: true, render: (r) => UI.money(r.total, { symbol: false }) },
-          { label: 'Status', render: (r) => UI.statusBadge(r.status) }], d.invoices)}` : ''}`,
+          { label: 'Status', render: (r) => UI.statusBadge(r.status) }], d.invoices)}` : ''}
+        <h4 class="mt">Conditions of this order</h4>
+        <div class="muted small mb">${d.conditions.length} point${d.conditions.length === 1 ? '' : 's'},
+          as this supplier received them.</div>
+        <ol class="conditions">${d.conditions.map((c) => `<li>${esc(c)}</li>`).join('')
+          || '<div class="muted">No conditions were printed on this order.</div>'}</ol>`,
       footer: `<button class="btn ghost" data-act="__close">Close</button>
         <button class="btn ghost" data-act="print">Print the LPO</button>
+        ${APP.can(['kam']) && !['received', 'closed', 'cancelled'].includes(o.status)
+          ? '<button class="btn ghost" data-act="terms">Edit the conditions</button>' : ''}
         ${APP.can(['kam']) && o.status === 'draft' ? '<button class="btn gold" data-act="send">Send it to the maker</button>' : ''}
         ${APP.can(['logistics', 'kam']) && ['sent', 'acknowledged', 'partial'].includes(o.status)
           ? '<button class="btn green" data-act="receive">Receive goods</button>' : ''}
@@ -276,6 +286,7 @@
           APP.reload();
           return;
         }
+        if (act === 'terms') { UI.closeAllModals(); editOrderTerms(d); return; }
         if (act === 'receive') { UI.closeAllModals(); openGrn(d); return; }
         if (act === 'bill') { UI.closeAllModals(); openSupplierBill(d); return; }
         if (act === 'cancel') {
@@ -317,6 +328,14 @@
           ${UI.field({ name: 'delivery_location_id', label: 'Deliver to', blank: 'Main yard',
             options: m.locations.map((l) => ({ value: l.id, label: l.name })) })}
         </div>
+        <div class="grid g3">
+          ${UI.field({ name: 'attention', label: 'For the attention of',
+            placeholder: 'Mr. Sankar', hint: "Defaults to the supplier's contact." })}
+          ${UI.field({ name: 'incoterms', label: 'Incoterms / delivery basis',
+            placeholder: 'Delivery to site in DXB' })}
+          ${UI.field({ name: 'authority', label: 'Approving authority',
+            placeholder: 'DEWA', hint: 'Named in the inspection conditions below.' })}
+        </div>
         <div class="grid g2">
           ${UI.field({ name: 'project', label: 'Project', value: sq ? sq.project || '' : (opts.project || '') })}
           ${UI.field({ name: 'delivery_address', label: 'Delivery address', rows: 2 })}
@@ -324,13 +343,61 @@
         <h4 class="mt">Lines</h4>
         <div id="lines"></div>
         ${UI.field({ name: 'notes', label: 'Notes to the maker', rows: 2 })}
-        ${UI.field({ name: 'terms_text', label: 'Conditions printed on the LPO', rows: 4 })}
+        <h4 class="mt">Conditions of this order</h4>
+        <div class="muted small mb">These come from the standard list under Masters → Terms &amp;
+          conditions, with this supplier's name already filled in. Untick what does not apply, edit
+          any point, or add one — what you leave here is what this supplier receives, and changing
+          the standard list later will not alter it.</div>
+        <div id="clauses">${UI.loading()}</div>
         ${sq ? `<input type="hidden" name="quotation_id" value="${sq.id}">` : ''}
         ${opts.salesOrderId ? `<input type="hidden" name="sales_order_id" value="${opts.salesOrderId}">` : ''}
       </form>`,
       onMount(modal) {
         const lines = opts.fromSupplierQuote ? opts.fromSupplierQuote.items : (opts.lines || []);
         modal._lines = LINES.LineEditor(modal.querySelector('#lines'), { side: 'buy', lines });
+
+        /*
+         * The conditions name the supplier and the authority, so they are
+         * rebuilt whenever either changes — otherwise an order ends up telling
+         * one manufacturer that another one is responsible for the repairs,
+         * which is exactly what a copied block of terms does.
+         */
+        const host = modal.querySelector('#clauses');
+        const partnerEl = modal.querySelector('[name=partner_id]');
+        const authorityEl = modal.querySelector('[name=authority]');
+        const termsEl = modal.querySelector('[name=payment_terms_id]');
+        let touched = false;
+
+        const load = async () => {
+          const res = await API.get('/api/purchase/terms/default' + API.qs({
+            partner_id: partnerEl.value,
+            authority: authorityEl.value,
+            payment_terms_id: termsEl.value,
+            project: modal.querySelector('[name=project]').value,
+          }));
+          if (modal._clauses) modal._clauses.set(res.clauses);
+          else {
+            modal._clauses = CLAUSES.Editor(host, {
+              clauses: res.clauses, onChange: () => { touched = true; },
+            });
+            touched = false;
+          }
+        };
+        const reload = async () => {
+          if (touched) {
+            const keep = await UI.confirm(
+              'The conditions have been edited by hand. Rebuild them for the supplier and authority '
+              + 'now chosen? Your edits will be lost.',
+              { title: 'Rebuild the conditions?', yes: 'Rebuild them' });
+            if (!keep) return;
+          }
+          await load();
+          touched = false;
+        };
+        partnerEl.addEventListener('change', reload);
+        authorityEl.addEventListener('change', reload);
+        termsEl.addEventListener('change', reload);
+        load();
       },
       footer: `<button class="btn ghost" data-act="__close">Cancel</button>
                <button class="btn ghost" data-act="draft">Save as a draft</button>
@@ -341,7 +408,10 @@
         if (!form.reportValidity()) return 'keep';
         const items = modal._lines.value();
         if (!items.length) { UI.err('An LPO needs at least one line.'); return 'keep'; }
-        const saved = await API.post('/api/purchase/orders', { ...UI.formValues(form), items });
+        const conditions = modal._clauses ? modal._clauses.value() : [];
+        const saved = await API.post('/api/purchase/orders', {
+          ...UI.formValues(form), items, terms_text: conditions.join('\n'),
+        });
         if (act === 'send') {
           const res = await API.post(`/api/purchase/orders/${saved.id}/send`);
           UI.ok(res.message);
@@ -350,6 +420,61 @@
         } else {
           UI.ok(`${saved.lpo_no} saved as a draft — nothing is on order until it is sent.`);
         }
+        APP.reload();
+      },
+    });
+  }
+
+  /**
+   * Change the conditions on an order that already exists.
+   *
+   * Allowed until the goods are in, because a condition is often agreed after
+   * the order goes out — but never silently: what it said before is kept in
+   * the audit trail, and a sent order is marked as needing to be reissued.
+   */
+  function editOrderTerms(data) {
+    const o = data.order;
+    UI.modal({
+      title: `Conditions of ${o.lpo_no}`,
+      size: 'wide',
+      body: `
+        ${o.status !== 'draft' ? `<div class="alert warn"><b>This LPO has already gone to
+          ${esc(o.supplier_name)}.</b> Changing the conditions here changes our record of the order —
+          send them the amended copy as well, or they are working to the old one. The change is
+          recorded in the audit trail either way.</div>` : ''}
+        <form id="t-form">
+          <div class="grid g3">
+            ${UI.field({ name: 'attention', label: 'For the attention of', value: o.attention || '' })}
+            ${UI.field({ name: 'incoterms', label: 'Incoterms / delivery basis', value: o.incoterms || '' })}
+            ${UI.field({ name: 'authority', label: 'Approving authority', value: o.authority || '' })}
+          </div>
+        </form>
+        <div id="clauses"></div>`,
+      footer: `<button class="btn ghost" data-act="__close">Cancel</button>
+               <button class="btn ghost" data-act="reset">Start again from the standard list</button>
+               <button class="btn" data-act="save">Save the conditions</button>`,
+      onMount(modal) {
+        modal._clauses = CLAUSES.Editor(modal.querySelector('#clauses'), { clauses: data.conditions });
+      },
+      async onAction(act, modal) {
+        if (act === 'reset') {
+          const form = modal.querySelector('#t-form');
+          const res = await API.get('/api/purchase/terms/default' + API.qs({
+            partner_id: o.partner_id,
+            authority: form.querySelector('[name=authority]').value,
+            payment_terms_id: o.payment_terms_id,
+            project: o.project,
+          }));
+          modal._clauses.set(res.clauses);
+          UI.ok('Rebuilt from the standard list. Nothing is saved until you press save.');
+          return 'keep';
+        }
+        if (act !== 'save') return;
+        const form = modal.querySelector('#t-form');
+        await API.patch(`/api/purchase/orders/${o.id}`, {
+          ...UI.formValues(form), terms: modal._clauses.value(),
+        });
+        UI.ok('Conditions saved.');
         APP.reload();
       },
     });
@@ -503,9 +628,12 @@
             <option value="">All</option><option value="unpaid">Unpaid</option>
             <option value="partial">Part paid</option><option value="paid">Paid</option>
             <option value="disputed">Disputed</option></select></label>`,
-        actions: APP.can(['accounts'])
-          ? [{ id: 'new', label: '+ Book an invoice', kind: 'gold', onClick: () => openSupplierBill(null) },
-            { id: 'due', label: 'What is due', onClick: showDue }] : [],
+        actions: [
+          APP.can(['accounts'])
+            ? { id: 'new', label: '+ Book an invoice', kind: 'gold', onClick: () => openSupplierBill(null) }
+            : null,
+          { id: 'due', label: 'What is due', onClick: showDue },
+        ].filter(Boolean),
         async onLoad(box, values) {
           const v = values();
           box.innerHTML = UI.loading();
@@ -665,5 +793,5 @@
   }
 
   window.BUY = { openSupplierQuotation, showSupplierQuotation, openPurchaseOrder, showPurchaseOrder,
-    openGrn, openSupplierBill };
+    openGrn, openSupplierBill, editOrderTerms };
 })();

@@ -426,6 +426,8 @@ function seed() {
       .run(code, name, kind, order);
   }
 
+  const clauses = require('./clauses-seed').seedClauses(db);
+
   db.prepare('INSERT INTO locations (code, name, address, is_default) VALUES (?, ?, ?, 1)')
     .run('YARD', 'Main Yard', config.company.address);
   db.prepare('INSERT INTO locations (code, name, address, is_default) VALUES (?, ?, ?, 0)')
@@ -498,7 +500,7 @@ function seed() {
   console.log(`[seed] ${db.prepare('SELECT COUNT(*) AS c FROM companies').get().c} companies, `
     + `${APPLICATIONS.length} applications, ${CATEGORIES.length} product lines, ${items} items, `
     + `${PAYMENT_TERMS.length} payment terms, ${USERS.length} users, `
-    + `${SUPPLIERS.length + CLIENTS.length} trading accounts.`);
+    + `${SUPPLIERS.length + CLIENTS.length} trading accounts, ${clauses} standard clauses.`);
 }
 
 if (db.prepare('SELECT COUNT(*) AS c FROM users').get().c > 0) {

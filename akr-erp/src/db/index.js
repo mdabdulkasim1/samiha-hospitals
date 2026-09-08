@@ -25,6 +25,9 @@ function migrate() {
   db.exec(sql);
   // Columns added after the first release, for databases created before them.
   ensureColumn('items', 'subgroup_id', 'INTEGER REFERENCES item_subgroups(id)');
+  for (const col of ['attention', 'incoterms', 'authority']) {
+    ensureColumn('purchase_orders', col, 'TEXT');
+  }
   return db;
 }
 

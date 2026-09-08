@@ -2,7 +2,7 @@
 (function () {
   'use strict';
   const esc = (v) => UI.esc(v);
-  const state = { tab: 'companies' };
+  const state = { tab: null };
 
   const TABS = [
     ['companies', 'Group companies'],
@@ -10,6 +10,7 @@
     ['categories', 'Product lines'],
     ['subgroups', 'Types'],
     ['terms', 'Payment terms'],
+    ['conditions', 'Terms & conditions'],
     ['locations', 'Locations'],
     ['heads', 'Expense heads'],
   ];
@@ -20,6 +21,9 @@
 
     async render(host) {
       const m = await APP.loadMasters(true);
+      const isAdmin = APP.can(['admin']);
+      // A key account manager comes here for the conditions, not the companies.
+      if (!state.tab) state.tab = isAdmin ? 'companies' : 'conditions';
       host.innerHTML = `<div class="tabs">${TABS.map(([id, label]) =>
         `<button data-tab="${id}" class="${state.tab === id ? 'active' : ''}">${esc(label)}</button>`).join('')}</div>
         <div id="pane"></div>`;
@@ -28,7 +32,7 @@
         const pane = document.getElementById('pane');
         const tab = state.tab;
         if (tab === 'companies') {
-          APP.actions([{ id: 'add', label: '+ Company', kind: 'gold', onClick: () => editCompany() }]);
+          APP.actions(isAdmin ? [{ id: 'add', label: '+ Company', kind: 'gold', onClick: () => editCompany() }] : []);
           pane.innerHTML = `<div class="card">
             <div class="card-sub">One set of books, six companies. Every document is numbered and
               stamped with the company that issued it — AKR/LPO/2026/0042 — so no two of them can
@@ -42,11 +46,11 @@
               { label: 'Currency', key: 'currency' },
               { label: '', render: (r) => (r.active ? '' : UI.badge('inactive')) },
             ], m.companies, { onRow: true })}</div>`;
-          UI.bindRows(pane, m.companies, (row) => editCompany(row));
+          if (isAdmin) UI.bindRows(pane, m.companies, (row) => editCompany(row));
           return;
         }
         if (tab === 'applications') {
-          APP.actions([{ id: 'add', label: '+ Application', kind: 'gold', onClick: () => editApplication() }]);
+          APP.actions(isAdmin ? [{ id: 'add', label: '+ Application', kind: 'gold', onClick: () => editApplication() }] : []);
           pane.innerHTML = `<div class="card">
             <div class="card-sub">The title every quotation, LPO, delivery note and invoice carries,
               so a storm-water job and a potable-water job never share a sheet of paper.</div>
@@ -56,11 +60,11 @@
               { label: 'Order', num: true, key: 'sort_order' },
               { label: '', render: (r) => (r.active ? '' : UI.badge('inactive')) },
             ], m.applications, { onRow: true })}</div>`;
-          UI.bindRows(pane, m.applications, (row) => editApplication(row));
+          if (isAdmin) UI.bindRows(pane, m.applications, (row) => editApplication(row));
           return;
         }
         if (tab === 'categories') {
-          APP.actions([{ id: 'add', label: '+ Product line', kind: 'gold', onClick: () => editCategory() }]);
+          APP.actions(isAdmin ? [{ id: 'add', label: '+ Product line', kind: 'gold', onClick: () => editCategory() }] : []);
           pane.innerHTML = `<div class="card">
             <div class="card-sub">The code is the middle of every item number in the line —
               AKR-<b>VLP</b>-00001 is a potable-water valve — so it is fixed once items exist.</div>
@@ -72,11 +76,11 @@
                 ? UI.badge(r.application_name, 'navy') : '—') },
               { label: 'Items', num: true, key: 'item_count' },
             ], m.categories, { onRow: true })}</div>`;
-          UI.bindRows(pane, m.categories, (row) => editCategory(row));
+          if (isAdmin) UI.bindRows(pane, m.categories, (row) => editCategory(row));
           return;
         }
         if (tab === 'subgroups') {
-          APP.actions([{ id: 'add', label: '+ Type', kind: 'gold', onClick: () => editSubgroup() }]);
+          APP.actions(isAdmin ? [{ id: 'add', label: '+ Type', kind: 'gold', onClick: () => editSubgroup() }] : []);
           pane.innerHTML = `<div class="card">
             <div class="card-sub">The types within a line — the fabrication list in particular:
               straps, air vents, handle bars, C clamps, MS clamps, spider clamps, gratings, chequered
@@ -87,11 +91,11 @@
               { label: 'Type', key: 'name' },
               { label: '', render: (r) => (r.active ? '' : UI.badge('inactive')) },
             ], m.subgroups, { onRow: true })}</div>`;
-          UI.bindRows(pane, m.subgroups, (row) => editSubgroup(row));
+          if (isAdmin) UI.bindRows(pane, m.subgroups, (row) => editSubgroup(row));
           return;
         }
         if (tab === 'terms') {
-          APP.actions([{ id: 'add', label: '+ Payment terms', kind: 'gold', onClick: () => editTerms() }]);
+          APP.actions(isAdmin ? [{ id: 'add', label: '+ Payment terms', kind: 'gold', onClick: () => editTerms() }] : []);
           pane.innerHTML = `<div class="card">
             <div class="card-sub">One of these is chosen on every quotation, LPO and invoice. They
               decide the advance an order waits for, the cheque collected at the gate, and the due
@@ -106,11 +110,12 @@
               { label: 'Retention', num: true, render: (r) => (r.retention_percent ? `${r.retention_percent}%` : '—') },
               { label: 'Applies to', render: (r) => UI.titleise(r.applies_to) },
             ], m.paymentTerms, { onRow: true })}</div>`;
-          UI.bindRows(pane, m.paymentTerms, (row) => editTerms(row));
+          if (isAdmin) UI.bindRows(pane, m.paymentTerms, (row) => editTerms(row));
           return;
         }
+        if (tab === 'conditions') { paintConditions(pane); return; }
         if (tab === 'locations') {
-          APP.actions([{ id: 'add', label: '+ Location', kind: 'gold', onClick: () => editLocation() }]);
+          APP.actions(isAdmin ? [{ id: 'add', label: '+ Location', kind: 'gold', onClick: () => editLocation() }] : []);
           pane.innerHTML = `<div class="card">${UI.table([
             { label: 'Code', render: (r) => `<b class="mono">${esc(r.code)}</b>` },
             { label: 'Location', render: (r) => `${esc(r.name)}${r.is_default ? ' ' + UI.badge('default', 'ok') : ''}` },
@@ -118,7 +123,7 @@
           ], m.locations)}</div>`;
           return;
         }
-        APP.actions([{ id: 'add', label: '+ Head', kind: 'gold', onClick: () => editHead() }]);
+        APP.actions(isAdmin ? [{ id: 'add', label: '+ Head', kind: 'gold', onClick: () => editHead() }] : []);
         pane.innerHTML = `<div class="card">
           <div class="card-sub">What the group's spending is filed under.</div>
           ${UI.table([
@@ -135,6 +140,145 @@
       paint();
     },
   });
+
+  /*
+   * The clause library — the conditions that go at the foot of an LPO or a
+   * quotation. Kept by the key account manager, not only by an administrator:
+   * they are the ones who find out the hard way which condition was missing.
+   */
+  let conditionDoc = 'purchase_order';
+
+  const DOC_LABELS = {
+    purchase_order: 'LPO to a supplier',
+    sales_quotation: 'Quotation to a client',
+  };
+
+  async function paintConditions(pane) {
+    const canEdit = APP.can(['kam']);
+    APP.actions(canEdit
+      ? [{ id: 'add', label: '+ Add a point', kind: 'gold', onClick: () => editClause(null) }] : []);
+    pane.innerHTML = UI.loading();
+    const data = await API.get(`/api/masters/terms?doc_type=${conditionDoc}&includeInactive=1`);
+
+    const rows = data.rows;
+    let lastGroup = null;
+    const list = rows.map((c, i) => {
+      const header = c.clause_group && c.clause_group !== lastGroup
+        ? `<tr><td colspan="5" style="padding-top:14px;border:0">
+             <b class="small" style="color:var(--navy);letter-spacing:.8px;text-transform:uppercase">
+             ${esc(c.clause_group)}</b></td></tr>` : '';
+      lastGroup = c.clause_group || lastGroup;
+      return header + `<tr data-clause="${c.id}" class="${c.active ? '' : 'dim'}">
+        <td class="num muted" style="width:34px">${i + 1}</td>
+        <td>${esc(c.text)}</td>
+        <td style="width:110px">${c.is_default ? UI.badge('ticked by default', 'ok')
+          : UI.badge('off by default')}</td>
+        <td style="width:80px">${c.active ? '' : UI.badge('retired', 'danger')}</td>
+        <td style="width:104px" class="nowrap">${canEdit
+          ? `<button class="btn ghost sm" data-up="${c.id}" title="Move up">↑</button>
+             <button class="btn ghost sm" data-down="${c.id}" title="Move down">↓</button>` : ''}</td>
+      </tr>`;
+    }).join('');
+
+    pane.innerHTML = `
+      <div class="card">
+        <div class="row-between mb">
+          <div>
+            <b>Standard conditions</b>
+            <div class="card-sub">What a new document starts with. A point edited here changes the
+              next document raised; it never reaches back into an order a supplier already has.</div>
+          </div>
+          <label class="field" style="margin:0;min-width:220px"><span>These conditions go on</span>
+            <select id="doc-type">
+              ${Object.entries(DOC_LABELS).map(([k, label]) =>
+                `<option value="${k}"${k === conditionDoc ? ' selected' : ''}>${esc(label)}</option>`).join('')}
+            </select></label>
+        </div>
+        <div class="alert info small">
+          <b>Placeholders</b> are filled in from the document itself, so a block copied onto the next
+          order cannot carry the last order's supplier with it:
+          ${Object.entries(data.placeholders).map(([k, note]) =>
+            `<div><code>${esc(k)}</code> — ${esc(note)}</div>`).join('')}
+        </div>
+        <div class="table-wrap"><table><tbody>${list
+          || '<tr><td class="muted">No conditions set up for this document yet.</td></tr>'}</tbody></table></div>
+      </div>`;
+
+    pane.querySelector('#doc-type').addEventListener('change', (e) => {
+      conditionDoc = e.target.value;
+      paintConditions(pane);
+    });
+    if (!canEdit) return;
+
+    pane.querySelectorAll('tr[data-clause]').forEach((tr) => {
+      tr.addEventListener('click', (e) => {
+        if (e.target.closest('button')) return;
+        editClause(rows.find((r) => String(r.id) === tr.dataset.clause));
+      });
+    });
+    const move = async (id, delta) => {
+      const order = rows.filter((r) => r.active).map((r) => r.id);
+      const at = order.indexOf(Number(id));
+      const to = at + delta;
+      if (at === -1 || to < 0 || to >= order.length) return;
+      order.splice(to, 0, order.splice(at, 1)[0]);
+      await API.post('/api/masters/terms/reorder', { order });
+      paintConditions(pane);
+    };
+    pane.querySelectorAll('[data-up]').forEach((b) =>
+      b.addEventListener('click', () => move(b.dataset.up, -1)));
+    pane.querySelectorAll('[data-down]').forEach((b) =>
+      b.addEventListener('click', () => move(b.dataset.down, 1)));
+  }
+
+  function editClause(clause) {
+    const groups = ['Specification & approval', 'Inspection & testing', 'Quality & documents',
+      'Packing & delivery', 'Invoicing & payment', 'Prices', 'Delivery', 'Payment', 'General'];
+    UI.modal({
+      title: clause ? 'Edit this point' : 'Add a point',
+      body: `<form id="cl-form">
+        ${clause ? '' : UI.field({ name: 'doc_type', label: 'Goes on', value: conditionDoc,
+          options: Object.entries(DOC_LABELS).map(([k, label]) => ({ value: k, label })) })}
+        ${UI.field({ name: 'clause_group', label: 'Grouped under', blank: 'Ungrouped',
+          value: clause ? clause.clause_group : '',
+          options: groups.map((g) => ({ value: g, label: g })) })}
+        ${UI.field({ name: 'text', label: 'The point, as it prints', rows: 4, required: true,
+          value: clause ? clause.text : '',
+          hint: 'You may use {{supplier}}, {{company}}, {{authority}}, {{lpo_no}}, {{project}} and {{payment_terms}}.' })}
+        ${UI.checkbox({ name: 'is_default', label: 'Tick this point on a new document',
+          checked: clause ? !!clause.is_default : true })}
+        ${clause ? UI.checkbox({ name: 'active', label: 'Still in use',
+          checked: !!clause.active }) : ''}
+      </form>`,
+      footer: `<button class="btn ghost" data-act="__close">Cancel</button>
+        ${clause && clause.active ? '<button class="btn danger" data-act="retire">Retire it</button>' : ''}
+        <button class="btn" data-act="save">Save</button>`,
+      async onAction(act, modal) {
+        if (act === 'retire') {
+          const sure = await UI.confirm(
+            'Retire this point? It stops appearing on new documents, and stays exactly as it is on '
+            + 'every order already issued with it.',
+            { title: 'Retire this condition?', danger: true, yes: 'Retire it' });
+          if (!sure) return 'keep';
+          await API.del(`/api/masters/terms/${clause.id}`);
+          UI.ok('Retired.');
+          APP.reload();
+          return;
+        }
+        if (act !== 'save') return;
+        const form = modal.querySelector('#cl-form');
+        if (!form.reportValidity()) return 'keep';
+        const v = UI.formValues(form);
+        v.is_default = form.querySelector('[name=is_default]').checked;
+        if (clause) v.active = form.querySelector('[name=active]').checked;
+        else v.doc_type = v.doc_type || conditionDoc;
+        if (clause) await API.patch(`/api/masters/terms/${clause.id}`, v);
+        else await API.post('/api/masters/terms', v);
+        UI.ok('Saved.');
+        APP.reload();
+      },
+    });
+  }
 
   const save = async (label, fn) => {
     await fn();

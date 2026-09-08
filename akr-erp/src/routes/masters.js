@@ -29,6 +29,7 @@ router.get('/bootstrap', wrap(async (req, res) => {
         LEFT JOIN applications a ON a.id = c.application_id
        WHERE c.active = 1 ORDER BY c.sort_order, c.name`).all(),
     subgroups: db.prepare('SELECT * FROM item_subgroups WHERE active = 1 ORDER BY product_group, sort_order, name').all(),
+    clausePlaceholders: require('../services/clauses').PLACEHOLDERS,
     paymentTerms: db.prepare('SELECT * FROM payment_terms WHERE active = 1 ORDER BY sort_order, name').all(),
     locations: db.prepare('SELECT * FROM locations WHERE active = 1 ORDER BY is_default DESC, name').all(),
     expenseCategories: db.prepare('SELECT * FROM expense_categories WHERE active = 1 ORDER BY kind, sort_order, name').all(),
@@ -257,6 +258,103 @@ router.patch('/payment-terms/:id', admin, wrap(async (req, res) => {
   });
   audit.log(req, 'payment_terms.updated', 'payment_terms', row.id);
   res.json(db.prepare('SELECT * FROM payment_terms WHERE id = ?').get(row.id));
+}));
+
+// ------------------------------------------------------- terms & conditions
+/*
+ * The clause library. The key account manager keeps it — they are the ones who
+ * find out the hard way which condition was missing — so it is not restricted
+ * to an administrator.
+ *
+ * Editing a clause here changes what the next document starts with. It never
+ * reaches back into an order already sent: those carry their own copy of the
+ * text the supplier received.
+ */
+const clauses = require('../services/clauses');
+const keeper = auth.requireRole('kam');
+const DOC_TYPES = ['purchase_order', 'sales_quotation', 'sales_order', 'sales_invoice'];
+
+router.get('/terms', wrap(async (req, res) => {
+  const docType = v.oneOf(req.query.doc_type, DOC_TYPES, 'doc_type') || 'purchase_order';
+  res.json({
+    doc_type: docType,
+    rows: clauses.list(docType, { includeInactive: v.bool(req.query.includeInactive) }),
+    placeholders: clauses.PLACEHOLDERS,
+    groups: [...new Set(clauses.list(docType, { includeInactive: true })
+      .map((c) => c.clause_group).filter(Boolean))],
+  });
+}));
+
+/** What a new document of this type would start with, placeholders and all. */
+router.get('/terms/preview', wrap(async (req, res) => {
+  const docType = v.oneOf(req.query.doc_type, DOC_TYPES, 'doc_type') || 'purchase_order';
+  res.json({
+    doc_type: docType,
+    text: clauses.textFor(docType, {
+      company: v.str(req.query.company),
+      supplier: v.str(req.query.supplier),
+      client: v.str(req.query.client),
+      authority: v.str(req.query.authority),
+      payment_terms: v.str(req.query.payment_terms),
+    }),
+  });
+}));
+
+router.post('/terms', keeper, wrap(async (req, res) => {
+  v.required(req.body, ['text']);
+  const docType = v.oneOf(req.body.doc_type, DOC_TYPES, 'doc_type') || 'purchase_order';
+  const last = db.prepare('SELECT COALESCE(MAX(sort_order), 0) AS m FROM terms_clauses WHERE doc_type = ?')
+    .get(docType).m;
+  const info = db.prepare(
+    `INSERT INTO terms_clauses (doc_type, clause_group, text, sort_order, is_default, updated_by)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(docType, v.str(req.body.clause_group), v.str(req.body.text),
+    v.int(req.body.sort_order, last + 10), v.bool(req.body.is_default, true) ? 1 : 0, req.user.id);
+  audit.log(req, 'terms.created', 'terms_clause', info.lastInsertRowid, { docType });
+  res.status(201).json(db.prepare('SELECT * FROM terms_clauses WHERE id = ?').get(info.lastInsertRowid));
+}));
+
+router.patch('/terms/:id', keeper, wrap(async (req, res) => {
+  const row = db.prepare('SELECT * FROM terms_clauses WHERE id = ?').get(req.params.id);
+  if (!row) throw notFound('No such clause.');
+  db.prepare(`UPDATE terms_clauses SET clause_group = @clause_group, text = @text,
+      sort_order = @sort_order, is_default = @is_default, active = @active,
+      updated_by = @updated_by, updated_at = datetime('now') WHERE id = @id`).run({
+    id: row.id,
+    clause_group: v.str(req.body.clause_group, row.clause_group),
+    text: v.str(req.body.text, row.text),
+    sort_order: v.int(req.body.sort_order, row.sort_order),
+    is_default: req.body.is_default === undefined ? row.is_default : (v.bool(req.body.is_default) ? 1 : 0),
+    active: req.body.active === undefined ? row.active : (v.bool(req.body.active) ? 1 : 0),
+    updated_by: req.user.id,
+  });
+  audit.log(req, 'terms.updated', 'terms_clause', row.id, { was: row.text });
+  res.json(db.prepare('SELECT * FROM terms_clauses WHERE id = ?').get(row.id));
+}));
+
+/*
+ * A clause is retired, not deleted. Somebody will ask next year what the
+ * conditions said when an order went out, and an answer of "it is gone" is
+ * not one.
+ */
+router.delete('/terms/:id', keeper, wrap(async (req, res) => {
+  const row = db.prepare('SELECT * FROM terms_clauses WHERE id = ?').get(req.params.id);
+  if (!row) throw notFound('No such clause.');
+  db.prepare("UPDATE terms_clauses SET active = 0, updated_by = ?, updated_at = datetime('now') WHERE id = ?")
+    .run(req.user.id, row.id);
+  audit.log(req, 'terms.retired', 'terms_clause', row.id, { text: row.text });
+  res.json({ ok: true, message: 'The clause is retired. It stays on every document already issued with it.' });
+}));
+
+/** Put the list in the order it should print. */
+router.post('/terms/reorder', keeper, wrap(async (req, res) => {
+  const order = Array.isArray(req.body.order) ? req.body.order : [];
+  if (!order.length) throw badRequest('Send the clause ids in the order they should print.');
+  const stmt = db.prepare('UPDATE terms_clauses SET sort_order = ? WHERE id = ?');
+  const run = db.transaction(() => order.forEach((id, i) => stmt.run((i + 1) * 10, id)));
+  run();
+  audit.log(req, 'terms.reordered', 'terms_clause', null, { count: order.length });
+  res.json({ ok: true });
 }));
 
 // ----------------------------------------------------------------- locations

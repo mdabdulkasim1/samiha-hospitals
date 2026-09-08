@@ -324,6 +324,12 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
   application_id    INTEGER REFERENCES applications(id),
   sales_order_id    INTEGER REFERENCES sales_orders(id),   -- back-to-back
   project           TEXT,
+  attention         TEXT,                     -- 'Attn: Mr. Sankar'
+  incoterms         TEXT,                     -- 'Delivery to site in DXB'
+  -- The end client's approving authority — DEWA, Dubai Municipality, Etisalat.
+  -- Their inspection is a condition of several of the standard clauses, so it
+  -- is a field on the order rather than a phrase retyped into the conditions.
+  authority         TEXT,
   lpo_date          TEXT NOT NULL DEFAULT (date('now')),
   delivery_date     TEXT,
   delivery_location_id INTEGER REFERENCES locations(id),
@@ -798,6 +804,39 @@ CREATE TABLE IF NOT EXISTS stock_movements (
 );
 CREATE INDEX IF NOT EXISTS idx_stock_item ON stock_movements(item_id, bucket);
 CREATE INDEX IF NOT EXISTS idx_stock_ref ON stock_movements(ref_type, ref_id);
+
+/*
+ * The clauses that go at the foot of a document.
+ *
+ * The company's LPOs already carry a block of conditions, and they are not
+ * boilerplate — they are what the buyer is relying on if a delivery is late,
+ * a coating is thin or a certificate never arrives. Kept as separate clauses
+ * rather than one lump of text so that the key account manager can edit a
+ * point, add one, drop one for a particular order, or put them in a different
+ * order, without retyping the rest.
+ *
+ * A clause may carry placeholders — {{supplier}}, {{lpo_no}}, {{authority}} —
+ * which are filled in from the document itself. That is deliberate: the
+ * conditions on a real LPO named a supplier who was not the one being ordered
+ * from, because the block had been copied from another order.
+ */
+CREATE TABLE IF NOT EXISTS terms_clauses (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  doc_type     TEXT NOT NULL CHECK (doc_type IN
+                 ('purchase_order','sales_quotation','sales_order','sales_invoice')),
+  clause_group TEXT,                          -- how the list is grouped on screen
+  text         TEXT NOT NULL,
+  sort_order   INTEGER NOT NULL DEFAULT 0,
+  -- Whether it is ticked when a new document is raised. A clause that applies
+  -- to some orders and not others lives here unticked rather than being
+  -- remembered by somebody.
+  is_default   INTEGER NOT NULL DEFAULT 1,
+  active       INTEGER NOT NULL DEFAULT 1,
+  updated_by   INTEGER REFERENCES users(id),
+  updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_terms_doc ON terms_clauses(doc_type, sort_order);
 
 -- Notifications: work arriving at somebody's desk.
 CREATE TABLE IF NOT EXISTS notifications (

@@ -13,6 +13,7 @@ const stock = require('../services/stock');
 const settlement = require('../services/settlement');
 const notify = require('../services/notify');
 const ledger = require('../services/ledger');
+const clauses = require('../services/clauses');
 
 const router = express.Router();
 
@@ -176,6 +177,8 @@ router.get('/quotations/:id', wrap(async (req, res) => {
     quotation: row,
     items,
     termsText: terms.describe(row.payment_terms_id),
+    conditions: clauses.toLines(row.terms_text),
+    amountInWords: pricing.inWords(row.total, row.currency),
     margin: auth.seesCost(req.user) ? margin : null,
     orders: db.prepare('SELECT id, so_no, client_lpo_no, order_date, total, status FROM sales_orders WHERE quotation_id = ?')
       .all(row.id),
@@ -200,6 +203,16 @@ router.post('/quotations', seller, wrap(async (req, res) => {
 
   const result = tx(() => {
     const quoteNo = ids.docNo('salesQuotation', company.code);
+
+    // The same clause library the LPOs draw on, kept under Masters → Terms &
+    // conditions, with this client's own details filled in.
+    const termsText = v.str(b.terms_text) || clauses.textFor('sales_quotation', {
+      company: company.name,
+      client: client.name,
+      doc_no: quoteNo,
+      project: v.str(b.project),
+      payment_terms: terms.describe(b.payment_terms_id || client.payment_terms_id || null),
+    });
     const info = db.prepare(`
       INSERT INTO sales_quotations (company_id, quote_no, revision, partner_id, enquiry_id,
         application_id, project, subject, attention, quote_date, valid_until, payment_terms_id,
@@ -227,7 +240,7 @@ router.post('/quotations', seller, wrap(async (req, res) => {
       cost_total: costTotal,
       status: v.oneOf(b.status, ['draft', 'sent'], 'status') || 'draft',
       notes: v.str(b.notes),
-      terms_text: v.str(b.terms_text) || docs.DEFAULT_QUOTE_TERMS,
+      terms_text: termsText,
       created_by: req.user.id,
     });
     docs.insertLines('sales_quotation_items', 'quotation_id', info.lastInsertRowid,

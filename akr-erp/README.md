@@ -175,6 +175,52 @@ The terms are not decoration:
 - **The due date on an invoice is derived from the terms**, both ways, which is what the ageing and
   the payment run read.
 
+## Terms & conditions
+
+The conditions at the foot of an LPO are not boilerplate — they are what the buyer is relying on when
+a delivery is late, a coating is thin or a certificate never arrives. They are kept as a library of
+separate points under **Masters → Terms & conditions**, which the **key account manager** keeps (not
+only an administrator: they are the ones who find out the hard way which condition was missing).
+
+The library ships with the thirty-odd points the company already prints, taken from its own LPO
+AKR-FD26-016 — approved drawings, written confirmation before production, SAT/FAT inspection, coating
+thickness, MTC on delivery, individual packing, wooden pallets, original DN and tax invoice to the
+office — together with the protections that block left open: late-delivery back-charges, warranty,
+what makes an invoice payable, no substitution without approval, sub-contracting, confidentiality,
+cancellation and governing law.
+
+**Every point is editable, and each one is ticked or unticked on the order it applies to.** Points
+that only apply to some jobs (coating thickness, chemical analysis, site HSE) start unticked.
+
+### Placeholders
+
+A clause may name the supplier, the company, the order or the authority through a placeholder, which
+the document fills in when it is raised:
+
+```
+{{company}}  {{supplier}}  {{client}}  {{lpo_no}}  {{doc_no}}
+{{project}}  {{authority}}  {{delivery_date}}  {{payment_terms}}  {{application}}
+```
+
+This is not decoration. The conditions on a real LPO named a manufacturer who was not the one being
+ordered from, because the block had been copied across from another order. A name that comes from the
+order cannot be copied wrong — and if the supplier on the form is changed, the app offers to rebuild
+the conditions rather than leaving the old name in them.
+
+### What changes what
+
+| | |
+|---|---|
+| Editing a point in the library | Changes the **next** document raised |
+| Editing an order's own conditions | Changes **that order only**, and is written to the audit trail with what it said before |
+| Retiring a point | Stops it appearing on new documents; it stays exactly as it was on every order already issued with it |
+
+An order's conditions can be changed until the goods are received; after that they are fixed. On an
+LPO already sent, the app says plainly that the supplier is working to the copy they have and the
+amended one needs to go to them as well.
+
+Quotations to clients draw on the same library, under their own document type.
+
 ## VAT
 
 5% on both sides. Output tax on our tax invoices, input tax on the manufacturers' invoices and on
@@ -227,7 +273,7 @@ A4, on the company's letterhead, with the application title under the document t
 | Document | Carries |
 |---|---|
 | **Quotation** | Lines, rates, VAT, validity, delivery, payment terms, terms & conditions |
-| **Local Purchase Order** | Supplier, deliver-to, your-quotation reference, conditions of order, acknowledgement |
+| **Local Purchase Order** | Supplier and their TRN, attention, incoterms, deliver-to, your-quotation and SO references, approving authority, amount in words, the numbered conditions, buyer details, acknowledgement |
 | **Delivery Note** | Quantities and part numbers, no prices; a signature block; a payment-on-delivery warning where the terms call for one |
 | **Tax Invoice** | Both TRNs, the client's LPO, the delivery note, taxable value, 5% VAT, total, amount in words, bank details |
 | **Receipt / Payment Voucher** | What was received or paid, against which invoices, cheque details |

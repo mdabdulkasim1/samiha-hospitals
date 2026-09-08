@@ -12,6 +12,7 @@ const terms = require('../services/terms');
 const stock = require('../services/stock');
 const settlement = require('../services/settlement');
 const notify = require('../services/notify');
+const clauses = require('../services/clauses');
 
 const router = express.Router();
 
@@ -33,6 +34,13 @@ const router = express.Router();
 const buyer = auth.requireRole('kam');                    // negotiates and orders
 const receiver = auth.requireRole('logistics', 'kam');    // takes the material in
 const bookkeeper = auth.requireRole('accounts');          // books and pays
+/*
+ * Reading a supplier's bills is not the same as booking one. The key account
+ * manager answers for what we owe a manufacturer and when — they need to see
+ * the bills and what is falling due; entering and paying them stays with
+ * accounts.
+ */
+const billReader = auth.requireRole('accounts', 'kam');
 
 // ============================================================ supplier quotes
 const SQ_SELECT = `
@@ -205,6 +213,29 @@ router.post('/quotations/:id/approve', buyer, wrap(async (req, res) => {
   res.json({ ok: true, message: `Price confirmed on ${row.quote_no}. You can raise the LPO from it now.` });
 }));
 
+/**
+ * What a new LPO's conditions would say, clause by clause, with this
+ * supplier's name already in them — so the form can show them ticked and
+ * editable rather than as an opaque block of text.
+ */
+router.get('/terms/default', buyer, wrap(async (req, res) => {
+  const supplier = req.query.partner_id
+    ? db.prepare('SELECT * FROM partners WHERE id = ?').get(req.query.partner_id) : null;
+  const company = docs.defaultCompany();
+  const paymentTermsId = req.query.payment_terms_id
+    || (supplier ? supplier.payment_terms_id : null);
+  res.json({
+    clauses: clauses.forDocument('purchase_order', {
+      company: company ? company.name : null,
+      supplier: supplier ? supplier.name : null,
+      project: v.str(req.query.project),
+      authority: v.str(req.query.authority),
+      payment_terms: terms.describe(paymentTermsId),
+    }),
+    library: clauses.list('purchase_order'),
+  });
+}));
+
 // ============================================================== the LPO we send
 const PO_SELECT = `
   SELECT o.*, p.name AS supplier_name, p.code AS supplier_code, p.trn AS supplier_trn,
@@ -260,6 +291,9 @@ router.get('/orders/:id', wrap(async (req, res) => {
     order: row,
     items,
     termsText: terms.describe(row.payment_terms_id),
+    // The conditions as they will print, and as a list the screen can edit.
+    conditions: clauses.toLines(row.terms_text),
+    amountInWords: pricing.inWords(row.total, row.currency),
     schedule: terms.schedule(row.payment_terms_id, row.total),
     receipts: db.prepare(
       'SELECT id, grn_no, received_date, supplier_dn_ref, status FROM grns WHERE po_id = ? ORDER BY received_date DESC')
@@ -296,15 +330,31 @@ router.post('/orders', buyer, wrap(async (req, res) => {
 
   const result = tx(() => {
     const lpoNo = ids.docNo('purchaseOrder', company.code);
+
+    /*
+     * The conditions are written onto the order now, from the clause library,
+     * with this order's own supplier and authority filled in. From here they
+     * belong to the order: editing the library later cannot change what a
+     * supplier has already been sent.
+     */
+    const termsText = v.str(b.terms_text) || clauses.textFor('purchase_order', {
+      company: company.name,
+      supplier: supplier.name,
+      lpo_no: lpoNo,
+      project: v.str(b.project),
+      authority: v.str(b.authority),
+      delivery_date: v.date(b.delivery_date),
+      payment_terms: terms.describe(paymentTermsId),
+    });
     const info = db.prepare(`
       INSERT INTO purchase_orders (company_id, lpo_no, partner_id, quotation_id, application_id,
-        sales_order_id, project, lpo_date, delivery_date, delivery_location_id, delivery_address,
-        payment_terms_id, currency, subtotal, discount, vat_amount, total, status, notes, terms_text,
-        created_by)
+        sales_order_id, project, attention, incoterms, authority, lpo_date, delivery_date,
+        delivery_location_id, delivery_address, payment_terms_id, currency, subtotal, discount,
+        vat_amount, total, status, notes, terms_text, created_by)
       VALUES (@company_id, @lpo_no, @partner_id, @quotation_id, @application_id, @sales_order_id,
-        @project, @lpo_date, @delivery_date, @delivery_location_id, @delivery_address,
-        @payment_terms_id, @currency, @subtotal, @discount, @vat_amount, @total, @status, @notes,
-        @terms_text, @created_by)`).run({
+        @project, @attention, @incoterms, @authority, @lpo_date, @delivery_date,
+        @delivery_location_id, @delivery_address, @payment_terms_id, @currency, @subtotal, @discount,
+        @vat_amount, @total, @status, @notes, @terms_text, @created_by)`).run({
       company_id: company.id,
       lpo_no: lpoNo,
       partner_id: supplier.id,
@@ -312,6 +362,9 @@ router.post('/orders', buyer, wrap(async (req, res) => {
       application_id: docs.resolveApplication(b.application_id, priced.lines),
       sales_order_id: b.sales_order_id || null,
       project: v.str(b.project),
+      attention: v.str(b.attention) || supplier.contact_person,
+      incoterms: v.str(b.incoterms),
+      authority: v.str(b.authority),
       lpo_date: lpoDate,
       delivery_date: v.date(b.delivery_date),
       delivery_location_id: location ? location.id : null,
@@ -321,7 +374,7 @@ router.post('/orders', buyer, wrap(async (req, res) => {
       ...priced.footer,
       status: v.oneOf(b.status, ['draft', 'sent'], 'status') || 'draft',
       notes: v.str(b.notes),
-      terms_text: v.str(b.terms_text) || docs.DEFAULT_LPO_TERMS,
+      terms_text: termsText,
       created_by: req.user.id,
     });
     docs.insertLines('purchase_order_items', 'po_id', info.lastInsertRowid,
@@ -371,6 +424,55 @@ router.post('/orders/:id/send', buyer, wrap(async (req, res) => {
   });
   audit.log(req, 'purchase_order.sent', 'purchase_order', order.id, { lpoNo: order.lpo_no });
   res.json({ ok: true, message: `${order.lpo_no} sent. The material is now shown on order in the stock register.` });
+}));
+
+/**
+ * Change an order's conditions, or its header details.
+ *
+ * The lines and the prices are not editable here: a supplier is working to
+ * them, and a quiet change to a price on an order already acknowledged is how
+ * an invoice arrives that nobody recognises. What the key account manager can
+ * change is the paperwork around them — who it is addressed to, the incoterms,
+ * the authority, and the conditions — and every change is written to the audit
+ * trail with what it said before.
+ */
+router.patch('/orders/:id', buyer, wrap(async (req, res) => {
+  const order = db.prepare('SELECT * FROM purchase_orders WHERE id = ?').get(req.params.id);
+  if (!order) throw notFound('No such LPO.');
+  if (['received', 'closed', 'cancelled'].includes(order.status)) {
+    throw conflict(`This LPO is ${order.status} — its conditions can no longer be changed.`);
+  }
+  const b = req.body;
+
+  // Sent as a list of points, or as one block; either way it is stored as the
+  // block that prints.
+  const termsText = Array.isArray(b.terms)
+    ? clauses.fromLines(b.terms)
+    : v.str(b.terms_text, order.terms_text);
+
+  db.prepare(`UPDATE purchase_orders SET attention = @attention, incoterms = @incoterms,
+      authority = @authority, project = @project, delivery_date = @delivery_date,
+      delivery_address = @delivery_address, notes = @notes, terms_text = @terms_text
+    WHERE id = @id`).run({
+    id: order.id,
+    attention: v.str(b.attention, order.attention),
+    incoterms: v.str(b.incoterms, order.incoterms),
+    authority: v.str(b.authority, order.authority),
+    project: v.str(b.project, order.project),
+    delivery_date: v.date(b.delivery_date) || order.delivery_date,
+    delivery_address: v.str(b.delivery_address, order.delivery_address),
+    notes: v.str(b.notes, order.notes),
+    terms_text: termsText,
+  });
+
+  if (termsText !== order.terms_text) {
+    audit.log(req, 'purchase_order.terms_changed', 'purchase_order', order.id, {
+      lpoNo: order.lpo_no, status: order.status, was: order.terms_text, now: termsText,
+    });
+  } else {
+    audit.log(req, 'purchase_order.updated', 'purchase_order', order.id, { lpoNo: order.lpo_no });
+  }
+  res.json(db.prepare(`${PO_SELECT} WHERE o.id = ?`).get(order.id));
 }));
 
 router.post('/orders/:id/cancel', buyer, wrap(async (req, res) => {
@@ -564,7 +666,7 @@ const SI_SELECT = `
     LEFT JOIN payment_terms t ON t.id = i.payment_terms_id
     LEFT JOIN companies c ON c.id = i.company_id`;
 
-router.get('/invoices', bookkeeper, wrap(async (req, res) => {
+router.get('/invoices', billReader, wrap(async (req, res) => {
   const { limit, offset, page } = v.paging(req.query, 50);
   const where = [];
   const params = { limit, offset };
@@ -584,7 +686,7 @@ router.get('/invoices', bookkeeper, wrap(async (req, res) => {
   });
 }));
 
-router.get('/invoices/:id', bookkeeper, wrap(async (req, res) => {
+router.get('/invoices/:id', billReader, wrap(async (req, res) => {
   const row = db.prepare(`${SI_SELECT} WHERE i.id = ?`).get(req.params.id);
   if (!row) throw notFound('No such supplier invoice.');
   res.json({
@@ -693,7 +795,7 @@ router.patch('/invoices/:id', bookkeeper, wrap(async (req, res) => {
 }));
 
 /** What is due to be paid, and when — the payment run. */
-router.get('/payables/due', bookkeeper, wrap(async (req, res) => {
+router.get('/payables/due', billReader, wrap(async (req, res) => {
   const asOf = v.date(req.query.asOf) || v.today();
   const rows = db.prepare(`
     SELECT i.id, i.bill_no, i.supplier_inv_no, i.invoice_date, i.due_date, i.total, i.paid_amount,

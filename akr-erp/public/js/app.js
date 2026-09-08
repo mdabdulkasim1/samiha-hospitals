@@ -38,7 +38,10 @@
     { group: 'Accounts & setup', items: [
       { id: 'partners', label: 'Suppliers & Clients', icon: '☺', roles: '*' },
       { id: 'reports', label: 'Reports', icon: '◔', roles: '*' },
-      { id: 'masters', label: 'Masters', icon: '⚒', roles: ['admin'] },
+      // The key account manager keeps the terms & conditions, so Masters is
+      // open to them too — the other tabs there are read-only for anyone but
+      // an administrator, which is the same rule the server enforces.
+      { id: 'masters', label: 'Masters', icon: '⚒', roles: ['admin', 'kam'] },
       { id: 'staff', label: 'Staff', icon: '⚑', roles: ['admin'] },
       { id: 'account', label: 'My Account', icon: '⚙', roles: '*' },
     ] },

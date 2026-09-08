@@ -53,12 +53,13 @@ module.exports = {
   company: {
     name: env.COMPANY_NAME || 'AKR GENERAL TRADING L.L.C',
     tagline: env.COMPANY_TAGLINE || 'Trusted Trading Partner for Valves, Fittings & Construction Materials',
-    address: env.COMPANY_ADDRESS || 'Dubai, United Arab Emirates',
+    address: env.COMPANY_ADDRESS
+      || '206 & 706 Park Avenue Tower, Dubai Silicon Oasis, Dubai, UAE — P.O. Box 19556',
     phone: env.COMPANY_PHONE || '+971 4 000 0000',
     email: env.COMPANY_EMAIL || 'sales@akr365.com',
     website: env.COMPANY_WEBSITE || 'www.akr365.com',
     // The Tax Registration Number that must appear on every tax invoice.
-    trn: env.COMPANY_TRN || '',
+    trn: env.COMPANY_TRN || '105279558800003',
     bankName: env.COMPANY_BANK || '',
     bankAccount: env.COMPANY_ACCOUNT || '',
     iban: env.COMPANY_IBAN || '',

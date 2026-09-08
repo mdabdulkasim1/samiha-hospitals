@@ -271,6 +271,19 @@ textarea { resize: vertical; }
 .picker-list .code { font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; color: var(--navy-soft); }
 .picker-list .meta { font-size: 11.4px; color: var(--muted); }
 
+/* ------------------------------------------------------- terms & conditions */
+.clauses table { font-size: 12.8px; }
+.clauses td { padding: 4px 6px; vertical-align: top; border-bottom: 1px solid var(--line-soft); }
+.clauses textarea { font-size: 12.8px; padding: 5px 7px; line-height: 1.45; }
+.clauses tr.dim textarea { color: var(--faint); background: var(--line-soft); }
+.clauses tr.group-row td { border-bottom: 0; padding-top: 12px; }
+ol.conditions { margin: 0; padding-left: 20px; font-size: 12.6px; line-height: 1.6; color: var(--ink); }
+ol.conditions li { margin-bottom: 3px; }
+
+.clauses tr.group-row b {
+  color: var(--navy); letter-spacing: .8px; text-transform: uppercase; font-size: 10.5px;
+}
+
 /* ------------------------------------------------------------------- modals */
 .modal-backdrop {
   position: fixed; inset: 0; background: rgba(12, 30, 46, .5); display: flex;

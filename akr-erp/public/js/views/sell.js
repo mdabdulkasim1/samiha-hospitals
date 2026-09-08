@@ -212,6 +212,8 @@
           { label: 'Amount', num: true, render: (r) => `<b>${UI.money(r.total, { symbol: false })}</b>` },
         ], d.items)}
         ${q.notes ? `<div class="mt"><b class="small">Notes</b><div class="muted small">${esc(q.notes)}</div></div>` : ''}
+        ${d.conditions && d.conditions.length ? `<h4 class="mt">Terms &amp; conditions</h4>
+          <ol class="conditions">${d.conditions.map((c) => `<li>${esc(c)}</li>`).join('')}</ol>` : ''}
         ${d.orders.length ? `<div class="alert ok mt">The client ordered against this:
           ${d.orders.map((o) => `<b>${esc(o.so_no)}</b> (their LPO ${esc(o.client_lpo_no)})`).join(', ')}</div>` : ''}`,
       footer: `<button class="btn ghost" data-act="__close">Close</button>
@@ -282,16 +284,31 @@
         <h4 class="mt">Lines</h4>
         <div id="lines"></div>
         ${UI.field({ name: 'notes', label: 'Notes for the client', rows: 2, value: q ? q.notes || '' : '' })}
-        ${UI.field({ name: 'terms_text', label: 'Terms & conditions', rows: 4,
-          value: q ? q.terms_text || '' : '' })}
+        <h4 class="mt">Terms &amp; conditions</h4>
+        <div class="muted small mb">From the standard list under Masters → Terms &amp; conditions.
+          Untick what does not apply, or edit any point — what you leave here is what the client
+          receives.</div>
+        <div id="clauses">${UI.loading()}</div>
         ${preset && preset.id ? `<input type="hidden" name="enquiry_id" value="${preset.id}">` : ''}
       </form>`,
       footer: `<button class="btn ghost" data-act="__close">Cancel</button>
                <button class="btn" data-act="save">${q ? 'Save' : 'Create the quotation'}</button>`,
-      onMount(modal) {
+      async onMount(modal) {
         modal._lines = LINES.LineEditor(modal.querySelector('#lines'), {
           side: 'sell', lines: existing ? existing.items : [],
         });
+        const host = modal.querySelector('#clauses');
+        // An existing quotation keeps the points it was written with; a new one
+        // starts from the standard list.
+        if (existing && existing.conditions && existing.conditions.length) {
+          modal._clauses = CLAUSES.Editor(host, { clauses: existing.conditions });
+        } else {
+          const lib = await API.get('/api/masters/terms?doc_type=sales_quotation');
+          modal._clauses = CLAUSES.Editor(host, {
+            clauses: lib.rows.filter((c) => c.is_default)
+              .map((c) => ({ text: c.text, clause_group: c.clause_group })),
+          });
+        }
       },
       async onAction(act, modal) {
         if (act !== 'save') return;
@@ -299,7 +316,8 @@
         if (!form.reportValidity()) return 'keep';
         const items = modal._lines.value();
         if (!items.length) { UI.err('A quotation needs at least one priced line.'); return 'keep'; }
-        const values = { ...UI.formValues(form), items };
+        const conditions = modal._clauses ? modal._clauses.value() : [];
+        const values = { ...UI.formValues(form), items, terms_text: conditions.join('\n') };
         const saved = q
           ? await API.patch(`/api/sales/quotations/${q.id}`, values)
           : await API.post('/api/sales/quotations', values);

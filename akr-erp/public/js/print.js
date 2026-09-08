@@ -121,6 +121,18 @@
       }
       .terms-band b { color: #123A5C; }
 
+      .lead { margin-top: 8px; font-size: 10px; color: #16232B; }
+      .block.terms ol { margin: 3px 0 0; padding-left: 15px; }
+      .block.terms li { font-size: 8.8px; line-height: 1.5; margin-bottom: 2px; }
+      .buyer {
+        margin-top: 11px; border: 1px solid #DDE5EC; border-radius: 4px; padding: 7px 9px;
+        font-size: 9.2px; color: #16232B; display: inline-block; min-width: 62mm;
+      }
+      .buyer .k {
+        font-size: 7.5px; letter-spacing: 1.1px; text-transform: uppercase; color: #93A3B3;
+        font-weight: 700; margin-bottom: 3px;
+      }
+
       .sign { display: flex; gap: 30px; margin-top: 20px; }
       .sign .box { flex: 1; }
       .sign .line { border-bottom: 1px solid #16232B; height: 16mm; }
@@ -218,6 +230,28 @@
   const notes = (label, text) => (text
     ? `<div class="block"><div class="k">${esc(label)}</div><p>${esc(text)}</p></div>` : '');
 
+  /**
+   * The conditions, numbered, one to a line.
+   *
+   * Numbered on purpose: when a supplier rings about clause nine, both sides
+   * need to be looking at the same clause nine.
+   */
+  function conditions(label, text) {
+    const points = String(text || '').split('\n').map((l) => l.replace(/^\s*\d+[.)]\s*/, '').trim())
+      .filter(Boolean);
+    if (!points.length) return '';
+    return `<div class="block terms"><div class="k">${esc(label)}</div>
+      <ol>${points.map((p) => `<li>${esc(p)}</li>`).join('')}</ol></div>`;
+  }
+
+  /** Who the order is from, as their own LPO prints it at the foot. */
+  const buyerBlock = (company) => {
+    const c = company || (window.APP && APP.company) || {};
+    return `<div class="buyer"><div class="k">Buyer details</div>
+      <b>${esc(c.name || '')}</b><br>${esc(c.address || '')}
+      ${c.trn ? `<br>TRN: ${esc(c.trn)}` : ''}</div>`;
+  };
+
   const signatures = (left, right) => `<div class="sign">
     <div class="box"><div class="line"></div><div class="cap">${esc(left)}</div></div>
     <div class="box"><div class="line"></div><div class="cap">${esc(right)}</div></div>
@@ -266,7 +300,7 @@
         ${totalsBlock(q, { words: data.amountInWords })}
         ${termsBand('Payment terms', data.termsText)}
         ${notes('Notes', q.notes)}
-        ${notes('Terms & conditions', q.terms_text)}
+        ${conditions('Terms & conditions', q.terms_text)}
         ${signatures('For ' + (APP.company.name || 'AKR General Trading L.L.C'), 'Accepted by (client)')}
         ${footer(APP.company, 'This quotation is not a tax invoice.')}
       </div>`;
@@ -289,14 +323,21 @@
         ${meta([
           ['LPO no.', o.lpo_no],
           ['Date', UI.date(o.lpo_date)],
+          ['Attn', o.attention || '—'],
+          ['Supplier TRN', o.supplier_trn || '—'],
           ['Your quotation', o.supplier_quote_no || '—'],
+          ['SO reference', o.against_sales_order || '—'],
+          ['Incoterms', o.incoterms || '—'],
           ['Required by', UI.date(o.delivery_date)],
         ])}
+        <div class="lead">We are pleased to place order for the below items.</div>
         ${itemsTable(data.items)}
-        ${totalsBlock(o)}
+        ${totalsBlock(o, { words: data.amountInWords })}
         ${termsBand('Payment terms', data.termsText)}
+        ${o.authority ? `<div class="terms-band"><b>Approving authority:</b> ${esc(o.authority)}</div>` : ''}
         ${notes('Notes', o.notes)}
-        ${notes('Conditions of this order', o.terms_text)}
+        ${conditions('Conditions of this order', o.terms_text)}
+        ${buyerBlock(APP.company)}
         ${signatures('Authorised for ' + (APP.company.name || 'AKR'), 'Supplier acknowledgement')}
         ${footer(APP.company, 'Please quote this LPO number on your delivery note and invoice.')}
       </div>`;
