@@ -530,9 +530,17 @@
   }
 
   // ================================================== VAT and what was made
+  /** '2026-09' → 'September 2026'. */
+  const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August',
+    'September', 'October', 'November', 'December'];
+  function monthName(ym) {
+    const [y, m] = String(ym || '').split('-');
+    return MONTHS[Number(m) - 1] ? `${MONTHS[Number(m) - 1]} ${y}` : String(ym || '');
+  }
+
   APP.register('vat', {
     title: 'VAT & Profit',
-    subtitle: 'Output tax charged, input tax paid, and what each group company made',
+    subtitle: 'Output tax charged, input tax paid, and what the business made each month',
 
     async render(host) {
       const to = UI.today();
@@ -579,7 +587,38 @@
             </div>
           </div>
           <div class="card">
-            <h3>What the group made</h3>
+            <h3>Month by month</h3>
+            <div class="card-sub">Each month's own gross profit, with that month's overheads taken
+              off it. Enter the month's expenses and the final figure for that month is here.</div>
+            ${UI.table([
+              { label: 'Month', render: (r) => `<b>${esc(monthName(r.month))}</b>
+                  ${r.revenue && !r.expenses_booked
+                    ? `<div class="muted small">no expenses entered yet</div>` : ''}` },
+              { label: 'Invoiced', num: true, render: (r) => UI.money(r.revenue, { symbol: false }) },
+              { label: 'Cost of goods', num: true, render: (r) => `− ${UI.money(r.cost_of_sales, { symbol: false })}` },
+              { label: 'Gross profit', num: true, render: (r) => `<b>${UI.money(r.gross_profit, { symbol: false })}</b>
+                  <div class="muted small">${r.gross_margin_percent}%</div>` },
+              { label: 'Other income', num: true, render: (r) => (r.other_income
+                ? `+ ${UI.money(r.other_income, { symbol: false })}` : '—') },
+              { label: 'Expenses this month', num: true, render: (r) => (r.expenses
+                ? `− ${UI.money(r.expenses, { symbol: false })}
+                   <div class="muted small">${r.expense_count} entr${r.expense_count === 1 ? 'y' : 'ies'}</div>`
+                : `<span class="badge warn">none entered</span>`) },
+              { label: 'Final profit', num: true, render: (r) => `<b>${UI.money(r.net_profit, { symbol: false })}</b>` },
+            ], pl.monthly.rows, { emptyText: 'Nothing invoiced or spent in this period yet.',
+              foot: `<tr><td><b>Total</b></td>
+                <td class="num">${UI.money(pl.monthly.total.revenue, { symbol: false })}</td>
+                <td class="num">− ${UI.money(pl.monthly.total.cost_of_sales, { symbol: false })}</td>
+                <td class="num">${UI.money(pl.monthly.total.gross_profit, { symbol: false })}</td>
+                <td class="num">${pl.monthly.total.other_income ? '+ ' + UI.money(pl.monthly.total.other_income, { symbol: false }) : '—'}</td>
+                <td class="num">− ${UI.money(pl.monthly.total.expenses, { symbol: false })}</td>
+                <td class="num">${UI.money(pl.monthly.total.net_profit, { symbol: false })}</td></tr>` })}
+            <div class="muted small mt">An expense counts in the month it is dated, whichever month
+              the trade it paid for happened in — which is how it is entered and how the bank sees it.
+              A month showing sales but no expenses is a month somebody has not finished entering.</div>
+          </div>
+          <div class="card">
+            <h3>By company</h3>
             <div class="card-sub">Invoiced sales less what those goods cost us, less the overheads
               booked to each company.</div>
             ${UI.table([

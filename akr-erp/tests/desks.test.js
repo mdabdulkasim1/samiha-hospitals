@@ -182,3 +182,54 @@ test('the last administrator cannot be demoted or locked out', async () => {
     (err) => err.status === 400 && /last administrator/.test(err.message),
   );
 });
+
+test('the VAT return and the profit are the administrator\'s alone', async () => {
+  // The company's own decision: these two say what the business made and what
+  // it owes, and they are not part of running a desk.
+  for (const desk of [accounts, kam, sales, logistics]) {
+    if (desk === admin) continue;
+    await assert.rejects(() => desk.get('/api/accounts/vat-return'), (err) => err.status === 403);
+    await assert.rejects(() => desk.get('/api/accounts/profit-and-loss'), (err) => err.status === 403);
+  }
+  const seen = await admin.get('/api/accounts/profit-and-loss');
+  assert.ok(seen.group, 'the administrator sees it');
+  assert.ok(seen.monthly, 'and gets it month by month');
+});
+
+test('a month\'s expenses come off that month\'s gross profit', async () => {
+  const item = (await admin.get('/api/items?limit=1')).rows[0];
+  const client = (await admin.get('/api/partners?type=client&limit=1')).rows[0];
+
+  await admin.post('/api/stock/adjustments',
+    { item_id: item.id, qty: 20, reason: 'Opening for the monthly profit test' });
+  const order = await admin.post('/api/sales/orders', {
+    partner_id: client.id, client_lpo_no: 'MONTHLY/1',
+    items: [{ item_id: item.id, qty: 10, unit_price: 500, cost_price: 300 }],
+  });
+  const so = await admin.get(`/api/sales/orders/${order.id}`);
+  const dn = await admin.post('/api/sales/deliveries', {
+    partner_id: client.id, so_id: order.id, items: [{ so_item_id: so.items[0].id, qty: 10 }] });
+  const invoice = await admin.post('/api/sales/invoices', {
+    partner_id: client.id, so_id: order.id, dn_id: dn.id });
+
+  const month = invoice.invoice_date.slice(0, 7);
+  const before = await admin.get('/api/accounts/profit-and-loss?from=2000-01-01&to=2100-01-01');
+  const rowBefore = before.monthly.rows.find((r) => r.month === month);
+  assert.equal(rowBefore.gross_profit, 2000, '10 × (500 − 300)');
+  assert.equal(rowBefore.net_profit, rowBefore.gross_profit - rowBefore.expenses);
+
+  // The month's overheads, entered in one sitting the way the company does it.
+  const spentBefore = rowBefore.expenses;
+  for (const [description, amount] of [['Yard rent', 9000], ['Salaries', 22000], ['Fuel', 1400]]) {
+    await admin.post('/api/accounts/expenses', {
+      description, amount, expense_date: invoice.invoice_date, mode: 'bank_transfer' });
+  }
+
+  const after = await admin.get('/api/accounts/profit-and-loss?from=2000-01-01&to=2100-01-01');
+  const rowAfter = after.monthly.rows.find((r) => r.month === month);
+  assert.equal(rowAfter.gross_profit, rowBefore.gross_profit, 'the gross profit is untouched');
+  assert.equal(rowAfter.expenses, spentBefore + 32400, "the month's overheads are all in");
+  assert.equal(rowAfter.net_profit, rowAfter.gross_profit + rowAfter.other_income - rowAfter.expenses,
+    'and the final figure is the gross less them');
+  assert.ok(rowAfter.expenses_booked, 'the month is marked as having its expenses entered');
+});

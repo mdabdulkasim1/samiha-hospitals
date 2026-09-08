@@ -376,17 +376,33 @@ companies under **Masters → Companies**.
 
 Money is not everybody's business, and the rule is enforced on the server, not just hidden on screen:
 
-| | Prices | Cost & margin | The books |
-|---|---|---|---|
-| Administrator | ✓ | ✓ | ✓ |
-| Key Account Manager | ✓ | ✓ | ✓ |
-| Accounts | ✓ | ✓ | ✓ |
-| Sales Officer | ✓ | — | — |
-| Logistics | — | — | — |
+| | Prices | Cost & margin | The books | VAT & profit |
+|---|---|---|---|---|
+| Administrator | ✓ | ✓ | ✓ | ✓ |
+| Key Account Manager | ✓ | ✓ | ✓ | — |
+| Accounts | ✓ | ✓ | ✓ | — |
+| Sales Officer | ✓ | — | — | — |
+| Logistics | — | — | — | — |
 
 A sales officer works to a price list and never sees what the manufacturer charged. A driver's
 delivery note carries quantities and part numbers and no prices at all — a priced one in the wrong
-hands tells a client's storeman what we paid.
+hands tells a client's storeman what we paid. **VAT & Profit is the administrator's alone** — what
+the business made and what it owes the FTA are not part of running a desk.
+
+### Profit, month by month
+
+The company books a month's overheads in one sitting at the end of it, so the profit is read a month
+at a time and in that order:
+
+```
+             Invoiced    Cost of goods    Gross profit    Expenses this month    Final profit
+Sep 2026    30,048.00     − 23,460.00        6,588.00              − 850.00        5,738.00
+```
+
+An expense counts in the month it is dated, whichever month the trade it paid for happened in —
+which is how it is entered and how the bank sees it. A month showing sales but no expenses is
+flagged as one somebody has not finished entering, rather than being read as an unusually good
+month.
 
 ## The documents it prints
 

@@ -33,7 +33,9 @@
       { id: 'cheques', label: 'Cheque Register', icon: '✎', roles: ['accounts', 'kam'] },
       { id: 'expenses', label: 'Expenses & Income', icon: '⊟', roles: ['accounts', 'kam'] },
       { id: 'ledgers', label: 'Ledgers & Ageing', icon: '≡', roles: ['accounts', 'kam'] },
-      { id: 'vat', label: 'VAT & Profit', icon: '%', roles: ['accounts', 'kam'] },
+      // What the business made, and what it owes the FTA. The company's own
+      // decision: this one is the administrator's alone.
+      { id: 'vat', label: 'VAT & Profit', icon: '%', roles: ['admin'] },
     ] },
     { group: 'Accounts & setup', items: [
       { id: 'partners', label: 'Suppliers & Clients', icon: '☺', roles: '*' },
@@ -129,13 +131,21 @@
   };
   window.APP = APP;
 
+  /*
+   * Where the mark lives. Signed out there is no company record yet, so the
+   * sign-in page falls back to the file in assets; everywhere else it comes
+   * from the company, which is what makes swapping the artwork a one-line
+   * change rather than a search through the source.
+   */
+  const LOGO_FULL = '/assets/logo.svg';
+
   // ------------------------------------------------------------------ login
   function renderLogin() {
     if (window.UI && UI.closeAllModals) UI.closeAllModals();
     document.getElementById('root').innerHTML = `
       <div class="login-shell">
         <div class="login-hero">
-          <img class="logo-full" src="/assets/logo.svg" alt="AKR General Trading L.L.C">
+          <img class="logo-full" src="${LOGO_FULL}" alt="AKR General Trading L.L.C">
           <h1>Trading ERP</h1>
           <p>One system for both sides of the trade — the quotation you ask a manufacturer for and
              the LPO you send them, and the quotation you give a client and the LPO they send back —
@@ -211,7 +221,7 @@
       <div class="app">
         <aside class="sidebar">
           <div class="brand">
-            <div class="mark"><img src="/assets/logo-icon.svg" alt=""></div>
+            <div class="mark"><img src="${UI.esc(APP.company.logo || '/assets/logo-icon.svg')}" alt=""></div>
             <div class="brand-text"><strong>AKR</strong><span>General Trading</span></div>
           </div>
           <nav class="nav" id="nav"></nav>

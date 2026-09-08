@@ -373,16 +373,29 @@ router.get('/ageing/:side', reader, wrap(async (req, res) => {
   }));
 }));
 
-router.get('/vat-return', reader, wrap(async (req, res) => {
+/*
+ * The VAT return and the profit are an administrator's, by the company's own
+ * decision — they are the two figures that say what the business made and what
+ * it owes, and they are not part of running a desk.
+ */
+const owner = auth.requireRole('admin');
+
+router.get('/vat-return', owner, wrap(async (req, res) => {
   const to = v.date(req.query.to) || v.today();
   const from = v.date(req.query.from) || v.addDays(to, -89);
   res.json(ledger.vatReturn({ companyId: req.query.company_id || null, from, to }));
 }));
 
-router.get('/profit-and-loss', reader, wrap(async (req, res) => {
+router.get('/profit-and-loss', owner, wrap(async (req, res) => {
   const to = v.date(req.query.to) || v.today();
   const from = v.date(req.query.from) || `${to.slice(0, 4)}-01-01`;
-  res.json(ledger.profitAndLoss({ from, to, companyId: req.query.company_id || null }));
+  const companyId = req.query.company_id || null;
+  res.json({
+    ...ledger.profitAndLoss({ from, to, companyId }),
+    // Month by month, because the overheads are booked a month at a time and
+    // the figure that matters is what is left after that month's are in.
+    monthly: ledger.monthlyProfit({ from, to, companyId }),
+  });
 }));
 
 /** Open invoices on one side, for a payment or a collection run. */

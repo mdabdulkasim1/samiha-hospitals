@@ -1,46 +1,57 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" role="img" aria-label="AKR">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 210 210" role="img" aria-label="AKR">
   <defs>
-    <!-- The plumage runs from deep blue at the crown, through green, to gold at
-         the breast — the same colours the system is dressed in. -->
-    <linearGradient id="akr-plume" x1="0.15" y1="0" x2="0.85" y2="1">
-      <stop offset="0"    stop-color="#17607F"/>
-      <stop offset="0.30" stop-color="#1E7FA0"/>
-      <stop offset="0.56" stop-color="#3FA24A"/>
-      <stop offset="0.80" stop-color="#7CC24A"/>
-      <stop offset="1"    stop-color="#F0A81E"/>
+    <linearGradient id="akrPlume" x1="0.12" y1="0.02" x2="0.86" y2="0.98">
+      <stop offset="0"    stop-color="#1E6E8C"/>
+      <stop offset="0.24" stop-color="#22829B"/>
+      <stop offset="0.48" stop-color="#3E9E58"/>
+      <stop offset="0.68" stop-color="#6FBA45"/>
+      <stop offset="0.86" stop-color="#C9A521"/>
+      <stop offset="1"    stop-color="#E0A21E"/>
     </linearGradient>
-    <linearGradient id="akr-beak" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#F9CB45"/><stop offset="1" stop-color="#E8940F"/>
+    <linearGradient id="akrSweepA" x1="0" y1="0" x2="0.4" y2="1">
+      <stop offset="0" stop-color="#16607E"/><stop offset="1" stop-color="#3E9E58" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="akrSweepB" x1="0" y1="0" x2="0.6" y2="1">
+      <stop offset="0" stop-color="#7FC24A"/><stop offset="1" stop-color="#E0A21E"/>
+    </linearGradient>
+    <linearGradient id="akrBeak" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F8C93F"/><stop offset="1" stop-color="#E08C0C"/>
     </linearGradient>
   </defs>
-  <!-- The head: a full crown that sweeps down and round to the right, with the
-       throat cut away under the beak — the crescent the mark is built on. -->
-  <path d="M92 14c42 0 76 33 76 74 0 20-8 37-21 50-11 11-17 22-19 36-2 12-12 20-25 18
-           -30-4-56-30-62-62C33 92 30 78 32 64 38 30 62 14 92 14Z"
-        fill="url(#akr-plume)"/>
-  <!-- The throat: the notch that turns a head into a falcon. -->
-  <path d="M118 74c14 4 26 12 33 24-13 2-24 8-31 18-8 11-13 24-14 38-9-10-13-23-12-37
-           1-18 10-33 24-43Z" fill="#F3F7FA" fill-opacity="0"/>
+  <!-- The head. Petrol blue at the crown, through green, to gold at the breast. -->
+  <path d="M96 10c46 0 82 34 82 78 0 24-9 45-25 61-13 13-21 27-24 43-3 14-15 22-29 19
+           C58 203 22 160 18 108 12 50 46 10 96 10Z" fill="url(#akrPlume)"/>
 
-  <!-- Feathers, laid over the crown. -->
-  <g fill="none" stroke="#0F5570" stroke-opacity=".34" stroke-width="4.5" stroke-linecap="round">
-    <path d="M62 48c9-15 23-24 39-26"/>
-    <path d="M50 76c5-19 16-33 32-40"/>
-    <path d="M45 108c-3-22 3-39 14-51"/>
+  <!-- Feather sweeps: the bands that stop it reading as a flat blob. -->
+  <path d="M96 10c-30 0-54 16-66 40 6 40 26 72 58 94-18-34-22-68-12-102 6-20 16-31 30-32Z"
+        fill="url(#akrSweepA)" opacity=".55"/>
+  <path d="M40 132c14 32 38 56 72 70-4-12-12-22-24-30-22-14-38-28-48-40Z"
+        fill="url(#akrSweepB)" opacity=".45"/>
+  <g fill="none" stroke="#0E5570" stroke-opacity=".30" stroke-width="4" stroke-linecap="round">
+    <path d="M50 60c10-18 26-29 45-32"/>
+    <path d="M36 92c3-22 13-40 30-51"/>
   </g>
-  <g fill="none" stroke="#2C7A2F" stroke-opacity=".28" stroke-width="4.5" stroke-linecap="round">
-    <path d="M54 142c-5-17-1-32 8-44"/>
-    <path d="M75 164c-7-15-6-30 1-43"/>
+  <g fill="none" stroke="#2A7A33" stroke-opacity=".26" stroke-width="4" stroke-linecap="round">
+    <path d="M34 128c-4-19 0-36 9-50"/>
+    <path d="M58 162c-9-17-11-35-6-52"/>
   </g>
 
-  <!-- The eye: a dark almond, a red iris, and the glint that makes it alive. -->
-  <path d="M104 48c13-8 29-5 35 5-7 11-23 15-36 9-5-3-5-11 1-14Z" fill="#16283A"/>
-  <circle cx="119" cy="54" r="9" fill="#E01B1B"/>
-  <circle cx="122" cy="50.5" r="3" fill="#fff" fill-opacity=".85"/>
+  <!-- The neck: the navy crescent that turns a coloured shape into this bird. -->
+  <path d="M126 62c26 6 44 24 50 48 6 27-4 54-27 70-12 8-25 12-37 11 24-14 38-36 38-63
+           0-25-12-46-33-58 2-5 5-8 9-8Z" fill="#123A5C"/>
+  <path d="M139 88c11 11 17 25 17 41 0 19-8 35-23 46 6-14 9-28 9-42 0-16-1-31-3-45Z"
+        fill="#1B7A4B" opacity=".9"/>
 
-  <!-- The beak: big, hooked, and the loudest thing on the mark. -->
-  <path d="M136 40c26 1 47 10 60 25-16 3-29 10-38 20 6 3 10 7 13 12-14 8-30 10-46 6
-           9-9 14-19 14-30 0-12-2-22-7-30 1-2 2-3 4-3Z" fill="url(#akr-beak)"/>
-  <path d="M158 85c-13 8-28 10-43 7 15 1 29-2 41-8Z" fill="#B86F08" fill-opacity=".5"/>
-  <path d="M136 40c26 1 47 10 60 25-19-9-40-14-62-14 1-4 1-8 2-11Z" fill="#F9D264" fill-opacity=".55"/>
+  <!-- The eye patch, angular, running into the base of the beak. -->
+  <path d="M104 34c18-6 38-3 50 9 5 5 4 11-3 14-16 7-35 6-49-4-7-5-6-16 2-19Z" fill="#123A5C"/>
+  <!-- The eye. -->
+  <circle cx="128" cy="41" r="10" fill="#F4F7FA"/>
+  <circle cx="128" cy="41" r="6.6" fill="#D51F26"/>
+  <circle cx="130" cy="38.5" r="2.2" fill="#fff" fill-opacity=".9"/>
+
+  <!-- The beak: hooked, and the loudest thing on the mark. -->
+  <path d="M150 40c22 2 39 12 50 28-16 1-29 7-38 17-7 8-17 13-29 14 11-10 17-21 17-33
+           0-9-3-17-9-24 2-2 5-3 9-2Z" fill="url(#akrBeak)"/>
+  <path d="M162 99c-9 6-19 9-31 10 14-2 26-7 36-15-1 2-3 4-5 5Z" fill="#B26F09" fill-opacity=".55"/>
+  <path d="M150 40c22 2 39 12 50 28-18-10-38-15-60-15 2-5 5-10 10-13Z" fill="#F8D36B" fill-opacity=".5"/>
 </svg>

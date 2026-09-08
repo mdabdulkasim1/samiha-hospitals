@@ -97,6 +97,19 @@ module.exports = {
     bankAccount: env.COMPANY_ACCOUNT || '',
     iban: env.COMPANY_IBAN || '',
     swift: env.COMPANY_SWIFT || '',
+
+    /*
+     * The company's mark, and where every screen and every printed document
+     * goes to find it.
+     *
+     * Two files, referenced from one place: the mark on its own for the
+     * sidebar, the letterhead and the watermark, and the mark with the wordmark
+     * for the sign-in page. Drop the company's own artwork into public/assets
+     * and point these at it — a PNG is as good as an SVG — and it appears on
+     * everything at once. Nothing else in the system names a logo file.
+     */
+    logo: env.COMPANY_LOGO || '/assets/logo-icon.svg',
+    logoFull: env.COMPANY_LOGO_FULL || '/assets/logo.svg',
   },
 
   /*

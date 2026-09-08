@@ -176,13 +176,15 @@
 
   // ------------------------------------------------------------- fragments
   /** The mark, laid faintly behind whatever is printed. */
-  const watermark = () =>
-    `<div class="watermark"><img src="${location.origin}/assets/logo-icon.svg" alt=""></div>`;
+  const logoSrc = () => location.origin
+    + (((window.APP && APP.company && APP.company.logo) || '/assets/logo-icon.svg'));
+
+  const watermark = () => `<div class="watermark"><img src="${logoSrc()}" alt=""></div>`;
 
   function letterhead(company) {
     const c = company || (window.APP && APP.company) || {};
     return `<div class="head">
-      <div class="logo"><img src="${location.origin}/assets/logo-icon.svg" alt=""></div>
+      <div class="logo"><img src="${logoSrc()}" alt=""></div>
       <div class="who">
         <div class="name">${esc(c.name || 'AKR GENERAL TRADING L.L.C')}</div>
         <div class="tag">${esc((window.APP && APP.tagline) || 'Trusted Trading Partner for Valves, Fittings & Construction Materials')}</div>

@@ -255,6 +255,95 @@ function profitAndLoss({ from, to, companyId = null }) {
   };
 }
 
+/**
+ * The same figures, month by month.
+ *
+ * The company books a month's overheads in one sitting, at the end of it, so
+ * the only reading of "what did we make" that means anything is per month:
+ * what was invoiced, what those goods cost, and then that month's expenses
+ * taken off — in that order, because the expenses are the difference between
+ * a gross figure and the one worth acting on.
+ *
+ * An expense counts in the month it is dated, whichever month the trade it
+ * relates to happened in. That is how it is entered and how the bank sees it.
+ */
+function monthlyProfit({ from, to, companyId = null }) {
+  const params = { from, to, companyId };
+  const company = companyId ? 'AND i.company_id = @companyId' : '';
+  const expCompany = companyId ? 'AND e.company_id = @companyId' : '';
+
+  const revenue = db.prepare(`
+    SELECT strftime('%Y-%m', i.invoice_date) AS month,
+           COALESCE(SUM(i.subtotal - i.discount), 0) AS revenue,
+           COALESCE(SUM(i.vat_amount), 0) AS output_vat,
+           COUNT(*) AS invoices
+      FROM sales_invoices i
+     WHERE i.status != 'cancelled' AND i.invoice_date BETWEEN @from AND @to ${company}
+     GROUP BY month`).all(params);
+
+  const cost = db.prepare(`
+    SELECT strftime('%Y-%m', i.invoice_date) AS month,
+           COALESCE(SUM(li.cost_price * li.qty), 0) AS cost_of_sales
+      FROM sales_invoice_items li
+      JOIN sales_invoices i ON i.id = li.invoice_id
+     WHERE i.status != 'cancelled' AND i.invoice_date BETWEEN @from AND @to ${company}
+     GROUP BY month`).all(params);
+
+  const overheads = db.prepare(`
+    SELECT strftime('%Y-%m', e.expense_date) AS month,
+           COALESCE(SUM(CASE WHEN e.kind = 'expense' THEN e.amount END), 0) AS expenses,
+           COALESCE(SUM(CASE WHEN e.kind = 'income'  THEN e.amount END), 0) AS other_income,
+           SUM(CASE WHEN e.kind = 'expense' THEN 1 ELSE 0 END) AS expense_count
+      FROM expenses e
+     WHERE e.expense_date BETWEEN @from AND @to ${expCompany}
+     GROUP BY month`).all(params);
+
+  const byMonth = new Map();
+  const touch = (month) => {
+    if (!byMonth.has(month)) {
+      byMonth.set(month, { month, revenue: 0, cost_of_sales: 0, expenses: 0,
+        other_income: 0, invoices: 0, expense_count: 0, output_vat: 0 });
+    }
+    return byMonth.get(month);
+  };
+  for (const r of revenue) Object.assign(touch(r.month), {
+    revenue: round(r.revenue), invoices: r.invoices, output_vat: round(r.output_vat) });
+  for (const c of cost) touch(c.month).cost_of_sales = round(c.cost_of_sales);
+  for (const o of overheads) Object.assign(touch(o.month), {
+    expenses: round(o.expenses), other_income: round(o.other_income),
+    expense_count: o.expense_count });
+
+  const rows = [...byMonth.values()]
+    .sort((a, b) => (a.month < b.month ? -1 : 1))
+    .map((m) => {
+      const gross = round(m.revenue - m.cost_of_sales);
+      return {
+        ...m,
+        gross_profit: gross,
+        gross_margin_percent: m.revenue ? round((gross / m.revenue) * 100) : 0,
+        net_profit: round(gross + m.other_income - m.expenses),
+        // A month with sales but no overheads booked is not a very profitable
+        // month; it is a month somebody has not finished entering.
+        expenses_booked: m.expense_count > 0,
+      };
+    });
+
+  const sum = (k) => round(rows.reduce((a, r) => a + r[k], 0));
+  return {
+    from,
+    to,
+    rows,
+    total: {
+      revenue: sum('revenue'),
+      cost_of_sales: sum('cost_of_sales'),
+      gross_profit: sum('gross_profit'),
+      other_income: sum('other_income'),
+      expenses: sum('expenses'),
+      net_profit: sum('net_profit'),
+    },
+  };
+}
+
 /** Where a partner stands right now — the figure a KAM is asked for. */
 function partnerBalance(partnerId, { companyId = null } = {}) {
   const l = partnerLedger(partnerId, { companyId });
@@ -268,4 +357,4 @@ function partnerBalance(partnerId, { companyId = null } = {}) {
   return { balance: l.closing, receivable, payable, opening: l.opening };
 }
 
-module.exports = { partnerLedger, ageing, vatReturn, profitAndLoss, partnerBalance };
+module.exports = { partnerLedger, ageing, vatReturn, profitAndLoss, monthlyProfit, partnerBalance };
