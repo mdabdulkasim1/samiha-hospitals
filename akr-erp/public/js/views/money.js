@@ -588,15 +588,16 @@
           </div>
           <div class="card">
             <h3>Month by month</h3>
-            <div class="card-sub">Each month's own gross profit, with that month's overheads taken
-              off it. Enter the month's expenses and the final figure for that month is here.</div>
+            <div class="card-sub">Each month reads left to right the way the money moves: what we
+              invoiced, what those goods cost, and that month's expenses taken off before the gross
+              profit at the end. Enter the month's expenses and the final figure for that month is here.</div>
             ${UI.table([
               { label: 'Month', render: (r) => `<b>${esc(monthName(r.month))}</b>
                   ${r.revenue && !r.expenses_booked
                     ? `<div class="muted small">no expenses entered yet</div>` : ''}` },
               { label: 'Invoiced', num: true, render: (r) => UI.money(r.revenue, { symbol: false }) },
               { label: 'Cost of goods', num: true, render: (r) => `− ${UI.money(r.cost_of_sales, { symbol: false })}` },
-              { label: 'Gross profit', num: true, render: (r) => `<b>${UI.money(r.gross_profit, { symbol: false })}</b>
+              { label: 'Margin on goods', num: true, render: (r) => `${UI.money(r.trading_margin, { symbol: false })}
                   <div class="muted small">${r.gross_margin_percent}%</div>` },
               { label: 'Other income', num: true, render: (r) => (r.other_income
                 ? `+ ${UI.money(r.other_income, { symbol: false })}` : '—') },
@@ -604,15 +605,15 @@
                 ? `− ${UI.money(r.expenses, { symbol: false })}
                    <div class="muted small">${r.expense_count} entr${r.expense_count === 1 ? 'y' : 'ies'}</div>`
                 : `<span class="badge warn">none entered</span>`) },
-              { label: 'Final profit', num: true, render: (r) => `<b>${UI.money(r.net_profit, { symbol: false })}</b>` },
+              { label: 'Gross profit', num: true, render: (r) => `<b>${UI.money(r.gross_profit, { symbol: false })}</b>` },
             ], pl.monthly.rows, { emptyText: 'Nothing invoiced or spent in this period yet.',
               foot: `<tr><td><b>Total</b></td>
                 <td class="num">${UI.money(pl.monthly.total.revenue, { symbol: false })}</td>
                 <td class="num">− ${UI.money(pl.monthly.total.cost_of_sales, { symbol: false })}</td>
-                <td class="num">${UI.money(pl.monthly.total.gross_profit, { symbol: false })}</td>
+                <td class="num">${UI.money(pl.monthly.total.trading_margin, { symbol: false })}</td>
                 <td class="num">${pl.monthly.total.other_income ? '+ ' + UI.money(pl.monthly.total.other_income, { symbol: false }) : '—'}</td>
                 <td class="num">− ${UI.money(pl.monthly.total.expenses, { symbol: false })}</td>
-                <td class="num">${UI.money(pl.monthly.total.net_profit, { symbol: false })}</td></tr>` })}
+                <td class="num"><b>${UI.money(pl.monthly.total.gross_profit, { symbol: false })}</b></td></tr>` })}
             <div class="muted small mt">An expense counts in the month it is dated, whichever month
               the trade it paid for happened in — which is how it is entered and how the bank sees it.
               A month showing sales but no expenses is a month somebody has not finished entering.</div>
@@ -620,25 +621,25 @@
           <div class="card">
             <h3>By company</h3>
             <div class="card-sub">Invoiced sales less what those goods cost us, less the overheads
-              booked to each company.</div>
+              booked to each company — read in the same order as the months above.</div>
             ${UI.table([
               { label: 'Company', render: (r) => `<b>${esc(r.code)}</b>
                   <div class="muted small">${esc(r.name)}</div>` },
               { label: 'Revenue', num: true, render: (r) => UI.money(r.revenue, { symbol: false }) },
               { label: 'Cost of sales', num: true, render: (r) => UI.money(r.cost_of_sales, { symbol: false }) },
-              { label: 'Gross profit', num: true, render: (r) => `<b>${UI.money(r.gross_profit, { symbol: false })}</b>
+              { label: 'Margin on goods', num: true, render: (r) => `${UI.money(r.gross_profit, { symbol: false })}
                   <div class="muted small">${r.gross_margin_percent}%</div>` },
               { label: 'Other income', num: true, render: (r) => UI.money(r.other_income, { symbol: false }) },
               { label: 'Expenses', num: true, render: (r) => UI.money(r.expenses, { symbol: false }) },
-              { label: 'Net', num: true, render: (r) => `<b class="${r.net_profit < 0 ? '' : ''}">${
+              { label: 'Gross profit', num: true, render: (r) => `<b>${
                 UI.money(r.net_profit, { symbol: false })}</b>` },
             ], pl.companies, { emptyText: 'No companies set up.' })}
             <div class="doc-footer"><table>
               <tr><td class="muted">Group revenue</td><td class="num">${UI.money(pl.group.revenue, { symbol: false })}</td></tr>
-              <tr><td class="muted">Gross profit</td><td class="num">${UI.money(pl.group.gross_profit, { symbol: false })}
+              <tr><td class="muted">Margin on goods</td><td class="num">${UI.money(pl.group.gross_profit, { symbol: false })}
                 (${pl.group.gross_margin_percent}%)</td></tr>
               <tr><td class="muted">Overheads</td><td class="num">${UI.money(pl.group.expenses, { symbol: false })}</td></tr>
-              <tr class="grand"><td>Net profit</td><td class="num">${UI.money(pl.group.net_profit, { symbol: false })}</td></tr>
+              <tr class="grand"><td>Gross profit</td><td class="num">${UI.money(pl.group.net_profit, { symbol: false })}</td></tr>
             </table></div>
           </div>`;
       };

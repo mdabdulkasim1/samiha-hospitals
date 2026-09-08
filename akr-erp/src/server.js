@@ -5,6 +5,7 @@ const config = require('./config');
 const { db } = require('./db');
 const auth = require('./lib/auth');
 const { ApiError } = require('./lib/http');
+const { shellHtml } = require('./lib/shell');
 
 const app = express();
 app.disable('x-powered-by');
@@ -70,8 +71,17 @@ app.use('/api/reports', require('./routes/reports'));
 app.use('/api/admin', require('./routes/admin'));
 
 // --------------------------------------------------------------- static + SPA
-app.use(express.static(path.join(config.root, 'public'), { index: false, maxAge: config.isProd ? '1h' : 0 }));
-app.get(/^\/(?!api\/).*/, (_req, res) => res.sendFile(path.join(config.root, 'public', 'index.html')));
+const publicDir = path.join(config.root, 'public');
+app.use(express.static(publicDir, { index: false, maxAge: config.isProd ? '1h' : 0 }));
+
+// The shell is read fresh in development so an edit shows on reload, and read
+// once in production because it cannot change under a running process.
+let cachedShell = null;
+app.get(/^\/(?!api\/).*/, (_req, res) => {
+  if (!cachedShell || !config.isProd) cachedShell = shellHtml(publicDir);
+  res.set('Cache-Control', 'no-store');
+  res.type('html').send(cachedShell);
+});
 
 // --------------------------------------------------------------- error handler
 app.use((req, res) => res.status(404).json({ error: `No route for ${req.method} ${req.path}` }));

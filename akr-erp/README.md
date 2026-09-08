@@ -421,12 +421,16 @@ the business made and what it owes the FTA are not part of running a desk.
 ### Profit, month by month
 
 The company books a month's overheads in one sitting at the end of it, so the profit is read a month
-at a time and in that order:
+at a time, with the month's expenses taken off before the gross profit at the end of the row:
 
 ```
-             Invoiced    Cost of goods    Gross profit    Expenses this month    Final profit
-Sep 2026    30,048.00     − 23,460.00        6,588.00              − 850.00        5,738.00
+             Invoiced    Cost of goods    Margin on goods    Expenses this month    Gross profit
+Sep 2026    30,048.00     − 23,460.00           6,588.00              − 850.00        5,738.00
 ```
+
+The margin on the goods is what the trade itself made; the gross profit is what is left of it after
+that month's overheads — the figure the company works to. (The group summary underneath the months
+uses the same two words for the same two things.)
 
 An expense counts in the month it is dated, whichever month the trade it paid for happened in —
 which is how it is entered and how the bank sees it. A month showing sales but no expenses is

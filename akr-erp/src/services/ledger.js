@@ -316,12 +316,17 @@ function monthlyProfit({ from, to, companyId = null }) {
   const rows = [...byMonth.values()]
     .sort((a, b) => (a.month < b.month ? -1 : 1))
     .map((m) => {
-      const gross = round(m.revenue - m.cost_of_sales);
+      // AKR's own vocabulary, and the order the owner reads a month in: the
+      // margin left on the goods first, then that month's overheads taken off
+      // it, and what survives is the month's gross profit. (The group P&L
+      // below still uses the accounting sense of gross profit — sales less
+      // cost of sales — which is `trading_margin` here.)
+      const margin = round(m.revenue - m.cost_of_sales);
       return {
         ...m,
-        gross_profit: gross,
-        gross_margin_percent: m.revenue ? round((gross / m.revenue) * 100) : 0,
-        net_profit: round(gross + m.other_income - m.expenses),
+        trading_margin: margin,
+        gross_margin_percent: m.revenue ? round((margin / m.revenue) * 100) : 0,
+        gross_profit: round(margin + m.other_income - m.expenses),
         // A month with sales but no overheads booked is not a very profitable
         // month; it is a month somebody has not finished entering.
         expenses_booked: m.expense_count > 0,
@@ -336,10 +341,10 @@ function monthlyProfit({ from, to, companyId = null }) {
     total: {
       revenue: sum('revenue'),
       cost_of_sales: sum('cost_of_sales'),
-      gross_profit: sum('gross_profit'),
+      trading_margin: sum('trading_margin'),
       other_income: sum('other_income'),
       expenses: sum('expenses'),
-      net_profit: sum('net_profit'),
+      gross_profit: sum('gross_profit'),
     },
   };
 }

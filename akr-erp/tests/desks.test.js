@@ -215,8 +215,9 @@ test('a month\'s expenses come off that month\'s gross profit', async () => {
   const month = invoice.invoice_date.slice(0, 7);
   const before = await admin.get('/api/accounts/profit-and-loss?from=2000-01-01&to=2100-01-01');
   const rowBefore = before.monthly.rows.find((r) => r.month === month);
-  assert.equal(rowBefore.gross_profit, 2000, '10 × (500 − 300)');
-  assert.equal(rowBefore.net_profit, rowBefore.gross_profit - rowBefore.expenses);
+  assert.equal(rowBefore.trading_margin, 2000, '10 × (500 − 300)');
+  assert.equal(rowBefore.gross_profit, rowBefore.trading_margin - rowBefore.expenses,
+    "the month's gross profit is already net of whatever has been spent");
 
   // The month's overheads, entered in one sitting the way the company does it.
   const spentBefore = rowBefore.expenses;
@@ -227,9 +228,12 @@ test('a month\'s expenses come off that month\'s gross profit', async () => {
 
   const after = await admin.get('/api/accounts/profit-and-loss?from=2000-01-01&to=2100-01-01');
   const rowAfter = after.monthly.rows.find((r) => r.month === month);
-  assert.equal(rowAfter.gross_profit, rowBefore.gross_profit, 'the gross profit is untouched');
+  assert.equal(rowAfter.trading_margin, rowBefore.trading_margin, 'the margin on the goods is untouched');
   assert.equal(rowAfter.expenses, spentBefore + 32400, "the month's overheads are all in");
-  assert.equal(rowAfter.net_profit, rowAfter.gross_profit + rowAfter.other_income - rowAfter.expenses,
-    'and the final figure is the gross less them');
+  assert.equal(rowAfter.gross_profit,
+    rowAfter.trading_margin + rowAfter.other_income - rowAfter.expenses,
+    'and the gross profit is the margin less this month\'s expenses');
+  assert.equal(rowAfter.gross_profit, rowBefore.gross_profit - 32400,
+    'so entering the month\'s overheads moves the gross profit down by exactly them');
   assert.ok(rowAfter.expenses_booked, 'the month is marked as having its expenses entered');
 });
