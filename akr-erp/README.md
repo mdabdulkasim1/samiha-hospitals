@@ -74,8 +74,14 @@ npm run dev       # auto-restart on file changes
 ## Putting it on Railway
 
 The app is a plain Node service: it listens on `PORT`, serves its own front end, and answers
-`GET /api/health`. `railway.json` sets the start command and the health check, so a deploy needs
-nothing typed into the platform beyond the variables below.
+`GET /api/health`. It ships a **Dockerfile**, and `railway.json` points at it, so the build that runs
+on the platform is the build that was tested here rather than one the platform infers.
+
+That is not fussiness. The one dependency that matters is native: `better-sqlite3` is compiled from
+C++ whenever no prebuilt binary is published for the platform's exact Node version. A builder left to
+guess the Node version from an open-ended `engines` range can land on one with no prebuild, and then
+fail at the compile because its image carries no toolchain. The Dockerfile pins Node 20 and installs
+`python3`, `make` and `g++`, so neither can happen.
 
 **Mount a volume first.** The database is a single SQLite file. A container platform rebuilds the
 application directory on every deploy, so a database inside it is destroyed each time you ship a
@@ -102,11 +108,19 @@ AUTO_SEED=true          # leave true for the first deploy, then set it to false
 `PORT` is set by the platform. `DB_FILE` overrides the location if you ever want it somewhere other
 than the volume.
 
-### If the platform says "Failed to fetch repository files"
+### If the build fails
 
-It is looking at a repository with nothing in it, or at one its GitHub App cannot read. Check that
-the repository actually has a commit on its default branch, and that the Railway GitHub App has been
-granted access to it (**Configure GitHub App** on that same screen, then **Refresh**).
+- **"Failed to fetch repository files"** — the platform is looking at a repository with nothing in
+  it, or at one its GitHub App cannot read. Check the repository has a commit on its default branch,
+  and that the GitHub App has been granted access (**Configure GitHub App**, then **Refresh**).
+- **`gyp ERR!` / `find Python` / `prebuild-install warn ... no prebuilt binaries`** — the builder is
+  compiling `better-sqlite3` without a toolchain, or on a Node version with no prebuild. The
+  Dockerfile exists to prevent both; make sure the service is set to build from it rather than from
+  an inferred build.
+- **"npm ci can only install packages when your package.json and package-lock.json are in sync"** —
+  someone edited `package.json` without regenerating the lockfile. `npm install --package-lock-only`
+  and commit the result. The lockfile records the `engines` range too, so even a Node-version change
+  de-synchronises it.
 
 ## The five applications
 

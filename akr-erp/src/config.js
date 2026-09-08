@@ -40,22 +40,29 @@ const env = process.env;
  */
 const volumePath = env.RAILWAY_VOLUME_MOUNT_PATH || env.DATA_DIR || null;
 const defaultDbFile = volumePath ? path.join(volumePath, 'akr.db') : './data/akr.db';
+const dbFile = path.resolve(root, env.DB_FILE || defaultDbFile);
 
 module.exports = {
   root,
   port: Number(env.PORT || 4000),
   nodeEnv: env.NODE_ENV || 'development',
   isProd: env.NODE_ENV === 'production',
-  dbFile: path.resolve(root, env.DB_FILE || defaultDbFile),
+  dbFile,
   volumePath,
   /*
-   * True when the database is inside the application directory, which on a
-   * container platform means it will not survive the next deploy.
+   * True when the database sits inside the application directory in production
+   * — which on a container platform means it is rebuilt away on the next
+   * deploy, taking the books with it.
+   *
+   * A mounted volume settles it. Failing that, a DB_FILE pointing somewhere
+   * outside the application is taken as somebody having made their own
+   * arrangements; a path inside it is not, and is warned about loudly. A false
+   * warning costs a moment's reading. The silence costs the ledgers.
    */
   get dbIsEphemeral() {
-    return !path.resolve(root, env.DB_FILE || defaultDbFile).startsWith(path.sep + 'data')
-      && !volumePath
-      && (env.NODE_ENV === 'production');
+    if (env.NODE_ENV !== 'production') return false;
+    if (volumePath) return false;
+    return dbFile.startsWith(root + path.sep);
   },
   autoSeed: String(env.AUTO_SEED || 'true').toLowerCase() !== 'false',
 
