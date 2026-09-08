@@ -83,13 +83,54 @@ test('a series is gap-free and never repeats', async () => {
   }
 });
 
-test('the sales-order serial restarts each month, the LPO each year', async () => {
+test('a series that carries a month counts within it; the LPO counts by year', async () => {
   const series = await admin.get('/api/masters/document-numbers');
-  const so = series.rows.find((r) => r.doc_kind === 'salesOrder');
+  for (const row of series.rows) {
+    const carriesMonth = /\{(mm|mmyyyy|yyyymm)\}/.test(row.pattern);
+    assert.equal(row.reset_on, carriesMonth ? 'monthly' : 'yearly',
+      `${row.doc_kind} restarts on whatever its reference actually names`);
+  }
   const lpo = series.rows.find((r) => r.doc_kind === 'purchaseOrder');
-  assert.equal(so.reset_on, 'monthly', 'the month is in the reference, so it counts within the month');
-  assert.equal(lpo.reset_on, 'yearly');
+  assert.equal(lpo.reset_on, 'yearly', 'its reference names a year and no month');
   assert.match(lpo.note || '', /Fabrication Division/, 'and FD is written down, not left as a riddle');
+  assert.equal(series.rows.filter((r) => r.reset_on === 'monthly').length, 13);
+});
+
+test('a serial cannot be made to restart on something the reference does not say', async () => {
+  // Monthly, on a pattern naming no month: January's 001 and February's 001.
+  await assert.rejects(
+    () => admin.raw('PUT', '/api/masters/document-numbers/purchaseOrder',
+      { pattern: '{company}-FD{yy}-{n:3}', reset_on: 'monthly' }),
+    (err) => err.status === 400 && /names no month/.test(err.message),
+  );
+  // Monthly, with a month but no year: August 2026 and August 2027.
+  await assert.rejects(
+    () => admin.raw('PUT', '/api/masters/document-numbers/salesQuotation',
+      { pattern: '{company}-QT-{mm}-{n:3}', reset_on: 'monthly' }),
+    (err) => err.status === 400 && /names no year/.test(err.message),
+  );
+  // Yearly, with no year at all.
+  await assert.rejects(
+    () => admin.raw('PUT', '/api/masters/document-numbers/deliveryNote',
+      { pattern: '{company}-DN-{n:4}', reset_on: 'yearly' }),
+    (err) => err.status === 400 && /names no year/.test(err.message),
+  );
+});
+
+test('every month-bearing series counts from one again each month', async () => {
+  const numbering = require('../src/services/numbering');
+  const aug = new Date('2028-08-15T00:00:00Z');
+  const sep = new Date('2028-09-15T00:00:00Z');
+  for (const kind of ['salesInvoice', 'deliveryNote', 'salesQuotation', 'grn', 'receipt']) {
+    const first = numbering.next(null, 'AKR', kind, aug);
+    const second = numbering.next(null, 'AKR', kind, aug);
+    const next = numbering.next(null, 'AKR', kind, sep);
+    assert.ok(first.endsWith('-001'), `${kind} starts at 001`);
+    assert.ok(second.endsWith('-002'));
+    assert.ok(next.endsWith('-001'), `${kind} starts again the next month`);
+    assert.ok(first.includes('082028') && next.includes('092028'),
+      `${kind} says which month it belongs to`);
+  }
 });
 
 test('two months of sales orders each count from one', async () => {

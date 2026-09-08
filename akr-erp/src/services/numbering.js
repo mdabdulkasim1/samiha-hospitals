@@ -71,10 +71,16 @@ const DOC_LABELS = {
  * issues its own orders the code can be changed under Masters → Document
  * numbers without anybody touching this file.
  *
- * The sales-order serial restarts each month, because the month is in the
- * reference: AKR-SO-082026-014 is the fourteenth order of August 2026, and a
- * reference that carries a month but counts through the year invites the
- * reader to work out which it means.
+ * Every series that carries a month restarts within it: AKR-SO-082026-014 is
+ * the fourteenth order of August 2026. A reference that carries a month but
+ * counts through the year invites the reader to work out which of the two it
+ * means.
+ *
+ * The LPO is the exception, and it is not an oversight. Its reference carries
+ * the year and no month, so counting within the month would produce
+ * AKR-FD26-001 in January and AKR-FD26-001 again in February — the one thing a
+ * reference must never do. See validatePattern below, which refuses that
+ * combination rather than leaving it to be discovered.
  */
 const DEFAULTS = {
   purchaseOrder: {
@@ -82,24 +88,62 @@ const DEFAULTS = {
     reset_on: 'yearly',
     note: 'FD — Fabrication Division',
   },
-  supplierQuotation: { pattern: '{company}-SQ-{mmyyyy}-{n:3}', reset_on: 'yearly' },
-  grn: { pattern: '{company}-GRN-{mmyyyy}-{n:3}', reset_on: 'yearly' },
-  supplierInvoice: { pattern: '{company}-BILL-{mmyyyy}-{n:3}', reset_on: 'yearly' },
+  supplierQuotation: { pattern: '{company}-SQ-{mmyyyy}-{n:3}', reset_on: 'monthly' },
+  grn: { pattern: '{company}-GRN-{mmyyyy}-{n:3}', reset_on: 'monthly' },
+  supplierInvoice: { pattern: '{company}-BILL-{mmyyyy}-{n:3}', reset_on: 'monthly' },
 
   salesOrder: { pattern: '{company}-SO-{mmyyyy}-{n:3}', reset_on: 'monthly' },
-  enquiry: { pattern: '{company}-ENQ-{mmyyyy}-{n:3}', reset_on: 'yearly' },
-  salesQuotation: { pattern: '{company}-QT-{mmyyyy}-{n:3}', reset_on: 'yearly' },
-  deliveryNote: { pattern: '{company}-DN-{mmyyyy}-{n:3}', reset_on: 'yearly' },
-  salesInvoice: { pattern: '{company}-INV-{mmyyyy}-{n:3}', reset_on: 'yearly' },
+  enquiry: { pattern: '{company}-ENQ-{mmyyyy}-{n:3}', reset_on: 'monthly' },
+  salesQuotation: { pattern: '{company}-QT-{mmyyyy}-{n:3}', reset_on: 'monthly' },
+  deliveryNote: { pattern: '{company}-DN-{mmyyyy}-{n:3}', reset_on: 'monthly' },
+  salesInvoice: { pattern: '{company}-INV-{mmyyyy}-{n:3}', reset_on: 'monthly' },
 
-  receipt: { pattern: '{company}-RV-{mmyyyy}-{n:3}', reset_on: 'yearly' },
-  payment: { pattern: '{company}-PV-{mmyyyy}-{n:3}', reset_on: 'yearly' },
-  expense: { pattern: '{company}-EXP-{mmyyyy}-{n:3}', reset_on: 'yearly' },
-  income: { pattern: '{company}-INC-{mmyyyy}-{n:3}', reset_on: 'yearly' },
-  stockAdjustment: { pattern: '{company}-ADJ-{mmyyyy}-{n:3}', reset_on: 'yearly' },
+  receipt: { pattern: '{company}-RV-{mmyyyy}-{n:3}', reset_on: 'monthly' },
+  payment: { pattern: '{company}-PV-{mmyyyy}-{n:3}', reset_on: 'monthly' },
+  expense: { pattern: '{company}-EXP-{mmyyyy}-{n:3}', reset_on: 'monthly' },
+  income: { pattern: '{company}-INC-{mmyyyy}-{n:3}', reset_on: 'monthly' },
+  stockAdjustment: { pattern: '{company}-ADJ-{mmyyyy}-{n:3}', reset_on: 'monthly' },
 };
 
 const KINDS = Object.keys(DEFAULTS);
+
+const HAS_MONTH = /\{(mm|mmyyyy|yyyymm)\}/;
+const HAS_YEAR = /\{(yy|yyyy|mmyyyy|yyyymm)\}/;
+const HAS_SERIAL = /\{n(?::\d+)?\}/;
+
+/**
+ * Whether a pattern can actually tell its documents apart.
+ *
+ * A serial that restarts is only safe if what it restarts for is written into
+ * the reference. Counting within the month, on a pattern that names no month,
+ * gives January's first order and February's first order the same number —
+ * and two documents with one reference is the single thing a reference exists
+ * to prevent. So the combination is refused here rather than discovered later
+ * by whoever is holding both pieces of paper.
+ *
+ * Returns a sentence explaining the problem, or null when the pattern is sound.
+ */
+function validatePattern(pattern, resetOn = 'yearly') {
+  const p = String(pattern || '');
+  if (!HAS_SERIAL.test(p)) {
+    return 'A pattern must contain {n} — without a serial, every document would have the same reference.';
+  }
+  if (resetOn === 'monthly') {
+    if (!HAS_MONTH.test(p)) {
+      return 'This serial restarts every month, but the pattern names no month — January\u2019s first '
+        + 'document and February\u2019s would both read 001. Add {mmyyyy}, or let the serial restart yearly.';
+    }
+    if (!HAS_YEAR.test(p)) {
+      return 'This serial restarts every month, but the pattern names no year — August 2026 and '
+        + 'August 2027 would collide. Use {mmyyyy} rather than {mm}.';
+    }
+  }
+  if (resetOn === 'yearly' && !HAS_YEAR.test(p)) {
+    return 'This serial restarts every year, but the pattern names no year — this year\u2019s first '
+      + 'document and next year\u2019s would both read 001. Add {yy} or {yyyy}.';
+  }
+  return null;
+}
 const pad = (n, width) => String(n).padStart(width, '0');
 
 /** The series in force for a company and a document kind. */
@@ -225,6 +269,8 @@ function listFor(company) {
 /** Save a company's pattern for one kind of document. */
 function save(companyId, kind, { pattern, reset_on, note, userId = null }) {
   if (!DEFAULTS[kind]) throw new Error(`Unknown document kind: ${kind}`);
+  const problem = validatePattern(pattern, reset_on || 'yearly');
+  if (problem) throw new Error(problem);
   db.prepare(`
     INSERT INTO document_series (company_id, doc_kind, pattern, reset_on, note, updated_by, updated_at)
     VALUES (@company_id, @doc_kind, @pattern, @reset_on, @note, @updated_by, datetime('now'))
@@ -243,5 +289,5 @@ function save(companyId, kind, { pattern, reset_on, note, userId = null }) {
 
 module.exports = {
   DOC_TYPES, DOC_LABELS, DEFAULTS, KINDS,
-  seriesFor, scopeKey, render, preview, next, setNext, listFor, save,
+  seriesFor, scopeKey, render, preview, next, setNext, listFor, save, validatePattern,
 };

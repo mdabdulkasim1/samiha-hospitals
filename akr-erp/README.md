@@ -191,10 +191,21 @@ AKR-FD26-016                     AKR-SO-082026-014
  └───────────── company
 ```
 
-The LPO counts through the year; the sales order counts within its month, because the month is in
-the reference and a number that carries one but counts through the year invites the reader to work
-out which it means. Both are one click to change under **Masters → Document numbers**, and the
-meaning of `FD` is recorded against the series there, so nobody has to ask what it stands for.
+**Every series that carries a month counts within it** — thirteen of the fourteen. A number that
+names a month but counts through the year invites the reader to work out which of the two it means.
+
+The LPO is the exception, and not an oversight: its reference names the year and no month, so
+counting within the month would give January's first order and February's the same number. The
+system refuses that combination rather than leaving it to be found by whoever ends up holding both
+pieces of paper — a serial may only restart on something the reference actually says:
+
+```
+{company}-FD{yy}-{n:3}      restarting monthly   →  refused: the pattern names no month
+{company}-QT-{mm}-{n:3}     restarting monthly   →  refused: August 2026 and August 2027 collide
+{company}-DN-{n:4}          restarting yearly    →  refused: the pattern names no year
+```
+
+The meaning of `FD` is recorded against the series, so nobody has to ask what it stands for.
 
 Everything else is numbered in the same family — `AKR-QT-082026-004`, `AKR-DN-082026-011`,
 `AKR-INV-082026-009`, `AKR-GRN-082026-003`, `AKR-RV-082026-021`.

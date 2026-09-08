@@ -403,14 +403,15 @@ router.put('/document-numbers/:kind', admin, wrap(async (req, res) => {
 
   const pattern = v.str(req.body.pattern);
   if (!pattern) throw badRequest('A series needs a pattern.');
-  if (!/\{n(?::\d+)?\}/.test(pattern)) {
-    throw badRequest('A pattern must contain {n} — without a serial, every document would have the same reference.');
-  }
+  const resetOn = v.oneOf(req.body.reset_on, ['never', 'yearly', 'monthly'], 'reset_on') || 'yearly';
+
+  // A serial that restarts is only safe if what it restarts for is in the
+  // reference. The check explains which combination would collide.
+  const problem = numbering.validatePattern(pattern, resetOn);
+  if (problem) throw badRequest(problem);
+
   numbering.save(company.id, kind, {
-    pattern,
-    reset_on: v.oneOf(req.body.reset_on, ['never', 'yearly', 'monthly'], 'reset_on') || 'yearly',
-    note: v.str(req.body.note),
-    userId: req.user.id,
+    pattern, reset_on: resetOn, note: v.str(req.body.note), userId: req.user.id,
   });
 
   // Continuing from a number already on paper.
