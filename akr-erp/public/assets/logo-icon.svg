@@ -1,13 +1,46 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-label="AKR">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" role="img" aria-label="AKR">
   <defs>
-    <linearGradient id="w" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#2E7D4F"/><stop offset="1" stop-color="#17624B"/>
+    <!-- The plumage runs from deep blue at the crown, through green, to gold at
+         the breast — the same colours the system is dressed in. -->
+    <linearGradient id="akr-plume" x1="0.15" y1="0" x2="0.85" y2="1">
+      <stop offset="0"    stop-color="#17607F"/>
+      <stop offset="0.30" stop-color="#1E7FA0"/>
+      <stop offset="0.56" stop-color="#3FA24A"/>
+      <stop offset="0.80" stop-color="#7CC24A"/>
+      <stop offset="1"    stop-color="#F0A81E"/>
+    </linearGradient>
+    <linearGradient id="akr-beak" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F9CB45"/><stop offset="1" stop-color="#E8940F"/>
     </linearGradient>
   </defs>
-  <circle cx="48" cy="48" r="45" fill="#fff" stroke="#123A5C" stroke-width="3"/>
-  <path d="M22 62c9-24 26-36 50-37-6 5-10 10-12 15 10-3 18-2 26 3-12 1-21 6-27 13-7 8-15 12-26 12-5 0-9-2-11-6z"
-        fill="url(#w)"/>
-  <path d="M60 24c6 0 10 4 11 9-5-2-9-2-13 0 0-3 1-6 2-9z" fill="#C8912A"/>
-  <circle cx="65" cy="29" r="2.4" fill="#123A5C"/>
-  <path d="M20 70h56l-7 9H27z" fill="#C8912A"/>
+  <!-- The head: a full crown that sweeps down and round to the right, with the
+       throat cut away under the beak — the crescent the mark is built on. -->
+  <path d="M92 14c42 0 76 33 76 74 0 20-8 37-21 50-11 11-17 22-19 36-2 12-12 20-25 18
+           -30-4-56-30-62-62C33 92 30 78 32 64 38 30 62 14 92 14Z"
+        fill="url(#akr-plume)"/>
+  <!-- The throat: the notch that turns a head into a falcon. -->
+  <path d="M118 74c14 4 26 12 33 24-13 2-24 8-31 18-8 11-13 24-14 38-9-10-13-23-12-37
+           1-18 10-33 24-43Z" fill="#F3F7FA" fill-opacity="0"/>
+
+  <!-- Feathers, laid over the crown. -->
+  <g fill="none" stroke="#0F5570" stroke-opacity=".34" stroke-width="4.5" stroke-linecap="round">
+    <path d="M62 48c9-15 23-24 39-26"/>
+    <path d="M50 76c5-19 16-33 32-40"/>
+    <path d="M45 108c-3-22 3-39 14-51"/>
+  </g>
+  <g fill="none" stroke="#2C7A2F" stroke-opacity=".28" stroke-width="4.5" stroke-linecap="round">
+    <path d="M54 142c-5-17-1-32 8-44"/>
+    <path d="M75 164c-7-15-6-30 1-43"/>
+  </g>
+
+  <!-- The eye: a dark almond, a red iris, and the glint that makes it alive. -->
+  <path d="M104 48c13-8 29-5 35 5-7 11-23 15-36 9-5-3-5-11 1-14Z" fill="#16283A"/>
+  <circle cx="119" cy="54" r="9" fill="#E01B1B"/>
+  <circle cx="122" cy="50.5" r="3" fill="#fff" fill-opacity=".85"/>
+
+  <!-- The beak: big, hooked, and the loudest thing on the mark. -->
+  <path d="M136 40c26 1 47 10 60 25-16 3-29 10-38 20 6 3 10 7 13 12-14 8-30 10-46 6
+           9-9 14-19 14-30 0-12-2-22-7-30 1-2 2-3 4-3Z" fill="url(#akr-beak)"/>
+  <path d="M158 85c-13 8-28 10-43 7 15 1 29-2 41-8Z" fill="#B86F08" fill-opacity=".5"/>
+  <path d="M136 40c26 1 47 10 60 25-19-9-40-14-62-14 1-4 1-8 2-11Z" fill="#F9D264" fill-opacity=".55"/>
 </svg>

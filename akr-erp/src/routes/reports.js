@@ -112,6 +112,33 @@ router.get('/dashboard', wrap(async (req, res) => {
   res.json({ sell, buy, stock: stockSummary, cash, trading, as_of: new Date().toISOString() });
 }));
 
+/**
+ * Follow a reference.
+ *
+ * Type in any document number — ours or the client's own LPO number or the
+ * supplier's own invoice number — and get the whole chain around it, oldest
+ * first. This is what the references are for.
+ */
+router.get('/trace', wrap(async (req, res) => {
+  const trace = require('../services/trace');
+  const ref = v.str(req.query.ref);
+  if (!ref) throw require('../lib/http').badRequest('Give a reference to look for.');
+
+  const hits = trace.find(ref);
+  if (!hits.length) return res.json({ ref, found: [], chain: null });
+
+  const exact = hits.filter((h) => !h.partial);
+  // One clear answer: show its chain. Several, or only near-misses: let the
+  // person choose rather than guessing for them.
+  if (exact.length === 1) {
+    const hit = exact[0];
+    const result = trace.chain(hit.kind, hit.id);
+    if (!auth.seesPrices(req.user)) for (const s of result.steps) s.amount = null;
+    return res.json({ ref, found: exact, matched: hit, chain: result });
+  }
+  res.json({ ref, found: hits, chain: null });
+}));
+
 /** What the group sold, by application — the split the company works to. */
 router.get('/by-application', auth.requireRole('kam', 'accounts', 'sales'), wrap(async (req, res) => {
   const to = v.date(req.query.to) || v.today();

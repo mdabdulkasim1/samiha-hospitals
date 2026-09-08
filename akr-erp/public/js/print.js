@@ -29,7 +29,7 @@
     if (!w) return UI.err('Allow pop-ups to print this document.');
     w.document.open();
     w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(title)}</title>`
-      + styles() + `</head><body>${bodyHtml}</body></html>`);
+      + styles() + `</head><body>${watermark()}${bodyHtml}</body></html>`);
     w.document.close();
     const go = () => { try { w.focus(); w.print(); } catch { /* window closed */ } };
     if (w.document.readyState === 'complete') setTimeout(go, 80);
@@ -45,6 +45,26 @@
   function styles() {
     return `<style>
       @page { size: A4 portrait; margin: 12mm 12mm 16mm; }
+
+      /*
+       * The company's mark, ghosted behind the page.
+       *
+       * Fixed rather than absolute, so the browser repeats it on every sheet of
+       * a document that runs to several pages; painted over the content rather
+       * than under it, because the sheet draws its own white page and anything
+       * beneath would simply be hidden; and at four to five per cent it tints
+       * the paper without competing with a single line of text.
+       */
+      .watermark {
+        position: fixed; inset: 0; z-index: 9999; pointer-events: none;
+        display: flex; align-items: center; justify-content: center;
+      }
+      .watermark img {
+        width: 58%; max-width: 125mm; opacity: .055;
+        -webkit-print-color-adjust: exact; print-color-adjust: exact;
+      }
+      /* Ink is dearer than pixels, and paper shows a tint more readily. */
+      @media print { .watermark img { opacity: .04; } }
       body {
         margin: 0; color: #16232B; background: #EEF2F5;
         font: 10.5px/1.45 "Segoe UI", system-ui, -apple-system, Arial, sans-serif;
@@ -54,23 +74,23 @@
       @media screen { body { padding: 16px 0; } .doc { width: 210mm; min-height: 297mm; padding: 12mm; box-sizing: border-box; box-shadow: 0 2px 16px rgba(0,0,0,.2); } }
       @media print { body { background: #fff; padding: 0; } .doc { width: auto; padding: 0; box-shadow: none; } }
 
-      .head { display: flex; align-items: flex-start; gap: 14px; border-bottom: 2px solid #123A5C; padding-bottom: 9px; }
+      .head { display: flex; align-items: flex-start; gap: 14px; border-bottom: 2px solid #0E3A5C; padding-bottom: 9px; }
       .head .logo { width: 74px; flex: 0 0 74px; }
       .head .logo img { width: 100%; }
       .head .who { flex: 1; }
-      .head .who .name { font: 700 17px Georgia, "Times New Roman", serif; color: #123A5C; letter-spacing: .4px; }
-      .head .who .tag { font-size: 8px; letter-spacing: 1.6px; text-transform: uppercase; color: #2E7D4F; margin-top: 2px; font-weight: 600; }
+      .head .who .name { font: 700 17px Georgia, "Times New Roman", serif; color: #0E3A5C; letter-spacing: .4px; }
+      .head .who .tag { font-size: 8px; letter-spacing: 1.6px; text-transform: uppercase; color: #14663F; margin-top: 2px; font-weight: 600; }
       .head .who .addr { font-size: 9px; color: #67788A; margin-top: 3px; line-height: 1.5; }
       .head .trn { text-align: right; font-size: 9.5px; }
-      .head .trn b { display: block; font-size: 11px; color: #123A5C; }
+      .head .trn b { display: block; font-size: 11px; color: #0E3A5C; }
 
       .doc-title {
         margin: 10px 0 2px; text-align: center; font-size: 12.5px; font-weight: 700;
-        letter-spacing: 3.4px; text-transform: uppercase; color: #123A5C;
+        letter-spacing: 3.4px; text-transform: uppercase; color: #0E3A5C;
       }
       .doc-app {
         text-align: center; font-size: 9.5px; letter-spacing: 1.6px; text-transform: uppercase;
-        color: #8A5F10; background: #F7EDD6; border-radius: 3px; padding: 3px 8px;
+        color: #0E4E2F; background: #E3F0E9; border-radius: 3px; padding: 3px 8px;
         display: inline-block; margin: 0 auto 8px; font-weight: 700;
       }
       .app-wrap { text-align: center; }
@@ -91,13 +111,13 @@
 
       table.items { width: 100%; border-collapse: collapse; margin-top: 10px; }
       table.items th {
-        background: #123A5C; color: #fff; font-size: 8px; letter-spacing: .8px; text-transform: uppercase;
+        background: #0E3A5C; color: #fff; font-size: 8px; letter-spacing: .8px; text-transform: uppercase;
         padding: 6px 5px; text-align: left; font-weight: 700;
       }
       table.items td { padding: 6px 5px; border-bottom: 1px solid #EDF2F6; vertical-align: top; font-size: 9.8px; }
       table.items tr:nth-child(even) td { background: #FAFCFD; }
       table.items .num { text-align: right; white-space: nowrap; }
-      table.items .code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 9px; color: #1D4E77; }
+      table.items .code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 9px; color: #16537F; }
       table.items .desc b { font-size: 10.2px; }
       table.items .desc .spec { color: #67788A; font-size: 9px; display: block; }
 
@@ -106,7 +126,7 @@
       .totals td { padding: 3.5px 9px; font-size: 10.2px; }
       .totals td.k { color: #67788A; }
       .totals td.v { text-align: right; font-weight: 600; }
-      .totals tr.grand td { border-top: 1.4px solid #123A5C; font-size: 12px; font-weight: 700; padding-top: 6px; color: #123A5C; }
+      .totals tr.grand td { border-top: 1.4px solid #0E3A5C; font-size: 12px; font-weight: 700; padding-top: 6px; color: #0E3A5C; }
       .words { margin-top: 6px; font-size: 9.6px; font-style: italic; color: #16232B; }
       .words b { font-style: normal; }
 
@@ -116,10 +136,10 @@
       }
       .block p { margin: 2px 0 0; white-space: pre-wrap; font-size: 9.6px; line-height: 1.6; }
       .terms-band {
-        margin-top: 9px; background: #F4F7FA; border-left: 3px solid #C8912A; border-radius: 3px;
+        margin-top: 9px; background: #F4F8FA; border-left: 3px solid #14663F; border-radius: 3px;
         padding: 7px 10px; font-size: 9.6px;
       }
-      .terms-band b { color: #123A5C; }
+      .terms-band b { color: #0E3A5C; }
 
       .lead { margin-top: 8px; font-size: 10px; color: #16232B; }
       .block.terms ol { margin: 3px 0 0; padding-left: 15px; }
@@ -148,13 +168,17 @@
       .bank .k { font-size: 7.5px; letter-spacing: 1.1px; text-transform: uppercase; color: #93A3B3; font-weight: 700; margin-bottom: 2px; }
       .stamp-note { font-size: 8.6px; color: #93A3B3; margin-top: 3px; }
       .paid-mark {
-        display: inline-block; border: 2px solid #2E7D4F; color: #2E7D4F; border-radius: 4px;
+        display: inline-block; border: 2px solid #14663F; color: #14663F; border-radius: 4px;
         padding: 2px 10px; font-size: 12px; font-weight: 700; letter-spacing: 2px; transform: rotate(-3deg);
       }
     </style>`;
   }
 
   // ------------------------------------------------------------- fragments
+  /** The mark, laid faintly behind whatever is printed. */
+  const watermark = () =>
+    `<div class="watermark"><img src="${location.origin}/assets/logo-icon.svg" alt=""></div>`;
+
   function letterhead(company) {
     const c = company || (window.APP && APP.company) || {};
     return `<div class="head">
@@ -534,5 +558,5 @@
     };
   }
 
-  window.PRINT = { openWindow, render, styles, letterhead, BUILD, DOCS };
+  window.PRINT = { openWindow, render, styles, watermark, letterhead, BUILD, DOCS };
 })();

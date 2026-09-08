@@ -3,30 +3,42 @@
    Navy for structure, gold for what needs attention, green for what is settled.
    ========================================================================== */
 :root {
-  --navy: #123A5C;
-  --navy-dark: #0C2A44;
-  --navy-soft: #1D4E77;
-  --gold: #C8912A;
-  --gold-soft: #F4E4C1;
-  --green: #2E7D4F;
-  --green-soft: #E2F0E8;
-  --danger: #B3402E;
-  --danger-soft: #FBE6E2;
-  --warn: #C87A2A;
-  --warn-soft: #FCEEDA;
-  --info: #1F6F8B;
-  --info-soft: #E2F0F5;
+  /*
+   * Dark blue for structure, dark green for what to act on, white for the
+   * paper — the three colours of the company's own mark.
+   *
+   * Amber and red survive in one place only: a state the reader must not miss.
+   * An overdue invoice and a bounced cheque have to look different from
+   * everything else, and green-on-green would hide them.
+   */
+  --navy: #0E3A5C;
+  --navy-dark: #092B45;
+  --navy-soft: #16537F;
+  --navy-tint: #E7EEF4;
 
-  --ink: #16232B;
-  --muted: #67788A;
-  --faint: #93A3B3;
-  --line: #DDE5EC;
-  --line-soft: #EDF2F6;
-  --bg: #F4F7FA;
+  --green: #14663F;
+  --green-dark: #0E4E2F;
+  --green-soft: #E3F0E9;
+  --green-tint: #CFE5D9;
+
+  /* Kept for warnings and errors, and used nowhere else. */
+  --danger: #A63A29;
+  --danger-soft: #F8E5E1;
+  --warn: #A9701A;
+  --warn-soft: #FAEEDA;
+  --info: #16537F;
+  --info-soft: #E7EEF4;
+
+  --ink: #14222C;
+  --muted: #5D7183;
+  --faint: #8B9EAD;
+  --line: #DCE5EC;
+  --line-soft: #EEF3F7;
+  --bg: #F4F8FA;
   --card: #FFFFFF;
 
   --radius: 10px;
-  --shadow: 0 1px 2px rgba(18, 58, 92, .06), 0 6px 18px rgba(18, 58, 92, .07);
+  --shadow: 0 1px 2px rgba(14, 58, 92, .06), 0 6px 18px rgba(14, 58, 92, .07);
   --font: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
 }
 
@@ -55,7 +67,7 @@ code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-si
 .brand .mark { width: 38px; height: 38px; background: #fff; border-radius: 9px; padding: 3px; }
 .brand .mark img { width: 100%; height: 100%; }
 .brand-text strong { display: block; font-size: 18px; letter-spacing: 1.5px; color: #fff; font-family: Georgia, serif; }
-.brand-text span { display: block; font-size: 9.5px; letter-spacing: 1.6px; text-transform: uppercase; color: var(--gold); }
+.brand-text span { display: block; font-size: 9.5px; letter-spacing: 1.6px; text-transform: uppercase; color: #7FD3A4; }
 
 .nav { flex: 1; overflow-y: auto; padding: 4px 8px 14px; }
 .nav-group { margin-bottom: 12px; }
@@ -69,13 +81,13 @@ code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-si
 }
 .nav a .ico { width: 17px; text-align: center; opacity: .85; font-size: 13px; }
 .nav a:hover { background: rgba(255, 255, 255, .08); color: #fff; }
-.nav a.active { background: var(--gold); color: #2A1E06; font-weight: 600; }
+.nav a.active { background: var(--green); color: #fff; font-weight: 600; }
 .nav a.active .ico { opacity: 1; }
 .nav a .pill {
   margin-left: auto; background: var(--danger); color: #fff; border-radius: 9px;
   font-size: 10.5px; padding: 1px 6px; font-weight: 700;
 }
-.nav a.active .pill { background: var(--navy); color: #fff; }
+.nav a.active .pill { background: #fff; color: var(--green); }
 
 .sidebar-foot { padding: 11px 14px 14px; border-top: 1px solid rgba(255, 255, 255, .12); }
 .sidebar-foot .who { font-weight: 600; color: #fff; font-size: 13px; }
@@ -136,7 +148,7 @@ code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-si
 .stat .k { font-size: 10.5px; letter-spacing: .9px; text-transform: uppercase; color: var(--faint); font-weight: 600; }
 .stat .v { font-size: 22px; font-weight: 700; margin-top: 4px; color: var(--navy); }
 .stat .n { font-size: 11.6px; color: var(--muted); margin-top: 2px; }
-.stat.gold { border-left: 3px solid var(--gold); }
+.stat.gold { border-left: 3px solid var(--green); }
 .stat.green { border-left: 3px solid var(--green); }
 .stat.danger { border-left: 3px solid var(--danger); }
 .stat.info { border-left: 3px solid var(--info); }
@@ -151,8 +163,8 @@ code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-si
 .badge.warn { background: var(--warn-soft); color: var(--warn); }
 .badge.danger { background: var(--danger-soft); color: var(--danger); }
 .badge.info { background: var(--info-soft); color: var(--info); }
-.badge.gold { background: var(--gold-soft); color: #8A5F10; }
-.badge.navy { background: #E3EBF3; color: var(--navy); }
+.badge.gold { background: var(--green-tint); color: var(--green-dark); }
+.badge.navy { background: var(--navy-tint); color: var(--navy); }
 
 .alert { border-radius: 8px; padding: 10px 12px; font-size: 13px; border: 1px solid; margin-bottom: 10px; }
 .alert.ok { background: var(--green-soft); border-color: #BFDFCD; color: #1D5637; }
@@ -222,10 +234,9 @@ textarea { resize: vertical; }
 .btn:disabled { opacity: .55; cursor: not-allowed; }
 .btn.ghost { background: #fff; color: var(--navy); border: 1px solid var(--line); }
 .btn.ghost:hover { background: var(--line-soft); }
-.btn.gold { background: var(--gold); color: #2A1E06; }
-.btn.gold:hover { background: #B37F1F; }
-.btn.green { background: var(--green); }
-.btn.green:hover { background: #24623E; }
+/* The action a screen is really for. */
+.btn.gold, .btn.green { background: var(--green); color: #fff; }
+.btn.gold:hover, .btn.green:hover { background: var(--green-dark); }
 .btn.danger { background: var(--danger); }
 .btn.sm { padding: 5px 9px; font-size: 12px; }
 .btn.block { display: block; width: 100%; }
@@ -239,7 +250,7 @@ textarea { resize: vertical; }
   background: none; border: 0; border-bottom: 2.5px solid transparent; padding: 8px 13px;
   font-size: 13.2px; color: var(--muted); cursor: pointer; font-family: inherit; font-weight: 600;
 }
-.tabs button.active { color: var(--navy); border-bottom-color: var(--gold); }
+.tabs button.active { color: var(--navy); border-bottom-color: var(--green); }
 
 .filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 12px; }
 .filters .field { margin-bottom: 0; min-width: 150px; }
@@ -313,14 +324,14 @@ ol.conditions li { margin-bottom: 3px; }
   border-bottom: 1px solid var(--line-soft); padding: 10px 4px; text-align: left; cursor: pointer; font: inherit;
 }
 .alert-row:hover { background: #F6FAFD; }
-.alert-row.unread { background: #FFFCF2; }
+.alert-row.unread { background: var(--green-soft); }
 .alert-text { display: flex; flex-direction: column; gap: 2px; flex: 1; }
-.unread-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--gold); margin-top: 5px; }
+.unread-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); margin-top: 5px; }
 
 /* ------------------------------------------------------------------- login */
 .login-shell { display: flex; min-height: 100vh; }
 .login-hero {
-  flex: 1.15; background: linear-gradient(150deg, var(--navy) 0%, var(--navy-dark) 100%);
+  flex: 1.15; background: linear-gradient(155deg, var(--navy) 0%, var(--navy-dark) 55%, #0B3D2A 100%);
   color: #DCE7F0; padding: 54px 46px; display: flex; flex-direction: column; justify-content: center;
 }
 .login-hero .logo-full { width: 320px; max-width: 88%; background: #fff; border-radius: 10px; padding: 12px 16px; }
@@ -348,7 +359,7 @@ ol.conditions li { margin-bottom: 3px; }
 .bar-row > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bar-track { background: var(--line-soft); border-radius: 4px; height: 9px; overflow: hidden; }
 .bar-fill { display: block; height: 100%; background: var(--navy-soft); border-radius: 4px; }
-.bar-fill.gold { background: var(--gold); } .bar-fill.green { background: var(--green); }
+.bar-fill.gold, .bar-fill.green { background: var(--green); }
 
 .nav-backdrop { display: none; }
 
@@ -365,6 +376,26 @@ ol.conditions li { margin-bottom: 3px; }
   .login-shell { flex-direction: column; }
   .login-hero { padding: 30px 22px; }
 }
+
+/* ------------------------------------------------------------------ watermark */
+/*
+ * The mark, ghosted behind the page.
+ *
+ * Fixed rather than absolute so a browser repeats it on every sheet of a long
+ * document, painted over the content rather than under it (the sheets draw
+ * their own white page, and anything underneath would simply be hidden), and
+ * at four to five per cent it tints the paper without competing with a line of
+ * text. It takes no clicks, so nothing on the page becomes harder to use.
+ */
+.watermark {
+  position: fixed; inset: 0; z-index: 9999; pointer-events: none;
+  display: flex; align-items: center; justify-content: center;
+}
+.watermark img {
+  width: 60%; max-width: 130mm; opacity: .055;
+  -webkit-print-color-adjust: exact; print-color-adjust: exact;
+}
+@media print { .watermark img { opacity: .04; } }
 
 /* ================================================================== printing */
 @media print {

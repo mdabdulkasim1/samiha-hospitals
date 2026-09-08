@@ -838,6 +838,33 @@ CREATE TABLE IF NOT EXISTS terms_clauses (
 );
 CREATE INDEX IF NOT EXISTS idx_terms_doc ON terms_clauses(doc_type, sort_order);
 
+/*
+ * How each kind of document is numbered.
+ *
+ * The company's references are not one shape: an LPO reads AKR-FD26-016 and a
+ * sales order AKR-SO-082026-014. Both are already printed on paper suppliers
+ * and clients hold, so the system follows them rather than the other way
+ * round — and the pattern is a record here rather than a constant in the code,
+ * so a series can be changed, or continued from a number already issued,
+ * without a deployment.
+ *
+ * The serial itself still comes from the atomic counter, keyed by whatever
+ * the reset rule makes a series: never, the year, or the month.
+ */
+CREATE TABLE IF NOT EXISTS document_series (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  company_id  INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+  doc_kind    TEXT NOT NULL,               -- purchaseOrder, salesOrder, ...
+  pattern     TEXT NOT NULL,               -- '{company}-FD{yy}-{n:3}'
+  reset_on    TEXT NOT NULL DEFAULT 'yearly'
+                CHECK (reset_on IN ('never','yearly','monthly')),
+  note        TEXT,
+  active      INTEGER NOT NULL DEFAULT 1,
+  updated_by  INTEGER REFERENCES users(id),
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (company_id, doc_kind)
+);
+
 -- Notifications: work arriving at somebody's desk.
 CREATE TABLE IF NOT EXISTS notifications (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,

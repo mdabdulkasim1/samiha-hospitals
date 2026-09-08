@@ -428,6 +428,21 @@ function seed() {
 
   const clauses = require('./clauses-seed').seedClauses(db);
 
+  /*
+   * The reference shapes the company already uses. Written per company so each
+   * of the six can be given its own, and so a series can be changed later
+   * under Masters → Document numbers without touching the code.
+   */
+  const numbering = require('../services/numbering');
+  for (const company of db.prepare('SELECT id, code FROM companies').all()) {
+    for (const kind of numbering.KINDS) {
+      numbering.save(company.id, kind, {
+        pattern: numbering.DEFAULTS[kind].pattern,
+        reset_on: numbering.DEFAULTS[kind].reset_on,
+      });
+    }
+  }
+
   db.prepare('INSERT INTO locations (code, name, address, is_default) VALUES (?, ?, ?, 1)')
     .run('YARD', 'Main Yard', config.company.address);
   db.prepare('INSERT INTO locations (code, name, address, is_default) VALUES (?, ?, ?, 0)')

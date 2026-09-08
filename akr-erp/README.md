@@ -66,7 +66,7 @@ The server says on start-up what is still missing:
 ```
 
 ```bash
-npm test          # 31 tests — the whole trade, both sides, and who may see what
+npm test          # 52 tests — the trade both sides, the desks, the conditions and the references
 npm run db:reset  # wipe and start again
 npm run dev       # auto-restart on file changes
 ```
@@ -175,6 +175,51 @@ The terms are not decoration:
 - **The due date on an invoice is derived from the terms**, both ways, which is what the ageing and
   the payment run read.
 
+## Document references
+
+Every document carries a reference from its own series, so any of them can be found and followed
+years later. The shapes are **the company's own**, because they are already printed on paper that
+suppliers and clients hold:
+
+```
+AKR-FD26-016              AKR-SO-082026-014
+ │   │  │   └── serial     │   │    │     └── serial
+ │   │  └────── year        │   │    └──────── month and year
+ │   └───────── series      │   └───────────── document type
+ └───────────── company     └───────────────── company
+```
+
+Everything else is numbered in the same family — `AKR-QT-082026-004`, `AKR-DN-082026-011`,
+`AKR-INV-082026-009`, `AKR-GRN-082026-003`, `AKR-RV-082026-021`.
+
+The patterns are records, not constants: **Masters → Document numbers** shows every series with the
+next reference it will issue, and an administrator can change the shape or **continue a series from a
+number already issued** — which is what matters when the books move onto this system halfway through
+a year. A pattern is built from `{company}`, `{type}`, `{yy}`, `{yyyy}`, `{mm}`, `{mmyyyy}`,
+`{yyyymm}` and `{n:3}`; anything else prints as it stands, which is how the literal `FD` survives.
+
+A serial only ever moves forward. Winding one back would hand out a reference that is already on a
+document somebody is holding, and two documents with one number is precisely what a reference exists
+to prevent.
+
+### Following one
+
+**Trace a Reference** takes any document number — ours or theirs — and lays out the whole chain,
+oldest first:
+
+```
+08 Sep 2026   Client enquiry        AKR-ENQ-092026-001
+08 Sep 2026   Our quotation         AKR-QT-092026-001     31,550.40
+08 Sep 2026   Client's LPO          AKR-SO-092026-001     31,550.40   their LPO ASC/LPO/2026/0912
+08 Sep 2026   Delivered             AKR-DN-092026-001
+08 Sep 2026   Tax invoice           AKR-INV-092026-001    31,550.40
+08 Sep 2026   They paid             AKR-RV-092026-001     31,550.40   cheque 004521
+```
+
+It works from either end and from either side — search our LPO and you get the supplier's quotation,
+the goods receipt and their invoice; search the client's own LPO number, or a supplier's own invoice
+number, and it finds those too. Part of a number offers the candidates rather than guessing.
+
 ## Terms & conditions
 
 The conditions at the foot of an LPO are not boilerplate — they are what the buyer is relying on when
@@ -280,6 +325,20 @@ A4, on the company's letterhead, with the application title under the document t
 | **Goods Receipt Note** | Accepted and rejected quantities, the supplier's own delivery note reference |
 | **Statement of Account** | Every entry with a running balance, and the ageing underneath |
 
+## How it looks
+
+Dark blue for structure, dark green for what to act on, white for the paper — the three colours of
+the company's own mark. Amber and red survive in one place only: a state the reader must not miss. An
+overdue invoice and a bounced cheque have to look different from everything else, and green on green
+would hide them.
+
+The falcon is ghosted behind every printed page at four to five per cent — enough to tint the paper,
+not enough to compete with a line of text, and repeated on each sheet of a document that runs long.
+
+The mark itself is `public/assets/logo.svg` and `logo-icon.svg`, drawn here as SVG. **Drop the
+company's own artwork over those two files** and the whole system and every printed document picks
+it up; nothing else refers to them.
+
 ## How the code is laid out
 
 ```
@@ -297,6 +356,9 @@ akr-erp/
 │   │   ├── stock.js           the three buckets and the register
 │   │   ├── documents.js       the parts every document shares
 │   │   ├── settlement.js      matching money to invoices
+│   │   ├── clauses.js         the terms & conditions library
+│   │   ├── numbering.js       the company's own reference shapes
+│   │   ├── trace.js           following a reference through the chain
 │   │   └── ledger.js          ledgers, ageing, VAT return, profit
 │   └── routes/                auth, masters, items, partners, purchase, sales, stock, accounts, reports, admin
 ├── public/

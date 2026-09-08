@@ -1,24 +1,53 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 116" role="img" aria-label="AKR General Trading L.L.C">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 210" role="img"
+     aria-label="AKR General Trading LLC">
   <defs>
-    <linearGradient id="wing" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#2E7D4F"/><stop offset="1" stop-color="#17624B"/>
+    <linearGradient id="akr-plume" x1="0.15" y1="0" x2="0.85" y2="1">
+      <stop offset="0"    stop-color="#17607F"/>
+      <stop offset="0.30" stop-color="#1E7FA0"/>
+      <stop offset="0.56" stop-color="#3FA24A"/>
+      <stop offset="0.80" stop-color="#7CC24A"/>
+      <stop offset="1"    stop-color="#F0A81E"/>
+    </linearGradient>
+    <linearGradient id="akr-beak" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F9CB45"/><stop offset="1" stop-color="#E8940F"/>
     </linearGradient>
   </defs>
-  <g transform="translate(8,10)">
-    <circle cx="44" cy="44" r="43" fill="none" stroke="#123A5C" stroke-width="2.5"/>
-    <path d="M20 58c8-22 24-33 46-34-6 5-9 9-11 14 9-3 17-2 24 3-11 1-19 5-25 12-6 7-14 11-24 11-4 0-8-2-10-6z"
-          fill="url(#wing)"/>
-    <path d="M55 22c5 0 9 3 10 8-4-2-8-2-12 0 0-3 1-6 2-8z" fill="#C8912A"/>
-    <circle cx="60" cy="27" r="2.2" fill="#123A5C"/>
-    <path d="M18 66h52l-6 8H24z" fill="#C8912A"/>
+  <g transform="translate(172,2) scale(0.68)">
+  <!-- The head: a full crown that sweeps down and round to the right, with the
+       throat cut away under the beak — the crescent the mark is built on. -->
+  <path d="M92 14c42 0 76 33 76 74 0 20-8 37-21 50-11 11-17 22-19 36-2 12-12 20-25 18
+           -30-4-56-30-62-62C33 92 30 78 32 64 38 30 62 14 92 14Z"
+        fill="url(#akr-plume)"/>
+  <!-- The throat: the notch that turns a head into a falcon. -->
+  <path d="M118 74c14 4 26 12 33 24-13 2-24 8-31 18-8 11-13 24-14 38-9-10-13-23-12-37
+           1-18 10-33 24-43Z" fill="#F3F7FA" fill-opacity="0"/>
+
+  <!-- Feathers, laid over the crown. -->
+  <g fill="none" stroke="#0F5570" stroke-opacity=".34" stroke-width="4.5" stroke-linecap="round">
+    <path d="M62 48c9-15 23-24 39-26"/>
+    <path d="M50 76c5-19 16-33 32-40"/>
+    <path d="M45 108c-3-22 3-39 14-51"/>
   </g>
-  <g transform="translate(108,0)">
-    <text x="0" y="52" font-family="Georgia, 'Times New Roman', serif" font-size="40" font-weight="700"
-          letter-spacing="1" fill="#123A5C">AKR</text>
-    <text x="0" y="78" font-family="Georgia, 'Times New Roman', serif" font-size="21" font-weight="600"
-          letter-spacing="2.2" fill="#123A5C">GENERAL TRADING L.L.C</text>
-    <text x="0" y="99" font-family="Georgia, serif" font-size="12" font-style="italic" fill="#2E7D4F">
-      Trusted Trading Partner for Valves, Fittings &amp; Construction Materials
-    </text>
+  <g fill="none" stroke="#2C7A2F" stroke-opacity=".28" stroke-width="4.5" stroke-linecap="round">
+    <path d="M54 142c-5-17-1-32 8-44"/>
+    <path d="M75 164c-7-15-6-30 1-43"/>
   </g>
+
+  <!-- The eye: a dark almond, a red iris, and the glint that makes it alive. -->
+  <path d="M104 48c13-8 29-5 35 5-7 11-23 15-36 9-5-3-5-11 1-14Z" fill="#16283A"/>
+  <circle cx="119" cy="54" r="9" fill="#E01B1B"/>
+  <circle cx="122" cy="50.5" r="3" fill="#fff" fill-opacity=".85"/>
+
+  <!-- The beak: big, hooked, and the loudest thing on the mark. -->
+  <path d="M136 40c26 1 47 10 60 25-16 3-29 10-38 20 6 3 10 7 13 12-14 8-30 10-46 6
+           9-9 14-19 14-30 0-12-2-22-7-30 1-2 2-3 4-3Z" fill="url(#akr-beak)"/>
+  <path d="M158 85c-13 8-28 10-43 7 15 1 29-2 41-8Z" fill="#B86F08" fill-opacity=".5"/>
+  <path d="M136 40c26 1 47 10 60 25-19-9-40-14-62-14 1-4 1-8 2-11Z" fill="#F9D264" fill-opacity=".55"/>
+  </g>
+  <text x="280" y="164" text-anchor="middle"
+        font-family="Arial Black, Arial, Helvetica, sans-serif" font-size="66" font-weight="900"
+        letter-spacing="2" fill="#1E3A5F">AKR</text>
+  <text x="280" y="194" text-anchor="middle"
+        font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="700"
+        letter-spacing="3.6" fill="#1E3A5F">GENERAL TRADING LLC</text>
 </svg>

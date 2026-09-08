@@ -37,6 +37,7 @@
     ] },
     { group: 'Accounts & setup', items: [
       { id: 'partners', label: 'Suppliers & Clients', icon: '☺', roles: '*' },
+      { id: 'trace', label: 'Trace a Reference', icon: '⌕', roles: '*' },
       { id: 'reports', label: 'Reports', icon: '◔', roles: '*' },
       // The key account manager keeps the terms & conditions, so Masters is
       // open to them too — the other tabs there are read-only for anyone but

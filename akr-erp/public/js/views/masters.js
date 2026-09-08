@@ -11,6 +11,7 @@
     ['subgroups', 'Types'],
     ['terms', 'Payment terms'],
     ['conditions', 'Terms & conditions'],
+    ['numbers', 'Document numbers'],
     ['locations', 'Locations'],
     ['heads', 'Expense heads'],
   ];
@@ -114,6 +115,7 @@
           return;
         }
         if (tab === 'conditions') { paintConditions(pane); return; }
+        if (tab === 'numbers') { paintNumbers(pane, isAdmin); return; }
         if (tab === 'locations') {
           APP.actions(isAdmin ? [{ id: 'add', label: '+ Location', kind: 'gold', onClick: () => editLocation() }] : []);
           pane.innerHTML = `<div class="card">${UI.table([
@@ -275,6 +277,97 @@
         if (clause) await API.patch(`/api/masters/terms/${clause.id}`, v);
         else await API.post('/api/masters/terms', v);
         UI.ok('Saved.');
+        APP.reload();
+      },
+    });
+  }
+
+  /*
+   * How each document is referenced.
+   *
+   * The company's own shapes — AKR-FD26-016 for an LPO, AKR-SO-082026-014 for a
+   * client's order — are already on paper that suppliers and clients hold, so
+   * they are the ones the system follows. A series can also be picked up from a
+   * number already issued, which is what matters when the books move onto this
+   * system halfway through a year.
+   */
+  async function paintNumbers(pane, isAdmin) {
+    APP.actions([]);
+    pane.innerHTML = UI.loading();
+    const data = await API.get('/api/masters/document-numbers');
+    pane.innerHTML = `
+      <div class="card">
+        <h3>Document numbers — ${esc(data.company.code)}</h3>
+        <div class="card-sub">Every document carries a reference from its own series, so any of
+          them can be traced back years later. ${isAdmin ? 'Click a row to change its shape or to '
+          + 'continue it from a number already issued.' : 'An administrator keeps these.'}</div>
+        <div class="alert info small">
+          ${Object.entries(data.tokens).map(([k, note]) =>
+            `<div><code>${esc(k)}</code> — ${esc(note)}</div>`).join('')}
+          <div class="mt">Anything else in the pattern prints as it stands — which is how the
+            <code>FD</code> in <b>AKR-FD26-016</b> survives.</div>
+        </div>
+        <div id="series-rows"></div>
+      </div>`;
+
+    const box = document.getElementById('series-rows');
+    box.innerHTML = UI.table([
+      { label: 'Document', render: (r) => `<b>${esc(r.label)}</b>
+          <div class="muted small mono">${esc(r.pattern)}</div>` },
+      { label: 'Next reference', render: (r) => `<b class="mono">${esc(r.next_reference)}</b>` },
+      { label: 'Issued so far', num: true, render: (r) => UI.num(r.issued) },
+      { label: 'Restarts', render: (r) => ({ yearly: 'each January', monthly: 'each month',
+        never: 'never' }[r.reset_on]) },
+      { label: '', render: (r) => (r.is_default ? UI.badge('built-in default') : '') },
+    ], data.rows, { onRow: isAdmin });
+    if (isAdmin) UI.bindRows(box, data.rows, (row) => editSeries(row, data));
+  }
+
+  function editSeries(row, data) {
+    UI.modal({
+      title: row.label,
+      body: `<form id="n-form">
+        ${UI.field({ name: 'pattern', label: 'Pattern', required: true, value: row.pattern,
+          hint: 'Must contain {n} — without a serial every document would read the same.' })}
+        <div class="alert ok small" id="preview">Next reference: <b class="mono">${esc(row.next_reference)}</b></div>
+        ${UI.field({ name: 'reset_on', label: 'The serial restarts', value: row.reset_on,
+          options: data.resets })}
+        ${UI.field({ name: 'next_number', label: 'Continue from this number', type: 'number', min: 1,
+          value: row.next_number,
+          hint: 'Set this to carry on from a reference already issued on paper. It only ever moves '
+            + 'forward — handing out a number twice is the one thing a reference must never do.' })}
+        ${UI.field({ name: 'note', label: 'Note', value: row.note || '' })}
+      </form>`,
+      footer: `<button class="btn ghost" data-act="__close">Cancel</button>
+               <button class="btn" data-act="save">Save</button>`,
+      onMount(modal) {
+        const patternEl = modal.querySelector('[name=pattern]');
+        const serialEl = modal.querySelector('[name=next_number]');
+        const out = modal.querySelector('#preview');
+        let timer = null;
+        const refresh = async () => {
+          try {
+            const res = await API.get('/api/masters/document-numbers/preview' + API.qs({
+              pattern: patternEl.value, doc_kind: row.doc_kind, serial: serialEl.value,
+            }));
+            out.className = 'alert ok small';
+            out.innerHTML = `Next reference: <b class="mono">${UI.esc(res.example)}</b>`;
+          } catch (err) {
+            out.className = 'alert danger small';
+            out.textContent = err.message;
+          }
+        };
+        for (const el of [patternEl, serialEl]) {
+          el.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(refresh, 250); });
+        }
+      },
+      async onAction(act, modal) {
+        if (act !== 'save') return;
+        const form = modal.querySelector('#n-form');
+        if (!form.reportValidity()) return 'keep';
+        const res = await API.put(`/api/masters/document-numbers/${row.doc_kind}`, UI.formValues(form));
+        if (res.carried && !res.carried.ok) UI.warn(res.carried.message);
+        else UI.ok(`Saved. The next one will be ${res.next_reference}.`);
         APP.reload();
       },
     });

@@ -39,9 +39,12 @@ const pad = (n, width) => String(n).padStart(width, '0');
 const year = (d = new Date()) => String(d.getFullYear());
 
 /*
- * What each document is called on paper. The company writes its references as
- * COMPANY/TYPE/YEAR/SERIAL — AKR/LPO/2026/0042 — which says at a glance whose
- * document it is, what kind, and from which year's series.
+ * What each document is called on paper.
+ *
+ * The shapes themselves live in src/services/numbering.js, because the company
+ * already has its own — AKR-FD26-016 for an LPO, AKR-SO-082026-014 for a sales
+ * order — and they are kept as records that can be changed rather than as
+ * constants in the code.
  */
 const DOC_TYPES = {
   enquiry:          'ENQ',
@@ -61,19 +64,19 @@ const DOC_TYPES = {
 };
 
 /**
- * The next number in a company's series for a document type.
+ * The next reference in a company's series for a document type.
  *
- * The series is per company and per year, so the six group companies never
- * share a number and January starts at one again — which is how the ledgers
- * are filed and how the auditor expects to find them.
+ * Every human-facing number in the system comes through here, so that one
+ * place decides what a reference looks like and one atomic counter decides
+ * what number it carries.
  */
-function docNo(kind, companyCode, when = new Date()) {
-  const type = DOC_TYPES[kind];
-  if (!type) throw new Error(`Unknown document type: ${kind}`);
+function docNo(kind, companyCode, when = new Date(), companyId = null) {
+  const numbering = require('../services/numbering');
   const code = String(companyCode || 'AKR').toUpperCase();
-  const y = year(when);
-  const serial = nextSeq(`${code}-${type}-${y}`);
-  return `${code}/${type}/${y}/${pad(serial, 4)}`;
+  const id = companyId
+    || (database().prepare('SELECT id FROM companies WHERE upper(code) = ?').get(code) || {}).id
+    || null;
+  return numbering.next(id, code, kind, when);
 }
 
 /**

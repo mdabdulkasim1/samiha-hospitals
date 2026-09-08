@@ -357,6 +357,87 @@ router.post('/terms/reorder', keeper, wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// ---------------------------------------------------------- document numbers
+/*
+ * The reference each kind of document carries.
+ *
+ * These are on paper that suppliers and clients hold, so they are treated as
+ * the company's, not the system's: the pattern is editable, and a series can be
+ * continued from a number already issued rather than starting again at one.
+ */
+const numbering = require('../services/numbering');
+
+router.get('/document-numbers', wrap(async (req, res) => {
+  const company = req.query.company_id
+    ? db.prepare('SELECT * FROM companies WHERE id = ?').get(req.query.company_id)
+    : db.prepare('SELECT * FROM companies WHERE is_default = 1').get();
+  if (!company) throw notFound('No such company.');
+  res.json({
+    company: { id: company.id, code: company.code, name: company.name },
+    rows: numbering.listFor(company),
+    tokens: {
+      '{company}': "the company code — e.g. AKR",
+      '{type}': 'the document short code — LPO, SO, INV',
+      '{yy}': 'the year, two digits — 26',
+      '{yyyy}': 'the year, four digits — 2026',
+      '{mm}': 'the month — 08',
+      '{mmyyyy}': 'month and year — 082026',
+      '{yyyymm}': 'year and month — 202608',
+      '{n:3}': 'the serial, padded to three digits — 016',
+    },
+    resets: [
+      { value: 'yearly', label: 'Start again at 1 each January' },
+      { value: 'monthly', label: 'Start again at 1 each month' },
+      { value: 'never', label: 'Keep counting for ever' },
+    ],
+  });
+}));
+
+router.put('/document-numbers/:kind', admin, wrap(async (req, res) => {
+  const kind = req.params.kind;
+  if (!numbering.KINDS.includes(kind)) throw badRequest(`Unknown document kind: ${kind}`);
+  const company = req.body.company_id
+    ? db.prepare('SELECT * FROM companies WHERE id = ?').get(req.body.company_id)
+    : db.prepare('SELECT * FROM companies WHERE is_default = 1').get();
+  if (!company) throw notFound('No such company.');
+
+  const pattern = v.str(req.body.pattern);
+  if (!pattern) throw badRequest('A series needs a pattern.');
+  if (!/\{n(?::\d+)?\}/.test(pattern)) {
+    throw badRequest('A pattern must contain {n} — without a serial, every document would have the same reference.');
+  }
+  numbering.save(company.id, kind, {
+    pattern,
+    reset_on: v.oneOf(req.body.reset_on, ['never', 'yearly', 'monthly'], 'reset_on') || 'yearly',
+    note: v.str(req.body.note),
+    userId: req.user.id,
+  });
+
+  // Continuing from a number already on paper.
+  let carried = null;
+  if (req.body.next_number !== undefined && req.body.next_number !== '') {
+    carried = numbering.setNext(company.code, kind, req.body.next_number, { companyId: company.id });
+  }
+  audit.log(req, 'document_series.updated', 'document_series', kind,
+    { company: company.code, pattern, next: req.body.next_number });
+
+  const row = numbering.listFor(company).find((r) => r.doc_kind === kind);
+  res.json({ ...row, carried });
+}));
+
+/** What a pattern would produce, before it is saved. */
+router.get('/document-numbers/preview', wrap(async (req, res) => {
+  const company = db.prepare('SELECT * FROM companies WHERE is_default = 1').get();
+  const pattern = v.str(req.query.pattern) || '{company}-{type}-{yyyy}-{n:4}';
+  res.json({
+    example: numbering.render(pattern, {
+      companyCode: v.str(req.query.company_code) || (company ? company.code : 'AKR'),
+      kind: v.str(req.query.doc_kind) || 'purchaseOrder',
+      serial: v.int(req.query.serial, 16),
+    }),
+  });
+}));
+
 // ----------------------------------------------------------------- locations
 router.get('/locations', wrap(async (_req, res) => {
   res.json({ rows: db.prepare('SELECT * FROM locations ORDER BY is_default DESC, name').all() });
