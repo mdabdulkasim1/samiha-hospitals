@@ -46,6 +46,25 @@ Sign in with any of the desks below and the starter password **`akr@2026`**.
 > **Change every one of those passwords before this touches real trading data,** and set a real
 > `SESSION_SECRET` and `COMPANY_TRN` in `.env`. A tax invoice without a TRN is not a valid one.
 
+### Setting the company's own details
+
+`COMPANY_TRN`, the address, the telephone and the bank details in `.env` are copied onto the default
+company when the database is first seeded — and on every boot after that they fill in any field the
+company has still left blank. So a TRN added to `.env` a week later still reaches the invoices; there
+is no need to reseed. Anything already entered under **Masters → Companies** is never overwritten by
+`.env`, because once a detail has been typed in the app it belongs to the company rather than to a
+file on the server, and a stale `.env` must not be able to put an old TRN back on a live tax invoice.
+
+The server says on start-up what is still missing:
+
+```
+  ▸ Company:     AKR GENERAL TRADING L.L.C
+  ▸ TRN:         (not set)
+
+  ⚠ A tax invoice still needs: TRN, bank details.
+    Set them in .env and restart, or under Masters → Companies.
+```
+
 ```bash
 npm test          # 31 tests — the whole trade, both sides, and who may see what
 npm run db:reset  # wipe and start again

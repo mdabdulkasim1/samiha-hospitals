@@ -357,10 +357,10 @@ const CLIENTS = [
 // =============================================================================
 function seed() {
   const insertCompany = db.prepare(`
-    INSERT INTO companies (code, name, legal_name, trn, address, phone, email, website, currency,
-      vat_percent, is_default)
-    VALUES (@code, @name, @legal_name, @trn, @address, @phone, @email, @website, @currency,
-      @vat_percent, @is_default)`);
+    INSERT INTO companies (code, name, legal_name, trn, address, phone, email, website,
+      bank_name, bank_account, iban, swift, currency, vat_percent, is_default)
+    VALUES (@code, @name, @legal_name, @trn, @address, @phone, @email, @website,
+      @bank_name, @bank_account, @iban, @swift, @currency, @vat_percent, @is_default)`);
 
   // The trading company, and five more slots for the rest of the group. They
   // are deliberately named as placeholders: nobody should be issuing an
@@ -374,6 +374,12 @@ function seed() {
     phone: config.company.phone,
     email: config.company.email,
     website: config.company.website,
+    // The bank block printed at the foot of a tax invoice, so a client knows
+    // where to send the money without ringing to ask.
+    bank_name: config.company.bankName || null,
+    bank_account: config.company.bankAccount || null,
+    iban: config.company.iban || null,
+    swift: config.company.swift || null,
     currency: config.vat.currency,
     vat_percent: config.vat.percent,
     is_default: 1,
@@ -383,6 +389,7 @@ function seed() {
       code: `CO${n}`,
       name: `Group Company ${n} — rename under Masters → Companies`,
       legal_name: null, trn: null, address: null, phone: null, email: null, website: null,
+      bank_name: null, bank_account: null, iban: null, swift: null,
       currency: config.vat.currency, vat_percent: config.vat.percent, is_default: 0,
     });
   }

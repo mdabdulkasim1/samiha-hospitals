@@ -117,13 +117,30 @@ function seedIfEmpty() {
 
 if (require.main === module) {
   seedIfEmpty();
+
+  /*
+   * Anything set in .env that the company has not filled in for itself is
+   * copied onto the default company, so a TRN added after the first run still
+   * reaches the invoices. Nothing already entered is touched.
+   */
+  const filled = require('./db/company').applyEnvDefaults();
+  if (filled.length) console.log(`[setup] Filled from .env: ${filled.join(', ')}.`);
+  const gaps = require('./db/company').missingForInvoice();
   const server = app.listen(config.port, () => {
     console.log(`\n  ${config.company.name} — ERP`);
     console.log(`  ▸ http://localhost:${config.port}`);
     console.log(`  ▸ environment: ${config.nodeEnv}`);
     console.log(`  ▸ database:    ${config.dbFile}`);
     console.log(`  ▸ VAT:         ${config.vat.percent}%  ·  currency ${config.vat.currency}`);
-    console.log(`  ▸ TRN:         ${config.company.trn || '(not set — a tax invoice needs one)'}\n`);
+    const company = db.prepare('SELECT * FROM companies WHERE is_default = 1').get() || {};
+    console.log(`  ▸ Company:     ${company.name || config.company.name}`);
+    console.log(`  ▸ TRN:         ${company.trn || '(not set)'}`);
+    if (gaps.length) {
+      console.warn(`\n  ⚠ A tax invoice still needs: ${gaps.join(', ')}.`);
+      console.warn('    Set them in .env and restart, or under Masters → Companies.\n');
+    } else {
+      console.log('');
+    }
   });
   startBackgroundJobs();
 
