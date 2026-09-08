@@ -182,12 +182,19 @@ years later. The shapes are **the company's own**, because they are already prin
 suppliers and clients hold:
 
 ```
-AKR-FD26-016              AKR-SO-082026-014
- │   │  │   └── serial     │   │    │     └── serial
- │   │  └────── year        │   │    └──────── month and year
- │   └───────── series      │   └───────────── document type
- └───────────── company     └───────────────── company
+AKR-FD26-016                     AKR-SO-082026-014
+ │   │  │   └── serial, from 1    │   │    │     └── serial, from 1 each month
+ │   │  │       each January      │   │    └──────── month and year
+ │   │  └────── year              │   └───────────── document type
+ │   └───────── FD — Fabrication  └───────────────── company
+ │              Division
+ └───────────── company
 ```
+
+The LPO counts through the year; the sales order counts within its month, because the month is in
+the reference and a number that carries one but counts through the year invites the reader to work
+out which it means. Both are one click to change under **Masters → Document numbers**, and the
+meaning of `FD` is recorded against the series there, so nobody has to ask what it stands for.
 
 Everything else is numbered in the same family — `AKR-QT-082026-004`, `AKR-DN-082026-011`,
 `AKR-INV-082026-009`, `AKR-GRN-082026-003`, `AKR-RV-082026-021`.

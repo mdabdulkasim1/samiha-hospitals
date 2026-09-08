@@ -439,6 +439,7 @@ function seed() {
       numbering.save(company.id, kind, {
         pattern: numbering.DEFAULTS[kind].pattern,
         reset_on: numbering.DEFAULTS[kind].reset_on,
+        note: numbering.DEFAULTS[kind].note || null,
       });
     }
   }

@@ -313,7 +313,8 @@
     const box = document.getElementById('series-rows');
     box.innerHTML = UI.table([
       { label: 'Document', render: (r) => `<b>${esc(r.label)}</b>
-          <div class="muted small mono">${esc(r.pattern)}</div>` },
+          <div class="muted small mono">${esc(r.pattern)}</div>
+          ${r.note ? `<div class="muted small">${esc(r.note)}</div>` : ''}` },
       { label: 'Next reference', render: (r) => `<b class="mono">${esc(r.next_reference)}</b>` },
       { label: 'Issued so far', num: true, render: (r) => UI.num(r.issued) },
       { label: 'Restarts', render: (r) => ({ yearly: 'each January', monthly: 'each month',

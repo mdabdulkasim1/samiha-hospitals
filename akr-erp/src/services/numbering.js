@@ -62,17 +62,31 @@ const DOC_LABELS = {
 
 /*
  * The company's own two shapes, and the rest of the documents kept in the
- * family of whichever of them they belong to. The LPO series carries the
- * literal "FD"; it is a plain part of the pattern, so it can be changed under
- * Masters → Document numbers without anybody touching this file.
+ * family of whichever of them they belong to.
+ *
+ * The LPO series carries the literal "FD" — the Fabrication Division — and the
+ * meaning is written down here and on the series itself, because a two-letter
+ * code on a document nobody can explain a year later is how a reference stops
+ * being useful. It is a plain part of the pattern, so if another division ever
+ * issues its own orders the code can be changed under Masters → Document
+ * numbers without anybody touching this file.
+ *
+ * The sales-order serial restarts each month, because the month is in the
+ * reference: AKR-SO-082026-014 is the fourteenth order of August 2026, and a
+ * reference that carries a month but counts through the year invites the
+ * reader to work out which it means.
  */
 const DEFAULTS = {
-  purchaseOrder: { pattern: '{company}-FD{yy}-{n:3}', reset_on: 'yearly' },
+  purchaseOrder: {
+    pattern: '{company}-FD{yy}-{n:3}',
+    reset_on: 'yearly',
+    note: 'FD — Fabrication Division',
+  },
   supplierQuotation: { pattern: '{company}-SQ-{mmyyyy}-{n:3}', reset_on: 'yearly' },
   grn: { pattern: '{company}-GRN-{mmyyyy}-{n:3}', reset_on: 'yearly' },
   supplierInvoice: { pattern: '{company}-BILL-{mmyyyy}-{n:3}', reset_on: 'yearly' },
 
-  salesOrder: { pattern: '{company}-SO-{mmyyyy}-{n:3}', reset_on: 'yearly' },
+  salesOrder: { pattern: '{company}-SO-{mmyyyy}-{n:3}', reset_on: 'monthly' },
   enquiry: { pattern: '{company}-ENQ-{mmyyyy}-{n:3}', reset_on: 'yearly' },
   salesQuotation: { pattern: '{company}-QT-{mmyyyy}-{n:3}', reset_on: 'yearly' },
   deliveryNote: { pattern: '{company}-DN-{mmyyyy}-{n:3}', reset_on: 'yearly' },
@@ -94,8 +108,8 @@ function seriesFor(companyId, kind) {
     ? db.prepare('SELECT * FROM document_series WHERE company_id = ? AND doc_kind = ? AND active = 1')
       .get(companyId, kind)
     : null;
-  return row || { ...(DEFAULTS[kind] || { pattern: '{company}-{type}-{yyyy}-{n:4}', reset_on: 'yearly' }),
-    doc_kind: kind, company_id: companyId, note: null, fallback: true };
+  const fallback = DEFAULTS[kind] || { pattern: '{company}-{type}-{yyyy}-{n:4}', reset_on: 'yearly' };
+  return row || { note: null, ...fallback, doc_kind: kind, company_id: companyId, fallback: true };
 }
 
 /**

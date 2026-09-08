@@ -83,6 +83,36 @@ test('a series is gap-free and never repeats', async () => {
   }
 });
 
+test('the sales-order serial restarts each month, the LPO each year', async () => {
+  const series = await admin.get('/api/masters/document-numbers');
+  const so = series.rows.find((r) => r.doc_kind === 'salesOrder');
+  const lpo = series.rows.find((r) => r.doc_kind === 'purchaseOrder');
+  assert.equal(so.reset_on, 'monthly', 'the month is in the reference, so it counts within the month');
+  assert.equal(lpo.reset_on, 'yearly');
+  assert.match(lpo.note || '', /Fabrication Division/, 'and FD is written down, not left as a riddle');
+});
+
+test('two months of sales orders each count from one', async () => {
+  // Straight at the numbering, because the API can only issue for today.
+  const numbering = require('../src/services/numbering');
+  const august = new Date('2027-08-15T00:00:00Z');
+  const september = new Date('2027-09-15T00:00:00Z');
+
+  const first = numbering.next(null, 'AKR', 'salesOrder', august);
+  const second = numbering.next(null, 'AKR', 'salesOrder', august);
+  const third = numbering.next(null, 'AKR', 'salesOrder', september);
+
+  assert.equal(first, 'AKR-SO-082027-001');
+  assert.equal(second, 'AKR-SO-082027-002');
+  assert.equal(third, 'AKR-SO-092027-001', 'September starts again at one');
+
+  // The LPO, counting through its year, does not.
+  const janLpo = numbering.next(null, 'AKR', 'purchaseOrder', new Date('2027-01-10T00:00:00Z'));
+  const junLpo = numbering.next(null, 'AKR', 'purchaseOrder', new Date('2027-06-10T00:00:00Z'));
+  assert.equal(janLpo, 'AKR-FD27-001');
+  assert.equal(junLpo, 'AKR-FD27-002', 'the same series runs through the year');
+});
+
 test('a series can be continued from a number already on paper', async () => {
   const saved = await admin.raw('PUT', '/api/masters/document-numbers/purchaseOrder', {
     pattern: `{company}-FD{yy}-{n:3}`, reset_on: 'yearly', next_number: 200,
