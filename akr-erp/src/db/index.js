@@ -45,6 +45,8 @@ function migrate() {
   // Indexed here rather than in the schema: on a database created before the
   // column existed, the schema runs before the column is added.
   db.exec('CREATE INDEX IF NOT EXISTS idx_enquiries_side ON enquiries(side, status)');
+  // The working behind a quoted rate, on the line it belongs to.
+  ensureColumn('sales_quotation_items', 'cost_build', 'TEXT');
   return db;
 }
 

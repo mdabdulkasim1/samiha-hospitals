@@ -308,6 +308,9 @@ CREATE TABLE IF NOT EXISTS supplier_quotation_items (
   vat_amount     REAL NOT NULL DEFAULT 0,
   total          REAL NOT NULL DEFAULT 0,
   lead_days      INTEGER NOT NULL DEFAULT 0,
+  -- How the rate was arrived at: the maker's price and every charge on top of
+  -- it, as JSON. The sales desk's working, kept — and never printed.
+  cost_build     TEXT,
   remarks        TEXT
 );
 

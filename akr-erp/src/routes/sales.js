@@ -8,6 +8,7 @@ const v = require('../lib/validate');
 const { wrap, badRequest, notFound, conflict } = require('../lib/http');
 const docs = require('../services/documents');
 const enquiries = require('../services/enquiries');
+const costing = require('../services/costing');
 const pricing = require('../services/pricing');
 const terms = require('../services/terms');
 const stock = require('../services/stock');
@@ -80,6 +81,24 @@ function clientEnquiry(given, quotationId) {
   return q ? q.enquiry_id || null : null;
 }
 
+// ============================================================ the rate builder
+/*
+ * What a rate is made of.
+ *
+ * The sales desk works a selling rate up from the manufacturer's price:
+ * shipping, customs duty, the freight, an allowance for risk, the bank's
+ * charge, and then the margin. This does that arithmetic — the same code that
+ * stores it on the line, so the figure on the screen and the figure kept
+ * against the quotation can never disagree — and none of it is printed.
+ */
+router.get('/costing/charges', wrap(async (_req, res) => {
+  res.json({ suggested: costing.SUGGESTED, bases: costing.BASES });
+}));
+
+router.post('/costing', seller, wrap(async (req, res) => {
+  res.json(costing.build(req.body || {}));
+}));
+
 // ============================================================ our quotations
 const SQ_SELECT = `
   SELECT q.*, p.name AS client_name, p.code AS client_code, p.trn AS client_trn,
@@ -101,6 +120,13 @@ function screenQuote(user, row, items) {
   if (auth.seesCost(user)) return { row, items };
   if (row) { row.cost_total = null; row.margin = null; row.margin_percent = null; }
   for (const i of items || []) i.cost_price = null;
+  /*
+   * The rate build-up stays, deliberately. What is withheld from a sales
+   * officer is what the manufacturer charged us — the cost carried on the item
+   * master and behind the margin. The build-up is the desk's own working on
+   * this quotation, typed by them to arrive at a rate, and taking it away
+   * would leave them unable to read back the figure they are about to quote.
+   */
   return { row, items };
 }
 
@@ -135,6 +161,12 @@ router.get('/quotations/:id', wrap(async (req, res) => {
       LEFT JOIN applications a ON a.id = i.application_id
      WHERE i.quotation_id = ? ORDER BY i.line_no`).all(row.id);
 
+  for (const line of items) {
+    // Worked out again on the way out rather than stored as an answer: if the
+    // arithmetic is ever corrected, every quotation reads correctly with it.
+    line.cost_build = line.cost_build
+      ? costing.build({ ...JSON.parse(line.cost_build), qty: line.qty }) : null;
+  }
   const margin = pricing.margin(row.subtotal - row.discount, row.cost_total);
   screenQuote(req.user, row, items);
   res.json({
@@ -302,10 +334,10 @@ router.post('/quotations/:id/revise', seller, wrap(async (req, res) => {
     for (const i of items) {
       db.prepare(`INSERT INTO sales_quotation_items (quotation_id, line_no, item_id, item_code,
           description, application_id, qty, uom, cost_price, unit_price, discount, taxable,
-          vat_percent, vat_amount, total, lead_days, remarks)
+          vat_percent, vat_amount, total, lead_days, cost_build, remarks)
         VALUES (@quotation_id, @line_no, @item_id, @item_code, @description, @application_id, @qty,
           @uom, @cost_price, @unit_price, @discount, @taxable, @vat_percent, @vat_amount, @total,
-          @lead_days, @remarks)`).run({ ...i, id: undefined, quotation_id: newId });
+          @lead_days, @cost_build, @remarks)`).run({ ...i, id: undefined, quotation_id: newId });
     }
     db.prepare("UPDATE sales_quotations SET status = 'expired' WHERE id = ? AND status != 'converted'").run(row.id);
     return { id: newId, quoteNo, company };

@@ -534,6 +534,37 @@ which is how it is entered and how the bank sees it. A month showing sales but n
 flagged as one somebody has not finished entering, rather than being read as an unusually good
 month.
 
+## Building a rate
+
+A rate quoted to a client is not the manufacturer's price. It is that price plus what it costs to
+land the material, and then the margin. On a quotation line, **build the rate** opens the working:
+
+```
+  Manufacturer's material rate                        500.00 per unit
++ Sea cargo             lump sum for the line   1,200.00  →  120.00
++ Custom duty           % of the material rate         5  →   25.00
++ Risk charge           % of the running total         2  →   12.90
++ Bank charge           % of the running total       1.5  →    9.87
++ Inland transport      amount per unit               12  →   12.00
+= Landed cost, per unit                             679.77
++ Profit @ 15%                                      101.97
+= Rate to quote                                     781.74      margin 13.04%
+```
+
+The four ways a charge can be reckoned are there because they are not reckoned the same way: duty is
+a percentage of the material's value, a bank charge a percentage of the running total, sea freight a
+lump sum for the shipment, inland transport so much a piece. **The order matters** — a charge on the
+running total counts everything listed above it. Add whatever else a job carries with *+ Add a
+charge*; the six above are only the ones this trade meets most often.
+
+*Use this rate* puts the rate on the line and the landed cost behind it, so the margin on the
+quotation is read against what the goods will actually have cost. The working is kept on the line,
+comes through a revision, and is **worked out again when it is read** rather than stored as an
+answer.
+
+**None of it is printed.** The client's quotation shows the rate and nothing behind it — which is
+what lets the build-up hold what it holds.
+
 ## The documents it prints
 
 A4, on the company's letterhead, with the application title under the document title:

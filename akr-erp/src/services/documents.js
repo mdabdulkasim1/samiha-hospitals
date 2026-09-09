@@ -3,6 +3,7 @@ const { db } = require('../db');
 const v = require('../lib/validate');
 const { badRequest, notFound } = require('../lib/http');
 const pricing = require('./pricing');
+const costing = require('./costing');
 const config = require('../config');
 
 /*
@@ -66,6 +67,14 @@ function buildLine(raw, index, { side = 'sell', vatPercent = config.vat.percent 
       ? v.money(raw.cost_price !== undefined ? raw.cost_price : (item ? item.cost_price : 0))
       : 0,
     lead_days: v.int(raw.lead_days, item ? item.lead_time_days : 0),
+    /*
+     * The working behind the rate, where the desk built one: the maker's price
+     * and every charge on top of it. It is kept on the line and shown back on
+     * the screen — and it goes nowhere near the printed quotation, which is the
+     * whole point of it being here rather than on a piece of paper in a drawer.
+     */
+    cost_build: side === 'sell' && raw.cost_build
+      ? JSON.stringify(costing.normalise(raw.cost_build)) : null,
     remarks: v.str(raw.remarks),
     ...priced,
   };
@@ -121,7 +130,7 @@ function insertLines(table, foreignKey, docId, lines, columns) {
 const LINE_COLUMNS = {
   quotationSell: ['item_id', 'item_code', 'description', 'application_id', 'qty', 'uom',
     'cost_price', 'unit_price', 'discount', 'taxable', 'vat_percent', 'vat_amount', 'total',
-    'lead_days', 'remarks'],
+    'lead_days', 'cost_build', 'remarks'],
   quotationBuy: ['item_id', 'item_code', 'description', 'application_id', 'qty', 'uom',
     'unit_price', 'discount', 'taxable', 'vat_percent', 'vat_amount', 'total', 'lead_days', 'remarks'],
   purchaseOrder: ['item_id', 'item_code', 'description', 'application_id', 'qty', 'uom',

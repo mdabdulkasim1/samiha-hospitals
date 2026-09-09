@@ -50,7 +50,8 @@
 
     function blank() {
       return { item_id: null, item_code: '', description: '', application_id: '', qty: 1,
-        uom: 'NOS', unit_price: 0, cost_price: 0, discount_percent: 0, remarks: '' };
+        uom: 'NOS', unit_price: 0, cost_price: 0, discount_percent: 0, remarks: '',
+        cost_build: null };
     }
     function normalise(l) {
       return {
@@ -68,6 +69,15 @@
           ? Number(l.discount_percent) || 0
           : (l.qty && l.unit_price ? r2((Number(l.discount) || 0) / (l.qty * l.unit_price) * 100) : 0),
         remarks: l.remarks || '',
+        // How the rate was arrived at, where somebody built one. Internal: it
+        // is never printed and never leaves this grid except onto the line.
+        cost_build: l.cost_build && l.cost_build.components
+          ? { material: l.cost_build.material_rate !== undefined
+                ? l.cost_build.material_rate : l.cost_build.material,
+              profit_percent: l.cost_build.profit_percent || 0,
+              components: (l.cost_build.components || l.cost_build.steps || [])
+                .map((c) => ({ label: c.label, basis: c.basis, value: c.value })) }
+          : null,
       };
     }
 
@@ -118,7 +128,12 @@
           <td><input class="qty" type="number" step="0.001" min="0" data-f="qty" value="${row.qty}"></td>
           <td><input style="width:74px" data-f="uom" value="${esc(row.uom)}"></td>
           ${state.showCost ? `<td><input class="rate" type="number" step="0.01" min="0" data-f="cost_price" value="${row.cost_price}"></td>` : ''}
-          <td><input class="rate" type="number" step="0.01" min="0" data-f="unit_price" value="${row.unit_price}"></td>
+          <td>
+            <input class="rate" type="number" step="0.01" min="0" data-f="unit_price" value="${row.unit_price}">
+            ${state.side === 'sell' && !readonly ? `<button type="button" class="link-btn small"
+              data-build="${i}" title="Work this rate out from the maker's price and the charges on it"
+              >${row.cost_build ? 'rate built ✎' : 'build the rate'}</button>` : ''}
+          </td>
           <td><input class="disc" type="number" step="0.01" min="0" max="100" data-f="discount_percent" value="${row.discount_percent}"></td>
           <td class="num" data-vat>${UI.money(p.vat, { symbol: false })}</td>
           <td class="num line-total" data-total>${UI.money(p.total, { symbol: false })}</td>
@@ -192,6 +207,22 @@
         state.rows.splice(i, 1);
         if (!state.rows.length) state.rows.push(blank());
         render();
+      }));
+
+      host.querySelectorAll('[data-build]').forEach((b) => b.addEventListener('click', () => {
+        const i = Number(b.dataset.build);
+        openRateBuilder(state.rows[i], (built) => {
+          state.rows[i].unit_price = built.rate;
+          // What the goods cost us, all in, is the landed cost — which is what
+          // the margin on this quotation should be read against.
+          state.rows[i].cost_price = built.landed_cost;
+          state.rows[i].cost_build = {
+            material: built.material_rate,
+            profit_percent: built.profit_percent,
+            components: built.steps.map((c) => ({ label: c.label, basis: c.basis, value: c.value })),
+          };
+          render();
+        });
       }));
 
       host.querySelectorAll('tr[data-line]').forEach((tr) => {
@@ -280,6 +311,7 @@
             cost_price: r.cost_price,
             discount_percent: r.discount_percent,
             remarks: r.remarks || null,
+            cost_build: r.cost_build || null,
           }));
       },
       totals,
@@ -289,5 +321,165 @@
     };
   }
 
-  window.LINES = { LineEditor, catalogue, search, refresh: () => catalogue(true) };
+
+  /* ==========================================================================
+     The rate builder.
+
+     What a client is quoted is not what the manufacturer charges. It is that
+     price plus what it costs to land the material — shipping, customs duty,
+     the freight, an allowance for risk, the bank's charge — and then the margin
+     the company wants. The desk does this on paper today; here it is done with
+     the working kept, so the next person can see how a rate was reached.
+
+     None of it is printed. The client's quotation shows the rate and nothing
+     behind it, which is why this can hold what it holds.
+     ====================================================================== */
+  const BASIS_LABEL = {
+    percent_of_material: '% of the material rate',
+    percent_of_running: '% of the running total',
+    per_unit: 'amount per unit',
+    lump_sum: 'lump sum for the line',
+  };
+
+  let suggestedCharges = null;
+
+  async function openRateBuilder(row, apply) {
+    if (!suggestedCharges) {
+      suggestedCharges = (await API.get('/api/sales/costing/charges')).suggested;
+    }
+    // What is already on the line, or the charges this trade meets on most
+    // jobs, ready to be filled in or thrown away.
+    const start = row.cost_build || {
+      material: row.cost_price || 0,
+      profit_percent: 0,
+      components: suggestedCharges.map((c) => ({ ...c, value: 0 })),
+    };
+    const state = {
+      material: start.material || 0,
+      qty: row.qty || 1,
+      profit_percent: start.profit_percent || 0,
+      components: (start.components || []).map((c) => ({ ...c })),
+    };
+
+    const chargeRow = (c, i) => `<tr data-charge="${i}">
+      <td><input data-c="label" value="${esc(c.label || '')}" placeholder="What the charge is"></td>
+      <td><select data-c="basis">
+        ${Object.entries(BASIS_LABEL).map(([k, label]) => `<option value="${k}"${
+          k === c.basis ? ' selected' : ''}>${esc(label)}</option>`).join('')}
+      </select></td>
+      <td><input class="rate" type="number" step="0.01" data-c="value" value="${c.value || 0}"></td>
+      <td class="num" data-per-unit>—</td>
+      <td><button type="button" class="btn ghost sm" data-drop-charge="${i}">×</button></td>
+    </tr>`;
+
+    UI.modal({
+      title: 'Build the rate',
+      size: 'wide',
+      body: `<div class="muted small mb">Internal only — none of this is printed on the quotation.
+        The client sees the rate; this is how it was reached.</div>
+        <div class="grid g3">
+          ${UI.field({ name: 'material', label: "Manufacturer's material rate", type: 'number',
+            step: '0.01', value: state.material, hint: 'Per unit, as they quoted it.' })}
+          ${UI.field({ name: 'qty', label: 'Quantity', type: 'number', step: '0.001',
+            value: state.qty, hint: 'A lump sum is divided over this.' })}
+          ${UI.field({ name: 'profit_percent', label: 'Profit %', type: 'number', step: '0.01',
+            value: state.profit_percent, hint: 'Added to the landed cost.' })}
+        </div>
+        <h4 class="mt">Charges on top</h4>
+        <div class="muted small mb">In the order they are applied — a charge reckoned on the running
+          total counts everything above it.</div>
+        <div class="lines table-wrap"><table>
+          <thead><tr><th>Charge</th><th>How it is reckoned</th><th class="num">Value</th>
+            <th class="num">Per unit</th><th></th></tr></thead>
+          <tbody id="charges">${state.components.map(chargeRow).join('')}</tbody>
+        </table></div>
+        <div class="btn-row mt"><button type="button" class="btn ghost sm" id="add-charge">
+          + Add a charge</button></div>
+        <div class="doc-footer mt"><table id="build-out"></table></div>`,
+      footer: `<button class="btn ghost" data-act="__close">Cancel</button>
+        <button class="btn" data-act="use">Use this rate</button>`,
+      onMount(modal) {
+        let built = null;
+        let timer = null;
+
+        const paint = () => {
+          const out = modal.querySelector('#build-out');
+          if (!built) { out.innerHTML = ''; return; }
+          built.steps.forEach((step, i) => {
+            const cell = modal.querySelector(`tr[data-charge="${i}"] [data-per-unit]`);
+            if (cell) cell.textContent = UI.money(step.per_unit, { symbol: false });
+          });
+          out.innerHTML = `
+            <tr><td class="muted">Material</td><td class="num">${UI.money(built.material_rate, { symbol: false })}</td></tr>
+            <tr><td class="muted">Charges on it</td><td class="num">${UI.money(built.charges_per_unit, { symbol: false })}</td></tr>
+            <tr><td class="muted"><b>Landed cost, per unit</b></td>
+              <td class="num"><b>${UI.money(built.landed_cost, { symbol: false })}</b></td></tr>
+            <tr><td class="muted">Profit @ ${built.profit_percent}%</td>
+              <td class="num">${UI.money(built.profit_per_unit, { symbol: false })}</td></tr>
+            <tr class="grand"><td>Rate to quote</td>
+              <td class="num">${UI.money(built.rate, { symbol: false })}</td></tr>
+            <tr><td class="muted small">On ${UI.qty(built.qty)} — cost / profit / value</td>
+              <td class="num small">${UI.money(built.line_cost, { symbol: false })} ·
+                ${UI.money(built.line_profit, { symbol: false })} ·
+                <b>${UI.money(built.line_total, { symbol: false })}</b>
+                <div class="muted">margin ${built.margin_percent}%</div></td></tr>`;
+        };
+
+        const recalc = async () => {
+          built = await API.post('/api/sales/costing', {
+            material: state.material, qty: state.qty,
+            profit_percent: state.profit_percent, components: state.components,
+          });
+          paint();
+        };
+        const soon = () => { clearTimeout(timer); timer = setTimeout(recalc, 220); };
+
+        const wireCharges = () => {
+          modal.querySelectorAll('[data-charge]').forEach((tr) => {
+            const i = Number(tr.dataset.charge);
+            tr.querySelectorAll('[data-c]').forEach((el) => el.addEventListener('input', () => {
+              const f = el.dataset.c;
+              state.components[i][f] = f === 'value' ? Number(el.value) || 0 : el.value;
+              soon();
+            }));
+          });
+          modal.querySelectorAll('[data-drop-charge]').forEach((b) => b.addEventListener('click', () => {
+            state.components.splice(Number(b.dataset.dropCharge), 1);
+            redrawCharges();
+          }));
+        };
+        const redrawCharges = () => {
+          modal.querySelector('#charges').innerHTML = state.components.map(chargeRow).join('');
+          wireCharges();
+          recalc();
+        };
+
+        modal.querySelectorAll('[name=material], [name=qty], [name=profit_percent]')
+          .forEach((el) => el.addEventListener('input', () => {
+            state[el.name] = Number(el.value) || 0;
+            soon();
+          }));
+        modal.querySelector('#add-charge').addEventListener('click', () => {
+          state.components.push({ label: '', basis: 'per_unit', value: 0 });
+          redrawCharges();
+        });
+        wireCharges();
+        recalc();
+        modal._built = () => built;
+      },
+      async onAction(act, modal) {
+        if (act !== 'use') return;
+        const built = modal._built && modal._built();
+        if (!built) return 'keep';
+        if (!built.rate) {
+          UI.err('There is no rate yet — put the material price in first.');
+          return 'keep';
+        }
+        apply(built);
+      },
+    });
+  }
+
+  window.LINES = { LineEditor, catalogue, search, openRateBuilder,
+    refresh: () => catalogue(true) };
 })();
