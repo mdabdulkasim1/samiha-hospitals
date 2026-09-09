@@ -394,8 +394,12 @@
         <h3>Logo</h3>
         <div class="card-sub">Upload the company's own artwork. It replaces the drawn placeholder
           everywhere at once — the sidebar, the sign-in page, the head of every printed document,
-          and the watermark ghosted behind them. SVG is sharpest; a PNG with a transparent
-          background works just as well.</div>
+          the watermark ghosted behind them, and the browser tab. <b>An SVG is best</b>: it is a
+          drawing rather than a grid of pixels, so it is sharp at 44 pixels in the sidebar and at
+          full size on a letterhead alike. A PNG works, at 480 pixels or more on its longer side.
+          <b>A transparent background is worth asking for</b> — artwork with a solid background of
+          its own prints as a coloured tile on white paper, and there is nothing this system can do
+          about that after the fact.</div>
         <div class="grid g2">
           ${data.slots.map((s) => `
             <div class="brand-slot">
@@ -404,7 +408,9 @@
               <div class="row-between mt">
                 <span class="muted small">${s.uploaded
                   ? `${esc((s.mime || '').replace('image/', '').toUpperCase())} ·
-                     ${Math.max(1, Math.round((s.size_bytes || 0) / 1024))} KB`
+                     ${Math.max(1, Math.round((s.size_bytes || 0) / 1024))} KB${
+                       s.vector ? ' · vector, sharp at any size'
+                         : (s.width ? ` · ${s.width} × ${s.height}` : '')}`
                   : 'the drawn placeholder'}</span>
                 ${isAdmin ? `<span class="btn-row">
                   <label class="btn ghost sm" style="cursor:pointer;margin:0">Upload
@@ -413,6 +419,10 @@
                   ${s.uploaded ? `<button class="btn ghost sm" data-clear="${esc(s.slot)}">Revert</button>` : ''}
                 </span>` : ''}
               </div>
+              ${s.soft ? `<div class="alert warn small mt">This file is
+                ${s.width} × ${s.height} — small for the head of an A4 document, where it prints
+                about 20 mm wide. It will look soft there. Ask whoever drew it for the
+                <b>SVG</b>, or a PNG at least 480 pixels on its longer side.</div>` : ''}
             </div>`).join('')}
         </div>
         <div id="brand-out"></div>

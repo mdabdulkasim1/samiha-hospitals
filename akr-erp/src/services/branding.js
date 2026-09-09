@@ -172,6 +172,57 @@ function clear(slot) {
 }
 
 /** What both slots currently point at, for the screen that manages them. */
+
+/**
+ * How big the artwork actually is.
+ *
+ * Read from the file's own header — no image library, and none needed: every
+ * format worth uploading says its size in the first few dozen bytes. It is
+ * worth knowing because a logo that looks fine at 44 pixels in the sidebar can
+ * be a blur across a letterhead, and nothing in the system can undo that after
+ * the fact. Better to say so on the screen where it was uploaded.
+ */
+function dimensions(file, mime) {
+  try {
+    const buf = fs.readFileSync(file);
+    if (mime === 'image/svg+xml') {
+      // A vector has no pixels: it is sharp at any size, which is the point.
+      return { vector: true };
+    }
+    if (mime === 'image/png' && buf.length > 24) {
+      return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+    }
+    if (mime === 'image/webp' && buf.length > 30 && buf.toString('ascii', 12, 16) === 'VP8X') {
+      return {
+        width: 1 + (buf[24] | (buf[25] << 8) | (buf[26] << 16)),
+        height: 1 + (buf[27] | (buf[28] << 8) | (buf[29] << 16)),
+      };
+    }
+    if (mime === 'image/jpeg') {
+      // Walk the segments to the frame header, which carries the size.
+      let i = 2;
+      while (i + 9 < buf.length) {
+        if (buf[i] !== 0xFF) { i += 1; continue; }
+        const marker = buf[i + 1];
+        const length = buf.readUInt16BE(i + 2);
+        // SOF0..SOF15, skipping the four that are not frame headers.
+        if (marker >= 0xC0 && marker <= 0xCF
+            && ![0xC4, 0xC8, 0xCC, 0xD8].includes(marker)) {
+          return { height: buf.readUInt16BE(i + 5), width: buf.readUInt16BE(i + 7) };
+        }
+        i += 2 + length;
+      }
+    }
+  } catch { /* an unreadable file is reported as no size, not as a crash */ }
+  return {};
+}
+
+/*
+ * Under this, across the longer side, a raster logo is too small for the head
+ * of an A4 document — it is about 20 mm wide there at 300 dpi.
+ */
+const SHARP_ENOUGH = 480;
+
 const status = () => Object.entries(SLOTS).map(([slot, meta]) => {
   const found = find(slot);
   return {
@@ -181,7 +232,19 @@ const status = () => Object.entries(SLOTS).map(([slot, meta]) => {
     uploaded: Boolean(found),
     mime: found ? found.mime : null,
     size_bytes: found ? fs.statSync(found.file).size : null,
+    ...(found ? dimensions(found.file, found.mime) : {}),
+    // Said plainly, where it was uploaded, rather than discovered on a printed
+    // invoice: this file is too small to print well.
+    soft: found ? isSoft(dimensions(found.file, found.mime)) : false,
   };
 });
 
-module.exports = { SLOTS, find, resolve, urlFor, save, clear, status, settings, setSettings };
+/** Whether a raster file is too small to hold up on a letterhead. */
+function isSoft(d) {
+  if (!d || d.vector) return false;
+  if (!d.width || !d.height) return false;
+  return Math.max(d.width, d.height) < SHARP_ENOUGH;
+}
+
+module.exports = { SLOTS, SHARP_ENOUGH, find, resolve, urlFor, save, clear, status,
+  dimensions, isSoft, settings, setSettings };

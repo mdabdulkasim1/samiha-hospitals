@@ -115,9 +115,17 @@ Two things decide whether it *looks* right:
   one. The switch is on the Logo tab: **Put a light plate behind it** — leave it on for a transparent
   PNG or SVG, turn it off for artwork with its own background.
 
-Upload the largest version you have. An **SVG is sharpest** at any size; a PNG is fine if it is a
-few hundred pixels across or more — a small one enlarged onto a letterhead is soft, and no setting
-can undo that.
+The Logo tab says what it is holding — **PNG · 42 KB · 400 × 420**, or **vector, sharp at any size**
+— and warns when a raster file is under 480 pixels on its longer side, which is about 20 mm on an A4
+letterhead. It reads that from the file's own header; no image library, and none needed.
+
+Two things to ask whoever drew the logo for, and only they can supply:
+
+- **The SVG.** A drawing rather than a grid of pixels: sharp at 44 pixels in the sidebar and at full
+  size on a letterhead alike.
+- **A transparent background.** Artwork with a solid background of its own prints as a coloured
+  tile on white paper. The plate switch fixes how it sits on the dark screens; nothing can fix it on
+  paper afterwards.
 
 ### Setting the company's own details
 

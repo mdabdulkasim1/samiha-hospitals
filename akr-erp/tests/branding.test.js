@@ -117,3 +117,28 @@ test('the artwork is never stretched to fit', () => {
   assert.match(printer.match(/\.head \.logo img \{[^}]+\}/)[0], /object-fit: contain/,
     'and so does the letterhead');
 });
+
+test('the screen says how big the artwork is, and when it is too small', async () => {
+  // The one-pixel PNG from above is as small as it gets.
+  await admin.post('/api/masters/branding/mark',
+    { data: PNG.toString('base64'), mime: 'image/png', filename: 'tiny.png' });
+  const tiny = (await admin.get('/api/masters/branding')).slots.find((x) => x.slot === 'mark');
+  assert.equal(tiny.width, 1, 'read from the file header, with no image library');
+  assert.equal(tiny.height, 1);
+  assert.equal(tiny.soft, true, 'and called out as too small to print well');
+
+  // A vector has no pixels to run out of.
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">'
+    + '<circle cx="32" cy="32" r="30" fill="#14663F"/></svg>';
+  await admin.post('/api/masters/branding/mark',
+    { data: Buffer.from(svg).toString('base64'), mime: 'image/svg+xml', filename: 'akr.svg' });
+  const vector = (await admin.get('/api/masters/branding')).slots.find((x) => x.slot === 'mark');
+  assert.equal(vector.vector, true);
+  assert.equal(vector.soft, false, 'a drawing is sharp at every size');
+  assert.equal(vector.mime, 'image/svg+xml');
+
+  // And it is served as the vector it is, not converted to anything.
+  const res = await fetch(`${h.base}/api/branding/mark`);
+  assert.equal(res.headers.get('content-type'), 'image/svg+xml');
+  assert.match(await res.text(), /<circle/);
+});
