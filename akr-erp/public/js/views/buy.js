@@ -526,7 +526,8 @@
           box.innerHTML = UI.loading();
           const res = await API.get('/api/purchase/grns?limit=200');
           box.innerHTML = UI.table([
-            { label: 'GRN', render: (r) => `<span class="mono">${esc(r.grn_no)}</span>` },
+            { label: 'GRN', render: (r) => `<span class="mono">${esc(r.grn_no)}</span>
+                ${r.enquiry_no ? `<div class="muted small">${esc(r.enquiry_no)}</div>` : ''}` },
             { label: 'From', render: (r) => `<b>${esc(r.supplier_name)}</b>` },
             { label: 'Against LPO', key: 'lpo_no' },
             { label: 'Their DN', key: 'supplier_dn_ref' },
@@ -549,6 +550,7 @@
       size: 'wide',
       body: `<div class="grid g2 mb">
           <div>${UI.facts([
+            ['Our enquiry', g.enquiry_no ? `<span class="mono">${esc(g.enquiry_no)}</span>` : '—'],
             ['Against LPO', esc(g.lpo_no || 'received without an LPO')],
             ['Their delivery note', esc(g.supplier_dn_ref || '—')],
             ['Received on', UI.date(g.received_date)],
@@ -672,7 +674,8 @@
           box.innerHTML = UI.loading();
           const res = await API.get('/api/purchase/invoices' + API.qs({ q: v.q, status: v.status, limit: 200 }));
           box.innerHTML = UI.table([
-            { label: 'Our ref', render: (r) => `<span class="mono">${esc(r.bill_no)}</span>` },
+            { label: 'Our ref', render: (r) => `<span class="mono">${esc(r.bill_no)}</span>
+                ${r.enquiry_no ? `<div class="muted small">${esc(r.enquiry_no)}</div>` : ''}` },
             { label: 'Their invoice', render: (r) => `<b>${esc(r.supplier_inv_no)}</b>
                 <div class="muted small">${esc(r.supplier_name)}</div>` },
             { label: 'Against', key: 'lpo_no' },
@@ -720,6 +723,7 @@
           <div class="muted small">Our reference ${esc(i.bill_no)}</div></div>
         <div class="grid g2 mb">
           <div>${UI.facts([
+            ['Our enquiry', i.enquiry_no ? `<span class="mono">${esc(i.enquiry_no)}</span>` : '—'],
             ['Against LPO', esc(i.lpo_no || '—')],
             ['Goods receipt', esc(i.grn_no || '—')],
             ['Invoice date', UI.date(i.invoice_date)],

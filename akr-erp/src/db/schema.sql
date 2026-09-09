@@ -382,6 +382,7 @@ CREATE TABLE IF NOT EXISTS grns (
   company_id     INTEGER NOT NULL REFERENCES companies(id),
   grn_no         TEXT NOT NULL UNIQUE,
   po_id          INTEGER REFERENCES purchase_orders(id),
+  enquiry_id     INTEGER REFERENCES enquiries(id),   -- where the whole job began
   partner_id     INTEGER NOT NULL REFERENCES partners(id),
   location_id    INTEGER REFERENCES locations(id),
   received_date  TEXT NOT NULL DEFAULT (date('now')),
@@ -421,6 +422,7 @@ CREATE TABLE IF NOT EXISTS supplier_invoices (
   partner_id       INTEGER NOT NULL REFERENCES partners(id),
   po_id            INTEGER REFERENCES purchase_orders(id),
   grn_id           INTEGER REFERENCES grns(id),
+  enquiry_id       INTEGER REFERENCES enquiries(id),  -- where the whole job began
   application_id   INTEGER REFERENCES applications(id),
   invoice_date     TEXT NOT NULL DEFAULT (date('now')),
   received_date    TEXT NOT NULL DEFAULT (date('now')),

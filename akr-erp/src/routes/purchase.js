@@ -49,6 +49,22 @@ const bookkeeper = auth.requireRole('accounts');          // books and pays
  */
 const billReader = auth.requireRole('accounts', 'kam');
 
+/**
+ * The enquiry a buy-side document belongs to.
+ *
+ * It is recorded on the document rather than looked up through the chain every
+ * time, so the reference on a goods receipt or a booked bill stays what it was
+ * on the day — and so a receipt or a bill entered without an order behind it
+ * can still be filed under the enquiry it came from.
+ */
+function enquiryFor(given, ...fallbacks) {
+  const id = given || fallbacks.find(Boolean) || null;
+  if (!id) return null;
+  const e = enquiries.get(id, 'supplier');
+  if (!e) throw notFound('No such enquiry to a manufacturer.');
+  return e.id;
+}
+
 // ========================================================= enquiries we send
 /*
  * The enquiry that starts the buying side. Same table, same shape and the same
@@ -380,11 +396,7 @@ router.post('/orders', buyer, wrap(async (req, res) => {
     }
     enquiryId = q.enquiry_id || enquiryId;
   }
-  if (enquiryId) {
-    const e = enquiries.get(enquiryId, 'supplier');
-    if (!e) throw notFound('No such enquiry to a manufacturer.');
-    enquiryId = e.id;
-  }
+  enquiryId = enquiryFor(enquiryId);
 
   const priced = docs.buildLines(b.items, { side: 'buy' });
   const lpoDate = v.date(b.lpo_date) || v.today();
@@ -563,10 +575,13 @@ router.get('/grns', wrap(async (req, res) => {
   const { limit, offset, page } = v.paging(req.query, 50);
   const rows = db.prepare(`
     SELECT g.*, p.name AS supplier_name, o.lpo_no, l.name AS location_name, u.name AS received_by_name,
+           COALESCE(e.enquiry_no, oe.enquiry_no) AS enquiry_no,
            (SELECT COALESCE(SUM(qty), 0) FROM grn_items gi WHERE gi.grn_id = g.id) AS total_qty
       FROM grns g
       JOIN partners p ON p.id = g.partner_id
       LEFT JOIN purchase_orders o ON o.id = g.po_id
+      LEFT JOIN enquiries e ON e.id = g.enquiry_id
+      LEFT JOIN enquiries oe ON oe.id = o.enquiry_id
       LEFT JOIN locations l ON l.id = g.location_id
       LEFT JOIN users u ON u.id = g.created_by
      ORDER BY g.received_date DESC, g.id DESC LIMIT ? OFFSET ?`).all(limit, offset);
@@ -576,11 +591,14 @@ router.get('/grns', wrap(async (req, res) => {
 router.get('/grns/:id', wrap(async (req, res) => {
   const row = db.prepare(`
     SELECT g.*, p.name AS supplier_name, p.code AS supplier_code, o.lpo_no, o.project,
+           COALESCE(e.enquiry_no, oe.enquiry_no) AS enquiry_no,
            l.name AS location_name, c.name AS company_name, c.code AS company_code,
            u.name AS received_by_name
       FROM grns g
       JOIN partners p ON p.id = g.partner_id
       LEFT JOIN purchase_orders o ON o.id = g.po_id
+      LEFT JOIN enquiries e ON e.id = g.enquiry_id
+      LEFT JOIN enquiries oe ON oe.id = o.enquiry_id
       LEFT JOIN locations l ON l.id = g.location_id
       LEFT JOIN companies c ON c.id = g.company_id
       LEFT JOIN users u ON u.id = g.created_by
@@ -646,13 +664,14 @@ router.post('/grns', receiver, wrap(async (req, res) => {
   const result = tx(() => {
     const grnNo = ids.docNo('grn', company.code);
     const info = db.prepare(`
-      INSERT INTO grns (company_id, grn_no, po_id, partner_id, location_id, received_date,
+      INSERT INTO grns (company_id, grn_no, po_id, enquiry_id, partner_id, location_id, received_date,
         supplier_dn_ref, vehicle_no, inspected_by, notes, created_by)
-      VALUES (@company_id, @grn_no, @po_id, @partner_id, @location_id, @received_date,
+      VALUES (@company_id, @grn_no, @po_id, @enquiry_id, @partner_id, @location_id, @received_date,
         @supplier_dn_ref, @vehicle_no, @inspected_by, @notes, @created_by)`).run({
       company_id: company.id,
       grn_no: grnNo,
       po_id: order ? order.id : null,
+      enquiry_id: enquiryFor(b.enquiry_id, order && order.enquiry_id),
       partner_id: b.partner_id,
       location_id: location ? location.id : null,
       received_date: v.date(b.received_date) || v.today(),
@@ -724,11 +743,15 @@ router.post('/grns', receiver, wrap(async (req, res) => {
 const SI_SELECT = `
   SELECT i.*, p.name AS supplier_name, p.code AS supplier_code, p.trn AS supplier_trn,
          o.lpo_no, g.grn_no, t.name AS terms_name, c.code AS company_code, c.name AS company_name,
+         COALESCE(e.enquiry_no, oe.enquiry_no, ge.enquiry_no) AS enquiry_no,
          (i.total - i.paid_amount) AS outstanding
     FROM supplier_invoices i
     JOIN partners p ON p.id = i.partner_id
     LEFT JOIN purchase_orders o ON o.id = i.po_id
     LEFT JOIN grns g ON g.id = i.grn_id
+    LEFT JOIN enquiries e ON e.id = i.enquiry_id
+    LEFT JOIN enquiries oe ON oe.id = o.enquiry_id
+    LEFT JOIN enquiries ge ON ge.id = g.enquiry_id
     LEFT JOIN payment_terms t ON t.id = i.payment_terms_id
     LEFT JOIN companies c ON c.id = i.company_id`;
 
@@ -790,18 +813,26 @@ router.post('/invoices', bookkeeper, wrap(async (req, res) => {
 
   const priced = docs.buildLines(b.items, { side: 'buy' });
   const invoiceDate = v.date(b.invoice_date) || v.today();
+  const againstOrder = b.po_id
+    ? db.prepare('SELECT * FROM purchase_orders WHERE id = ?').get(b.po_id) : null;
+  const againstGrn = b.grn_id
+    ? db.prepare('SELECT * FROM grns WHERE id = ?').get(b.grn_id) : null;
   const paymentTermsId = b.payment_terms_id
-    || (b.po_id ? (db.prepare('SELECT payment_terms_id FROM purchase_orders WHERE id = ?').get(b.po_id) || {}).payment_terms_id : null)
+    || (againstOrder ? againstOrder.payment_terms_id : null)
     || supplier.payment_terms_id || null;
+  // The bill is filed under the enquiry the order came out of, whether it
+  // arrives against the order, against the receipt, or on its own.
+  const billEnquiryId = enquiryFor(b.enquiry_id,
+    againstOrder && againstOrder.enquiry_id, againstGrn && againstGrn.enquiry_id);
 
   const result = tx(() => {
     const billNo = ids.docNo('supplierInvoice', company.code);
     const info = db.prepare(`
       INSERT INTO supplier_invoices (company_id, bill_no, supplier_inv_no, partner_id, po_id, grn_id,
-        application_id, invoice_date, received_date, due_date, payment_terms_id, currency,
+        enquiry_id, application_id, invoice_date, received_date, due_date, payment_terms_id, currency,
         subtotal, discount, vat_amount, total, notes, created_by)
-      VALUES (@company_id, @bill_no, @supplier_inv_no, @partner_id, @po_id, @grn_id, @application_id,
-        @invoice_date, @received_date, @due_date, @payment_terms_id, @currency,
+      VALUES (@company_id, @bill_no, @supplier_inv_no, @partner_id, @po_id, @grn_id, @enquiry_id,
+        @application_id, @invoice_date, @received_date, @due_date, @payment_terms_id, @currency,
         @subtotal, @discount, @vat_amount, @total, @notes, @created_by)`).run({
       company_id: company.id,
       bill_no: billNo,
@@ -809,6 +840,7 @@ router.post('/invoices', bookkeeper, wrap(async (req, res) => {
       partner_id: supplier.id,
       po_id: b.po_id || null,
       grn_id: b.grn_id || null,
+      enquiry_id: billEnquiryId,
       application_id: docs.resolveApplication(b.application_id, priced.lines),
       invoice_date: invoiceDate,
       received_date: v.date(b.received_date) || v.today(),

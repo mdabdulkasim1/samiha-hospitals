@@ -20,6 +20,7 @@ let admin;
 let kam;
 let sales;
 let logistics;
+let accounts;
 const ctx = {};
 
 test.before(async () => {
@@ -28,6 +29,7 @@ test.before(async () => {
   kam = await h.signIn('kam@akr365.com');
   sales = await h.signIn('sales@akr365.com');
   logistics = await h.signIn('logistics@akr365.com');
+  accounts = await h.signIn('accounts@akr365.com');
   ctx.supplier = (await admin.get('/api/partners?type=supplier&limit=1')).rows[0];
   ctx.other = (await admin.get('/api/partners?type=supplier&limit=2')).rows[1];
   ctx.client = (await admin.get('/api/partners?type=client&limit=1')).rows[0];
@@ -180,6 +182,55 @@ test('an LPO raised without a quotation can still name the enquiry', async () =>
       partner_id: ctx.supplier.id, enquiry_id: ctx.clientEnquiry.id,
       items: [{ item_id: ctx.item.id, qty: 1, unit_price: 10 }] }),
     (err) => err.status === 404, "a client's enquiry is not ours to order against",
+  );
+});
+
+test('the goods receipt and the bill carry it too', async () => {
+  const lpoFull = await kam.get(`/api/purchase/orders/${ctx.lpo.id}`);
+  await kam.post(`/api/purchase/orders/${ctx.lpo.id}/send`);
+  const grn = await logistics.post('/api/purchase/grns', {
+    partner_id: ctx.supplier.id, po_id: ctx.lpo.id, supplier_dn_ref: 'AMS-DN-5512',
+    items: [{ po_item_id: lpoFull.items[0].id, qty: 8 }],
+  });
+  const grnFull = await logistics.get(`/api/purchase/grns/${grn.id}`);
+  assert.equal(grnFull.grn.enquiry_no, ctx.rfq.enquiry_no, 'the receipt is filed under the enquiry');
+  assert.equal((await logistics.get('/api/purchase/grns?limit=50')).rows
+    .find((r) => r.id === grn.id).enquiry_no, ctx.rfq.enquiry_no, 'and shows it on the list');
+
+  const bill = await accounts.post('/api/purchase/invoices', {
+    partner_id: ctx.supplier.id, po_id: ctx.lpo.id, grn_id: grn.id,
+    supplier_inv_no: 'AMS-2026-3391',
+    items: [{ item_id: ctx.item.id, qty: 8, unit_price: 1250 }],
+  });
+  const billFull = await accounts.get(`/api/purchase/invoices/${bill.id}`);
+  assert.equal(billFull.invoice.enquiry_no, ctx.rfq.enquiry_no, 'so is their invoice');
+  assert.equal((await accounts.get('/api/purchase/invoices?limit=50')).rows
+    .find((r) => r.id === bill.id).enquiry_no, ctx.rfq.enquiry_no);
+});
+
+test('a receipt or a bill with no order behind it can still name the enquiry', async () => {
+  const rfq = await kam.post('/api/purchase/enquiries', {
+    partner_id: ctx.supplier.id, subject: 'Straight in' });
+  const grn = await logistics.post('/api/purchase/grns', {
+    partner_id: ctx.supplier.id, enquiry_id: rfq.id,
+    items: [{ item_id: ctx.item.id, qty: 3, description: 'Sample bar', uom: 'NOS' }],
+  });
+  assert.equal((await logistics.get(`/api/purchase/grns/${grn.id}`)).grn.enquiry_no, rfq.enquiry_no);
+
+  // Booked against that receipt, with no LPO in between.
+  const bill = await accounts.post('/api/purchase/invoices', {
+    partner_id: ctx.supplier.id, grn_id: grn.id, supplier_inv_no: 'AMS-2026-3392',
+    items: [{ item_id: ctx.item.id, qty: 3, unit_price: 40 }],
+  });
+  assert.equal((await accounts.get(`/api/purchase/invoices/${bill.id}`)).invoice.enquiry_no,
+    rfq.enquiry_no, 'the bill takes it from the receipt');
+
+  await assert.rejects(
+    () => accounts.post('/api/purchase/invoices', {
+      partner_id: ctx.supplier.id, enquiry_id: ctx.clientEnquiry.id,
+      supplier_inv_no: 'AMS-2026-3393',
+      items: [{ item_id: ctx.item.id, qty: 1, unit_price: 5 }] }),
+    (err) => err.status === 404, "a client's enquiry is not something a bill belongs to",
   );
 });
 

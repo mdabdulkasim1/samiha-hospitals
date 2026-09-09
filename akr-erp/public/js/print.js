@@ -539,6 +539,8 @@
         ${meta([
           ['GRN no.', g.grn_no],
           ['Received on', UI.date(g.received_date)],
+          ['Our enquiry', g.enquiry_no || '—'],
+          ['Our LPO', g.lpo_no || '—'],
           ['Location', g.location_name || '—'],
           ['Vehicle', g.vehicle_no || '—'],
         ])}

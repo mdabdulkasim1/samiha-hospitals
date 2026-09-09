@@ -23,9 +23,10 @@ price. **No supplier quotation exists without one** — the system refuses to lo
 does not answer an enquiry we raised, so there is always a record of what was asked, of whom and
 when, including the makers who never came back.
 
-The enquiry's reference then travels the whole way: onto their quotation, and onto **our LPO, where
-it prints** beside their own quotation number, so the manufacturer holding the order can see what
-they priced and when they were asked:
+The enquiry's reference then travels the whole way — onto their quotation, our LPO, the goods
+receipt and the bill we file when their invoice arrives, so one number ties the job together from
+the first phone call to the payment. On **our LPO it prints** beside their own quotation number, so
+the manufacturer holding the order can see what they priced and when they were asked:
 
 ```
 LPO NO.        DATE           ATTN               SUPPLIER TRN
@@ -33,6 +34,10 @@ AKR-FD26-001   09 Sep 2026    Mr. Sankar         100xxxxxxxxxxxx
 OUR ENQUIRY        YOUR QUOTATION      OUR QUOTATION REF     SO REFERENCE
 AKR-RFQ-092026-001 GVM/Q/26/1188       AKR-SQ-092026-001     AKR-SO-092026-001
 ```
+
+It prints on the goods receipt as well, and shows on the supplier's bill on screen — a receipt or a
+bill entered with no order behind it can be given the enquiry directly, so nothing falls outside
+the filing.
 
 Every document carries the **application** it belongs to — potable water, storm water, sewerage,
 district cooling or irrigation — and 5% UAE VAT. Payment terms are chosen per document from a list
@@ -466,7 +471,7 @@ A4, on the company's letterhead, with the application title under the document t
 | **Delivery Note** | Quantities and part numbers, no prices; a signature block; a payment-on-delivery warning where the terms call for one |
 | **Tax Invoice** | Both TRNs, the client's LPO, the delivery note, taxable value, 5% VAT, total, amount in words, bank details |
 | **Receipt / Payment Voucher** | What was received or paid, against which invoices, cheque details |
-| **Goods Receipt Note** | Accepted and rejected quantities, the supplier's own delivery note reference |
+| **Goods Receipt Note** | Accepted and rejected quantities, the supplier's own delivery note reference, **our enquiry** and our LPO |
 | **Statement of Account** | Every entry with a running balance, and the ageing underneath |
 
 ## How it looks
