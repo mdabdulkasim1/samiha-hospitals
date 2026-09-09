@@ -279,11 +279,12 @@ router.get('/cheques', auth.requireScreen('cheques'), wrap(async (req, res) => {
 const EXP_SELECT = `
   SELECT e.*, c.code AS company_code, c.name AS company_name, ec.name AS category_name,
          ec.kind AS category_kind, p.name AS partner_name, p.type AS partner_type,
-         u.name AS created_by_name
+         e2.enquiry_no, e2.subject AS enquiry_subject, u.name AS created_by_name
     FROM expenses e
     LEFT JOIN companies c ON c.id = e.company_id
     LEFT JOIN expense_categories ec ON ec.id = e.category_id
     LEFT JOIN partners p ON p.id = e.partner_id
+    LEFT JOIN enquiries e2 ON e2.id = e.enquiry_id
     LEFT JOIN users u ON u.id = e.created_by`;
 
 router.get('/expenses', expenseReader, wrap(async (req, res) => {
@@ -296,6 +297,7 @@ router.get('/expenses', expenseReader, wrap(async (req, res) => {
   // Which account carries it — or, with `overhead`, the ones carried by none.
   if (req.query.partner_id) { where.push('e.partner_id = @partner_id'); params.partner_id = req.query.partner_id; }
   else if (v.bool(req.query.overhead)) where.push('e.partner_id IS NULL');
+  if (req.query.enquiry_id) { where.push('e.enquiry_id = @enquiry_id'); params.enquiry_id = req.query.enquiry_id; }
   if (req.query.from) { where.push('e.expense_date >= @from'); params.from = v.date(req.query.from); }
   if (req.query.to) { where.push('e.expense_date <= @to'); params.to = v.date(req.query.to); }
   if (req.query.q) {
@@ -334,17 +336,18 @@ router.post('/expenses', bookkeeper, wrap(async (req, res) => {
 
   const voucherNo = ids.docNo(kind === 'income' ? 'income' : 'expense', company.code);
   const info = db.prepare(`
-    INSERT INTO expenses (company_id, voucher_no, kind, category_id, partner_id, payee, expense_date,
-      description, project, amount, vat_amount, total, recoverable_vat, mode, reference,
-      attachment_ref, created_by)
-    VALUES (@company_id, @voucher_no, @kind, @category_id, @partner_id, @payee, @expense_date,
-      @description, @project, @amount, @vat_amount, @total, @recoverable_vat, @mode, @reference,
-      @attachment_ref, @created_by)`).run({
+    INSERT INTO expenses (company_id, voucher_no, kind, category_id, partner_id, enquiry_id, payee,
+      expense_date, description, project, amount, vat_amount, total, recoverable_vat, mode,
+      reference, attachment_ref, created_by)
+    VALUES (@company_id, @voucher_no, @kind, @category_id, @partner_id, @enquiry_id, @payee,
+      @expense_date, @description, @project, @amount, @vat_amount, @total, @recoverable_vat, @mode,
+      @reference, @attachment_ref, @created_by)`).run({
     company_id: company.id,
     voucher_no: voucherNo,
     kind,
     category_id: b.category_id || null,
     partner_id: b.partner_id || null,
+    enquiry_id: b.enquiry_id || null,
     payee: v.str(b.payee),
     expense_date: v.date(b.expense_date) || v.today(),
     description: v.str(b.description),
@@ -368,13 +371,15 @@ router.patch('/expenses/:id', bookkeeper, wrap(async (req, res) => {
   if (!row) throw notFound('No such entry.');
   const amount = v.money(req.body.amount, row.amount);
   const vatAmount = v.money(req.body.vat_amount, row.vat_amount);
-  db.prepare(`UPDATE expenses SET category_id = @category_id, partner_id = @partner_id, payee = @payee,
+  db.prepare(`UPDATE expenses SET category_id = @category_id, partner_id = @partner_id,
+      enquiry_id = @enquiry_id, payee = @payee,
       expense_date = @expense_date, description = @description, project = @project, amount = @amount,
       vat_amount = @vat_amount, total = @total, recoverable_vat = @recoverable_vat, mode = @mode,
       reference = @reference, attachment_ref = @attachment_ref WHERE id = @id`).run({
     id: row.id,
     category_id: req.body.category_id === undefined ? row.category_id : (req.body.category_id || null),
     partner_id: req.body.partner_id === undefined ? row.partner_id : (req.body.partner_id || null),
+    enquiry_id: req.body.enquiry_id === undefined ? row.enquiry_id : (req.body.enquiry_id || null),
     payee: v.str(req.body.payee, row.payee),
     expense_date: v.date(req.body.expense_date) || row.expense_date,
     description: v.str(req.body.description, row.description),

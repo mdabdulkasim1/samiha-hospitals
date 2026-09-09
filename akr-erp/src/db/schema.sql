@@ -805,6 +805,10 @@ CREATE TABLE IF NOT EXISTS expenses (
   kind          TEXT NOT NULL DEFAULT 'expense' CHECK (kind IN ('expense','income')),
   category_id   INTEGER REFERENCES expense_categories(id),
   partner_id    INTEGER REFERENCES partners(id),
+  -- The job it belongs to, where it belongs to one: freight on this order, an
+  -- inspection for that enquiry. It is what makes "what has this job cost"
+  -- answerable.
+  enquiry_id    INTEGER REFERENCES enquiries(id),
   payee         TEXT,
   expense_date  TEXT NOT NULL DEFAULT (date('now')),
   description   TEXT NOT NULL,

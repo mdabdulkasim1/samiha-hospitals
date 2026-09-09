@@ -426,6 +426,14 @@ router.get('/orders/:id', wrap(async (req, res) => {
     })),
     purchaseOrders: db.prepare('SELECT id, lpo_no, lpo_date, status, total FROM purchase_orders WHERE sales_order_id = ?')
       .all(row.id),
+    /*
+     * What this job is costing: the buying rate on its own lines, the LPOs
+     * raised against it, the makers' bills, and the expenses booked to it. For
+     * the desks that price the work — a driver does not need it, and it is on
+     * no printed document.
+     */
+    jobCost: auth.seesCost(req.user)
+      ? ledger.jobCost({ salesOrderId: row.id }) : null,
   });
 }));
 

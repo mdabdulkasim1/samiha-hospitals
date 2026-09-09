@@ -338,6 +338,84 @@ function statement({ from, to, companyId = null }) {
   };
 }
 
+
+/**
+ * What one job has cost, and what is left on it.
+ *
+ * The sales desk asks a plain question — we are selling this at that rate, what
+ * are we paying for it and what has gone out on top? — and the answer is in
+ * four places: the buying rate carried on the order's own lines, the LPOs
+ * raised to fill it, the manufacturers' bills against those LPOs, and the
+ * expenses somebody booked to this job or to this client.
+ *
+ * The goods figure is the order's own cost, not the bills: an order half
+ * bought-in would otherwise read as half price. The bills are shown beside it
+ * so the two can be compared, which is the point of showing both.
+ */
+function jobCost({ salesOrderId = null, enquiryId = null, partnerId = null }) {
+  const order = salesOrderId
+    ? db.prepare('SELECT * FROM sales_orders WHERE id = ?').get(salesOrderId) : null;
+  const jobId = enquiryId || (order ? order.enquiry_id : null);
+
+  const goods = order ? round(db.prepare(
+    'SELECT COALESCE(SUM(cost_price * qty), 0) AS c FROM sales_order_items WHERE so_id = ?')
+    .get(order.id).c) : 0;
+  const revenue = order ? round(order.subtotal - order.discount) : 0;
+
+  const orders = order ? db.prepare(`
+    SELECT o.id, o.lpo_no, o.lpo_date, o.status, (o.subtotal - o.discount) AS value,
+           p.name AS supplier_name
+      FROM purchase_orders o JOIN partners p ON p.id = o.partner_id
+     WHERE o.sales_order_id = ? AND o.status != 'cancelled'
+     ORDER BY o.lpo_date`).all(order.id) : [];
+
+  const bills = orders.length ? db.prepare(`
+    SELECT b.id, b.bill_no, b.supplier_inv_no, b.invoice_date, (b.subtotal - b.discount) AS value,
+           p.name AS supplier_name
+      FROM supplier_invoices b JOIN partners p ON p.id = b.partner_id
+     WHERE b.status != 'cancelled' AND b.po_id IN (${orders.map(() => '?').join(',')})
+     ORDER BY b.invoice_date`).all(...orders.map((o) => o.id)) : [];
+
+  /*
+   * The expenses that belong to this job: the ones booked against it by name,
+   * and — where the job is a client's — the ones booked to that client. AKR's
+   * own overheads are not here; they belong to the month, not to one order,
+   * and are spread on the profit page instead.
+   */
+  const where = [];
+  const params = {};
+  if (jobId) { where.push('e.enquiry_id = @jobId'); params.jobId = jobId; }
+  const client = partnerId || (order ? order.partner_id : null);
+  if (client) { where.push('e.partner_id = @client'); params.client = client; }
+  const expenses = where.length ? db.prepare(`
+    SELECT e.id, e.voucher_no, e.expense_date, e.description, e.amount, e.partner_id, e.enquiry_id,
+           c.name AS category_name, p.name AS partner_name
+      FROM expenses e
+      LEFT JOIN expense_categories c ON c.id = e.category_id
+      LEFT JOIN partners p ON p.id = e.partner_id
+     WHERE e.kind = 'expense' AND (${where.join(' OR ')})
+     ORDER BY e.expense_date`).all(params) : [];
+
+  const expenseTotal = round(expenses.reduce((a, e) => a + e.amount, 0));
+  const billed = round(bills.reduce((a, b) => a + b.value, 0));
+  const ordered = round(orders.reduce((a, o) => a + o.value, 0));
+  const cost = round(goods + expenseTotal);
+
+  return {
+    revenue,
+    goods_cost: goods,
+    ordered,
+    billed,
+    expenses,
+    expense_total: expenseTotal,
+    cost,
+    margin: round(revenue - cost),
+    margin_percent: revenue ? round(((revenue - cost) / revenue) * 100) : 0,
+    purchase_orders: orders,
+    bills,
+  };
+}
+
 /**
  * AKR's own overheads — the rent, the salaries, the trade licence — the ones
  * nobody booked to a supplier's or a client's account, because they do not
@@ -661,4 +739,4 @@ function partnerBalance(partnerId, { companyId = null } = {}) {
 }
 
 module.exports = { partnerLedger, ageing, vatReturn, profitAndLoss, statement, byClient,
-  bySupplier, unbookedOverheads, monthlyProfit, partnerBalance };
+  bySupplier, unbookedOverheads, jobCost, monthlyProfit, partnerBalance };

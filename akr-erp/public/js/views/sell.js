@@ -285,6 +285,53 @@
     },
   });
 
+
+  /**
+   * What this job is costing, for the desks that price the work.
+   *
+   * The buying rate on the order's own lines, what has actually been ordered
+   * and billed against it, and the expenses somebody booked to this job or to
+   * this client. It is on the screen and on no printed document — the client's
+   * paperwork shows what they are charged and nothing behind it.
+   */
+  function jobCostCard(j) {
+    if (!j) return '';
+    const line = (label, value, opts = {}) => `<tr class="${opts.cls || ''}">
+      <td>${opts.sign ? `<span class="muted">${opts.sign}</span> ` : ''}${esc(label)}
+        ${opts.note ? `<div class="muted small">${esc(opts.note)}</div>` : ''}</td>
+      <td class="num">${opts.sign === '−' && value ? '− ' : ''}${
+        UI.money(Math.abs(value), { symbol: false })}</td></tr>`;
+    return `<h4 class="mt">What this job costs us</h4>
+      <div class="muted small mb">Internal — none of it is printed. The buying rate carried on the
+        lines above, and what has been booked against this job.</div>
+      <div class="grid g2">
+        <div><table class="statement">
+          ${line('Selling price', j.revenue, { note: 'before VAT' })}
+          ${line('Buying price', j.goods_cost, { sign: '−', note: 'the buying rate on these lines' })}
+          ${line('Expenses on this job', j.expense_total, { sign: '−',
+            note: `${j.expenses.length} booked to it or to this client` })}
+          ${line('Margin', j.margin, { cls: 'grand',
+            note: `${j.margin_percent}% of the selling price` })}
+        </table></div>
+        <div>${UI.facts([
+          ['Ordered from makers', j.ordered ? UI.money(j.ordered) : '—'],
+          ['They have billed us', j.billed ? UI.money(j.billed) : '—'],
+          ['Against the buying price', j.goods_cost
+            ? `${UI.money(j.goods_cost)}${j.billed && Math.abs(j.billed - j.goods_cost) > 0.5
+              ? ` <span class="muted small">— ${UI.money(Math.abs(j.billed - j.goods_cost))} ${
+                j.billed > j.goods_cost ? 'more than allowed for' : 'still to come'}</span>` : ''}`
+            : '—'],
+        ])}</div>
+      </div>
+      ${j.expenses.length ? UI.table([
+        { label: 'Voucher', render: (r) => `<span class="mono small">${esc(r.voucher_no)}</span>` },
+        { label: 'Date', render: (r) => UI.date(r.expense_date) },
+        { label: 'What', render: (r) => `${esc(r.description)}
+            <div class="muted small">${esc([r.category_name, r.partner_name].filter(Boolean).join(' · '))}</div>` },
+        { label: 'Amount', num: true, render: (r) => UI.money(r.amount, { symbol: false }) },
+      ], j.expenses) : ''}`;
+  }
+
   async function showOrder(id) {
     const d = await API.get(`/api/sales/orders/${id}`);
     const o = d.order;
@@ -331,9 +378,12 @@
           { label: 'Ordered', num: true, render: (r) => `${UI.qty(r.qty)} ${esc(r.uom)}` },
           { label: 'Delivered', num: true, render: (r) => UI.qty(r.delivered_qty) },
           { label: 'Still to go', num: true, render: (r) => (r.pending_qty ? `<b>${UI.qty(r.pending_qty)}</b>` : '—') },
+          ...(APP.seesCost() ? [{ label: 'Buying rate', num: true, render: (r) => (r.cost_price
+            ? UI.money(r.cost_price, { symbol: false }) : '—') }] : []),
           { label: 'Rate', num: true, render: (r) => UI.money(r.unit_price, { symbol: false }) },
           { label: 'Amount', num: true, render: (r) => UI.money(r.total, { symbol: false }) },
         ], d.items)}
+        ${jobCostCard(d.jobCost)}
         <h4 class="mt">Can we deliver it?</h4>
         ${UI.table([
           { label: 'Item', render: (r) => `<span class="mono small">${esc(r.item_code || '')}</span> ${esc(r.description)}` },

@@ -41,7 +41,8 @@ test('every desk signs in and is told what it may see', () => {
   assert.equal(logistics.me.permissions.seesPrices, false);
   assert.equal(logistics.me.permissions.seesMoney, false);
   assert.equal(sales.me.permissions.seesPrices, true);
-  assert.equal(sales.me.permissions.seesCost, false, 'a sales officer works to a price list');
+  assert.equal(sales.me.permissions.seesCost, true,
+    'a sales officer prices the work, so they see what the goods cost');
   assert.equal(accounts.me.permissions.seesMoney, true);
   assert.equal(kam.me.permissions.seesCost, true, 'the KAM sets the price and needs the cost');
 });
@@ -58,18 +59,23 @@ test('logistics see the catalogue without any prices on it', async () => {
   assert.equal(stock.summary, null, 'no valuation for a desk that may not see cost');
 });
 
-test('a sales officer sees the price but not the cost behind it', async () => {
+test('a sales officer sees the buying rate behind the price', async () => {
   const quote = await sales.post('/api/sales/quotations', {
     partner_id: ctx.client.id,
     items: [{ item_id: ctx.item.id, qty: 3, unit_price: 900, cost_price: 600 }],
   });
   const seenBySales = await sales.get(`/api/sales/quotations/${quote.id}`);
-  assert.equal(seenBySales.margin, null);
-  assert.equal(seenBySales.items[0].cost_price, null);
+  assert.equal(seenBySales.items[0].cost_price, 600, 'they price the work, so they see the cost');
+  assert.equal(seenBySales.margin.margin, 900, '3 × (900 − 600)');
 
   const seenByKam = await kam.get(`/api/sales/quotations/${quote.id}`);
   assert.equal(seenByKam.items[0].cost_price, 600);
-  assert.equal(seenByKam.margin.margin, 900, '3 × (900 − 600)');
+  assert.equal(seenByKam.margin.margin, 900);
+
+  // Logistics still work in quantities: a driver's copy is not a costing sheet.
+  const seenByDriver = await logistics.get(`/api/sales/quotations/${quote.id}`);
+  assert.equal(seenByDriver.items[0].cost_price, null);
+  assert.equal(seenByDriver.margin, null);
 });
 
 test('a desk cannot do another desk\'s work', async () => {

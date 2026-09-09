@@ -136,6 +136,8 @@ test('none of it reaches the client', async () => {
     'no printed document so much as mentions the working behind a rate');
   assert.ok(!/cost_price/.test(printer),
     'nor what the goods cost us');
+  assert.ok(!/jobCost|job_cost/.test(printer),
+    'nor what the job has cost — that is a screen, not a document');
 });
 
 test('the rate builder belongs to the desks that price the work', async () => {

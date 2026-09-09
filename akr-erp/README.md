@@ -533,8 +533,33 @@ Money is not everybody's business, and the rule is enforced on the server, not j
 | Administrator | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Key Account Manager | ✓ | ✓ | ✓ | ✓ | — |
 | Accounts | ✓ | ✓ | — | ✓ | — |
-| Sales Officer | ✓ | — | ✓ | — | — |
+| Sales Officer | ✓ | ✓ | ✓ | — | — |
 | Logistics | — | — | — | — | — |
+
+The sales officer prices the work, so they see the buying rate behind it — a rate cannot be set by
+somebody who may not see what the goods cost. Logistics still work in quantities: a driver's copy of
+an order carries no cost at all.
+
+### What a job costs
+
+A client's LPO carries the answer to the question the desk actually asks — *we are selling this at
+that rate; what are we paying, and what has gone out on top?*
+
+```
+  Selling price          before VAT                               30,048.00
+− Buying price           the buying rate on these lines          − 23,460.00
+− Expenses on this job   1 booked to it or to this client        −    600.00
+= Margin                 19.93% of the selling price               5,988.00
+```
+
+Beside it: what has been **ordered from the makers** against this order and what they have
+**billed us**, so the buying price allowed for can be compared with what is actually being paid.
+An expense is booked *against the job* — the enquiry — as well as to an account, which is what puts
+freight on this order and an inspection on that one instead of in a monthly heap.
+
+**None of it prints.** The client's paperwork shows what they are charged and nothing behind it;
+there is a test that fails if a printed document ever mentions cost, the rate build-up or the job
+cost.
 
 A sales officer works to a price list and never sees what the manufacturer charged. A driver's
 delivery note carries quantities and part numbers and no prices at all — a priced one in the wrong

@@ -343,6 +343,8 @@
           { label: 'Head', key: 'category_name' },
           { label: 'Description', render: (r) => `<b>${esc(r.description)}</b>
               <div class="muted small">${esc([r.payee, r.project].filter(Boolean).join(' · '))}</div>` },
+          { label: 'Job', render: (r) => (r.enquiry_no
+            ? `<span class="mono small">${esc(r.enquiry_no)}</span>` : '—') },
           { label: 'Booked to', render: (r) => (r.partner_name
             ? `${esc(r.partner_name)}<div class="muted small">${
               r.partner_type === 'client' ? 'client' : 'manufacturer'}</div>`
@@ -422,6 +424,12 @@
   async function openExpense(kind, existing) {
     const m = await APP.loadMasters();
     const partners = (await API.get('/api/partners?limit=500')).rows;
+    // The jobs an expense can belong to: enquiries on either side, which is
+    // how a cost finds its way onto the order it was incurred for.
+    const jobs = [
+      ...(await API.get('/api/sales/enquiries?limit=200').catch(() => ({ rows: [] }))).rows,
+      ...(await API.get('/api/purchase/enquiries?limit=200').catch(() => ({ rows: [] }))).rows,
+    ];
     const heads = m.expenseCategories.filter((c) => c.kind === (existing ? existing.kind : kind));
 
     UI.modal({
@@ -457,6 +465,17 @@
             ].filter((g) => g.options.length) })}
           ${UI.field({ name: 'project', label: 'Project', value: existing ? existing.project || '' : '' })}
         </div>
+        ${UI.field({ name: 'enquiry_id', label: 'Against the job', blank: 'Not against one job',
+          value: existing ? existing.enquiry_id : '',
+          hint: 'The enquiry it belongs to. It then shows as a cost of that job on the order.',
+          options: [
+            { label: "Clients' enquiries", options: jobs.filter((e) => e.side === 'client')
+              .map((e) => ({ value: e.id,
+                label: `${e.enquiry_no} — ${e.partner_name || e.client_name || ''} ${e.subject || ''}`.trim() })) },
+            { label: 'Ours to the makers', options: jobs.filter((e) => e.side === 'supplier')
+              .map((e) => ({ value: e.id,
+                label: `${e.enquiry_no} — ${e.partner_name || e.client_name || ''} ${e.subject || ''}`.trim() })) },
+          ].filter((g) => g.options.length) })}
         <div class="grid g3">
           ${UI.field({ name: 'amount', label: 'Amount (before VAT)', type: 'number', step: '0.01',
             required: true, value: existing ? existing.amount : '' })}

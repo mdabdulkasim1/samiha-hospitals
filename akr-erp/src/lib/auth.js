@@ -134,7 +134,13 @@ function requireRole(...roles) {
  */
 const PRICE_ROLES = ['admin', 'kam', 'accounts', 'sales'];
 const MONEY_ROLES = ['admin', 'kam', 'accounts'];
-const COST_ROLES  = ['admin', 'kam', 'accounts'];
+/*
+ * seesCost includes the sales officer, at the owner's instruction: they price
+ * the work now, and a rate cannot be set by somebody who may not see what the
+ * goods cost. It stays out of every printed document — the client's quotation
+ * shows the rate and nothing behind it — which is what makes it safe on screen.
+ */
+const COST_ROLES  = ['admin', 'kam', 'accounts', 'sales'];
 /*
  * buildsRates — who works a selling rate up from the maker's price and the
  * charges on it. The desks that price the work: the sales officer who prepares

@@ -115,3 +115,40 @@ test('the access list is the administrator\'s alone to change', async () => {
     { name: 'X', email: 'x@y.z', role: 'admin', password: 'abcd1234' }), (err) => err.status === 403);
   await admin.put(`/api/admin/users/${ctx.salesUser.id}/screens`, { reset: true });
 });
+
+test('the sales desk sees what a job is costing, and never prints it', async () => {
+  const client = (await admin.get('/api/partners?type=client&limit=1')).rows[0];
+  const item = (await admin.get('/api/items?limit=1')).rows[0];
+  const enquiry = await sales.post('/api/sales/enquiries',
+    { partner_id: client.id, subject: 'Job cost test' });
+  const quote = await sales.post('/api/sales/quotations', {
+    partner_id: client.id, enquiry_id: enquiry.id,
+    items: [{ item_id: item.id, qty: 10, unit_price: 900, cost_price: 600 }],
+  });
+  const order = await sales.post('/api/sales/orders', {
+    partner_id: client.id, quotation_id: quote.id, client_lpo_no: 'JOB/COST/1',
+    items: [{ item_id: item.id, qty: 10, unit_price: 900, cost_price: 600 }],
+  });
+
+  // An expense booked against the job itself.
+  await admin.post('/api/accounts/expenses', {
+    description: 'Crane hire for this delivery', amount: 1500,
+    enquiry_id: enquiry.id, mode: 'cash' });
+
+  const seen = await sales.get(`/api/sales/orders/${order.id}`);
+  assert.equal(seen.items[0].cost_price, 600, 'the buying rate is on the line');
+  const j = seen.jobCost;
+  assert.equal(j.revenue, 9000);
+  assert.equal(j.goods_cost, 6000, '10 × 600');
+  assert.equal(j.expense_total, 1500, 'and what was booked to the job');
+  assert.ok(j.expenses.some((e) => e.description.startsWith('Crane hire')));
+  assert.equal(j.cost, 7500);
+  assert.equal(j.margin, 1500);
+  assert.equal(j.margin_percent, 16.67);
+
+  // The driver is not given any of it.
+  const driver = await h.signIn('logistics@akr365.com');
+  const theirs = await driver.get(`/api/sales/orders/${order.id}`);
+  assert.equal(theirs.jobCost, null, 'logistics work in quantities');
+  assert.equal(theirs.items[0].cost_price, null);
+});
