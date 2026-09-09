@@ -103,8 +103,15 @@ so one upload is enough. Replacing it changes every one of those at once, becaus
 fingerprint of the file.
 
 It is uploaded rather than committed on purpose: a logo is a fact about the company, like its address
-or its TRN. Hand-drawing an approximation of somebody's mark and shipping it is how the wrong bird
-ends up on every invoice the system prints.
+or its TRN. **With nothing uploaded the placeholder is plain type — `AKR / LOGO NOT SET` — not a
+drawing of anybody's mark.** An earlier version of this system shipped an approximation of the
+company's own logo, which is the one thing it must never do: an approximation printed as though it
+were the logo is worse than no logo at all.
+
+**Uploaded artwork lives where the database lives.** With a volume mounted it survives a deploy;
+without one it is written inside the container Railway replaces on each deploy, so a logo uploaded
+on Monday is the placeholder again on Tuesday. The Logo tab says so in red when that is the case,
+and `/api/health` reports `uploads: volume | ephemeral`.
 
 Two things decide whether it *looks* right:
 

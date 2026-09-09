@@ -31,6 +31,17 @@ const TYPES = [
   { mime: 'image/webp', ext: '.webp', magic: [0x52, 0x49, 0x46, 0x46] },
 ];
 
+/*
+ * Where the artwork lives, and whether it will still be there tomorrow.
+ *
+ * With a volume mounted it sits beside the database and survives a deploy.
+ * Without one it is inside the container, which Railway replaces on every
+ * deploy — so a logo uploaded on Monday is the drawn placeholder again on
+ * Tuesday, and the person who uploaded it is left thinking the upload failed.
+ * The screen says so rather than letting that be discovered.
+ */
+const isEphemeral = () => !config.volumePath && config.isProd;
+
 const dir = () => {
   const d = config.volumePath
     ? path.join(config.volumePath, 'branding')
@@ -247,4 +258,4 @@ function isSoft(d) {
 }
 
 module.exports = { SLOTS, SHARP_ENOUGH, find, resolve, urlFor, save, clear, status,
-  dimensions, isSoft, settings, setSettings };
+  dimensions, isSoft, isEphemeral, dir, settings, setSettings };

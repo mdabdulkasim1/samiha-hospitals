@@ -392,6 +392,12 @@
     pane.innerHTML = `
       <div class="card">
         <h3>Logo</h3>
+        ${data.ephemeral ? `<div class="alert danger"><b>Anything uploaded here will be lost on the
+          next deploy.</b> No storage volume is mounted, so the artwork is written inside the
+          container Railway replaces each time the app is deployed — which is why an uploaded logo
+          can turn back into the placeholder on its own. Mount a volume on the service (Railway →
+          the service → Variables/Volumes) and upload it again; the database has the same
+          problem until you do.</div>` : ''}
         <div class="card-sub">Upload the company's own artwork. It replaces the drawn placeholder
           everywhere at once — the sidebar, the sign-in page, the head of every printed document,
           the watermark ghosted behind them, and the browser tab. <b>An SVG is best</b>: it is a

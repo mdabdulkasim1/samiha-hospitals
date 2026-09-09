@@ -50,6 +50,8 @@ app.get('/api/health', (_req, res) => {
      * day it matters. The path itself is not reported — this endpoint is open.
      */
     storage: config.dbIsEphemeral ? 'ephemeral' : (config.volumePath ? 'volume' : 'local'),
+    // The logo and the attachments live wherever the database does.
+    uploads: config.volumePath ? 'volume' : (config.isProd ? 'ephemeral' : 'local'),
   });
 });
 

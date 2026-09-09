@@ -142,3 +142,28 @@ test('the screen says how big the artwork is, and when it is too small', async (
   assert.equal(res.headers.get('content-type'), 'image/svg+xml');
   assert.match(await res.text(), /<circle/);
 });
+
+test('the placeholder is type, not somebody else\'s bird', () => {
+  /*
+   * This file used to be a drawing of the company's own mark, which is the one
+   * thing a system must never put on an invoice: an approximation of a logo,
+   * printed as though it were the logo. It is now plainly a stand-in.
+   */
+  for (const name of ['logo-icon.svg', 'logo.svg', 'favicon.svg']) {
+    const svg = fs.readFileSync(path.join(__dirname, '..', 'public', 'assets', name), 'utf8');
+    assert.match(svg, /LOGO NOT SET/, `${name} says it is a placeholder`);
+    assert.ok(!/plume|feather|beak|bird/i.test(svg), `${name} draws nobody's mark`);
+    assert.ok(!/<path/i.test(svg), `${name} is type and boxes, not artwork`);
+  }
+});
+
+test('the screen warns when an upload would not survive a deploy', async () => {
+  const data = await admin.get('/api/masters/branding');
+  assert.equal(typeof data.ephemeral, 'boolean');
+  // In this test run there is a data directory, so nothing is at risk.
+  assert.equal(data.ephemeral, false);
+
+  const health = await fetch(`${h.base}/api/health`).then((r) => r.json());
+  assert.ok(['volume', 'local', 'ephemeral'].includes(health.uploads),
+    'and the health check says where uploads are kept');
+});

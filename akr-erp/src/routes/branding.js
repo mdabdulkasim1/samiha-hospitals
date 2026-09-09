@@ -34,7 +34,12 @@ module.exports = router;
 const admin = express.Router();
 
 admin.get('/', wrap(async (_req, res) => {
-  res.json({ slots: branding.status(), settings: branding.settings() });
+  res.json({
+    slots: branding.status(),
+    settings: branding.settings(),
+    // Whether what is uploaded here survives the next deploy.
+    ephemeral: branding.isEphemeral(),
+  });
 }));
 
 /** Whether the artwork carries its own background. */
