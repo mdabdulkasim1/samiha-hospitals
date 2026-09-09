@@ -61,6 +61,15 @@ admin.post('/:slot', auth.requireRole('admin'), wrap(async (req, res) => {
   res.json({ ...saved, slots: branding.status() });
 }));
 
+/** Take the artwork from the company's own website. */
+admin.post('/:slot/from-url', auth.requireRole('admin'), wrap(async (req, res) => {
+  v.required(req.body, ['url']);
+  const saved = await branding.fromUrl(req.params.slot, v.str(req.body.url));
+  audit.log(req, 'branding.fetched', 'branding', req.params.slot,
+    { from: saved.taken_from, size: saved.size_bytes });
+  res.json({ ...saved, slots: branding.status(), settings: branding.settings() });
+}));
+
 admin.delete('/:slot', auth.requireRole('admin'), wrap(async (req, res) => {
   const removed = branding.clear(req.params.slot);
   audit.log(req, 'branding.cleared', 'branding', req.params.slot);

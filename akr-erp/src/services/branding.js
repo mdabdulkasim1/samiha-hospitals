@@ -234,6 +234,93 @@ function dimensions(file, mime) {
  */
 const SHARP_ENOUGH = 480;
 
+
+/* --------------------------------------------------------- from a web address
+ * The company's logo is already on its website. Rather than ask somebody to
+ * find the file, save it and upload it from a phone, the server fetches it —
+ * the server, because it is the one with a plain route to the internet.
+ *
+ * Give it the address of the site and it looks for the artwork the way a
+ * browser would: the social-sharing image a site declares for itself, then the
+ * touch icon, then the first image in the page that calls itself a logo. Give
+ * it the address of an image and it takes that. Either way the bytes are
+ * checked before anything is written — a page that serves an HTML error with
+ * an image's name is not an image.
+ */
+const FETCH_LIMIT_BYTES = 4 * 1024 * 1024;
+const FETCH_TIMEOUT_MS = 12_000;
+
+async function download(url) {
+  const target = new URL(url);
+  if (!['http:', 'https:'].includes(target.protocol)) {
+    throw badRequest('Give a web address beginning with http:// or https://');
+  }
+  let res;
+  try {
+    res = await fetch(target, {
+      redirect: 'follow',
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      headers: { 'User-Agent': 'AKR-ERP/1.0 (+logo fetch)', Accept: 'image/*,text/html;q=0.8' },
+    });
+  } catch (err) {
+    throw badRequest(`That address could not be reached: ${err.message}`);
+  }
+  if (!res.ok) throw badRequest(`That address answered ${res.status}.`);
+
+  const buf = Buffer.from(await res.arrayBuffer());
+  if (buf.length > FETCH_LIMIT_BYTES) throw badRequest('That file is larger than 4 MB.');
+  return { buf, url: res.url || target.href, type: res.headers.get('content-type') || '' };
+}
+
+/** The artwork a page declares for itself. */
+function logoInPage(html, pageUrl) {
+  const pick = (re) => {
+    const m = html.match(re);
+    return m ? m[1] : null;
+  };
+  const candidate =
+    pick(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i)
+    || pick(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i)
+    || pick(/<link[^>]+rel=["'][^"']*apple-touch-icon[^"']*["'][^>]+href=["']([^"']+)["']/i)
+    || pick(/<img[^>]+(?:class|id|alt)=["'][^"']*logo[^"']*["'][^>]*src=["']([^"']+)["']/i)
+    || pick(/<img[^>]+src=["']([^"']*logo[^"']*)["']/i)
+    || pick(/<link[^>]+rel=["'][^"']*icon[^"']*["'][^>]+href=["']([^"']+)["']/i);
+  if (!candidate) return null;
+  try {
+    return new URL(candidate, pageUrl).href;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Take the artwork for a slot from a web address.
+ *
+ * Returns what was saved, and the address it was actually taken from — which
+ * matters when a site address was given and the picture came from somewhere
+ * inside it.
+ */
+async function fromUrl(slot, url) {
+  if (!SLOTS[slot]) throw badRequest('There is no such logo.');
+  let got = await download(url);
+
+  // An HTML page: find the artwork it declares, and fetch that instead.
+  const looksHtml = got.type.includes('text/html')
+    || got.buf.slice(0, 200).toString('utf8').trim().toLowerCase().startsWith('<!doctype html')
+    || got.buf.slice(0, 200).toString('utf8').toLowerCase().includes('<html');
+  if (looksHtml) {
+    const found = logoInPage(got.buf.toString('utf8'), got.url);
+    if (!found) {
+      throw badRequest('No logo could be found on that page. Open the logo itself in the browser, '
+        + 'copy that address, and paste it here.');
+    }
+    got = await download(found);
+  }
+
+  const saved = save(slot, { data: got.buf.toString('base64'), filename: path.basename(new URL(got.url).pathname) || `${slot}` });
+  return { ...saved, taken_from: got.url };
+}
+
 const status = () => Object.entries(SLOTS).map(([slot, meta]) => {
   const found = find(slot);
   return {
@@ -258,4 +345,4 @@ function isSoft(d) {
 }
 
 module.exports = { SLOTS, SHARP_ENOUGH, find, resolve, urlFor, save, clear, status,
-  dimensions, isSoft, isEphemeral, dir, settings, setSettings };
+  dimensions, isSoft, isEphemeral, dir, settings, setSettings, fromUrl, logoInPage };

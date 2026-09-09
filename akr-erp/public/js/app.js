@@ -135,6 +135,21 @@
       }
     },
 
+    /**
+     * Re-read the session and repaint the shell.
+     *
+     * The sidebar is drawn once, at sign-in, from the company record — so a
+     * logo replaced under Masters stayed the old one on screen until somebody
+     * signed out and in again, which looks exactly like an upload that did not
+     * work. Anything that changes the company calls this.
+     */
+    async refreshShell() {
+      const me = await API.get('/api/auth/me');
+      Object.assign(APP, me);
+      renderShell();
+      await router();
+    },
+
     async logout() {
       try { await API.post('/api/auth/logout'); } catch { /* already gone */ }
       API.setToken(null);

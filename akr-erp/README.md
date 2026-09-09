@@ -108,6 +108,13 @@ drawing of anybody's mark.** An earlier version of this system shipped an approx
 company's own logo, which is the one thing it must never do: an approximation printed as though it
 were the logo is worse than no logo at all.
 
+**Or take it from the company's own website.** Paste `https://www.akr365.com/` into the Logo tab and
+the server fetches it: given a site it looks for the artwork the way a browser would — the
+social-sharing image the site declares for itself, then the touch icon, then an image that calls
+itself a logo — and given the address of a picture it takes that. The bytes are checked before
+anything is kept, so a page that serves an error under an image's name is refused. It is the server
+that fetches, because it is the one with a plain route to the internet.
+
 **Uploaded artwork lives where the database lives.** With a volume mounted it survives a deploy;
 without one it is written inside the container Railway replaces on each deploy, so a logo uploaded
 on Monday is the placeholder again on Tuesday. The Logo tab says so in red when that is the case,

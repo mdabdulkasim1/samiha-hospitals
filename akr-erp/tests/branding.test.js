@@ -167,3 +167,77 @@ test('the screen warns when an upload would not survive a deploy', async () => {
   assert.ok(['volume', 'local', 'ephemeral'].includes(health.uploads),
     'and the health check says where uploads are kept');
 });
+
+test('the artwork can be taken from the company\'s own website', async () => {
+  /*
+   * The logo is already on akr365.com. The server fetches it — the server,
+   * because it is the one with a plain route to the internet — and checks the
+   * bytes before keeping anything. A little site is stood up here to be that
+   * website, so the test proves the fetch rather than the internet.
+   */
+  const http = require('http');
+  const site = http.createServer((req, res) => {
+    if (req.url === '/') {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      return res.end(`<!doctype html><html><head>
+        <meta property="og:image" content="/img/akr-logo.png">
+        </head><body><h1>AKR General Trading</h1></body></html>`);
+    }
+    if (req.url === '/img/akr-logo.png') {
+      res.writeHead(200, { 'content-type': 'image/png' });
+      return res.end(PNG);
+    }
+    if (req.url === '/not-a-logo.txt') {
+      res.writeHead(200, { 'content-type': 'text/plain' });
+      return res.end('this is not a picture');
+    }
+    res.writeHead(404); res.end('no');
+  });
+  await new Promise((r) => site.listen(0, r));
+  const origin = `http://127.0.0.1:${site.address().port}`;
+
+  try {
+    // The address of the site: the logo it declares for itself is found.
+    const fromSite = await admin.post('/api/masters/branding/mark/from-url', { url: origin + '/' });
+    assert.match(fromSite.taken_from, /\/img\/akr-logo\.png$/, 'found through the page');
+    assert.equal(fromSite.mime, 'image/png');
+    const served = await fetch(`${h.base}/api/branding/mark`);
+    assert.deepEqual(Buffer.from(await served.arrayBuffer()), PNG, 'and kept byte for byte');
+
+    // The address of the picture itself: taken as it stands.
+    const direct = await admin.post('/api/masters/branding/full/from-url',
+      { url: `${origin}/img/akr-logo.png` });
+    assert.equal(direct.slot, 'full');
+
+    // Anything that is not a picture is refused, whatever it is served as.
+    await assert.rejects(
+      () => admin.post('/api/masters/branding/mark/from-url', { url: `${origin}/not-a-logo.txt` }),
+      (err) => err.status === 400);
+    await assert.rejects(
+      () => admin.post('/api/masters/branding/mark/from-url', { url: `${origin}/missing.png` }),
+      (err) => err.status === 400 && /404/.test(err.message));
+    await assert.rejects(
+      () => admin.post('/api/masters/branding/mark/from-url', { url: 'file:///etc/passwd' }),
+      (err) => err.status === 400 && /http/.test(err.message),
+      'and only the web, not the filesystem');
+  } finally {
+    site.close();
+  }
+});
+
+test('a page that declares no logo says so plainly', async () => {
+  const http = require('http');
+  const bare = http.createServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end('<!doctype html><html><body>Nothing here</body></html>');
+  });
+  await new Promise((r) => bare.listen(0, r));
+  try {
+    await assert.rejects(
+      () => admin.post('/api/masters/branding/mark/from-url',
+        { url: `http://127.0.0.1:${bare.address().port}/` }),
+      (err) => err.status === 400 && /No logo could be found/.test(err.message));
+  } finally {
+    bare.close();
+  }
+});

@@ -431,6 +431,17 @@
                 <b>SVG</b>, or a PNG at least 480 pixels on its longer side.</div>` : ''}
             </div>`).join('')}
         </div>
+        ${isAdmin ? `<div class="mt">
+          <label class="field"><span>Or take it from the company's website</span>
+            <input id="brand-url" placeholder="https://www.akr365.com/" autocomplete="off"></label>
+          <div class="btn-row">
+            <button class="btn ghost sm" data-fetch="mark">Fetch as the mark</button>
+            <button class="btn ghost sm" data-fetch="full">Fetch as the lock-up</button>
+          </div>
+          <div class="muted small mt">Paste the address of the site and the server looks for the
+            logo the way a browser would; paste the address of the picture itself and it takes
+            that. Whatever comes back is checked before it is kept.</div>
+        </div>` : ''}
         <div id="brand-out"></div>
         <div class="mt">${UI.checkbox({ name: 'plate', label: 'Put a light plate behind it',
           checked: data.settings ? data.settings.plate !== false : true })}
@@ -445,15 +456,27 @@
     if (!isAdmin) return;
     const out = pane.querySelector('#brand-out');
 
+    pane.querySelectorAll('[data-fetch]').forEach((b) => b.addEventListener('click', async () => {
+      const url = pane.querySelector('#brand-url').value.trim();
+      if (!url) { UI.err('Paste a web address first.'); return; }
+      out.innerHTML = UI.loading();
+      try {
+        const saved = await API.post(`/api/masters/branding/${b.dataset.fetch}/from-url`, { url });
+        UI.ok(`Taken from ${saved.taken_from}`);
+        // The sidebar is painted from the session, so re-read it: otherwise the
+        // logo changes everywhere except the one place they are looking.
+        await APP.refreshShell();
+      } catch (err) {
+        out.innerHTML = `<div class="alert danger">${esc(err.message)}</div>`;
+      }
+    }));
+
     const plate = pane.querySelector('[name=plate]');
     if (plate) {
       plate.addEventListener('change', async () => {
         await API.patch('/api/masters/branding', { plate: plate.checked });
         UI.ok(plate.checked ? 'A plate goes behind it.' : 'The artwork stands on its own.');
-        // The sidebar is drawn from the session, so it follows on the next paint.
-        const me = await API.get('/api/auth/me');
-        if (me && me.company) APP.company = me.company;
-        APP.reload();
+        await APP.refreshShell();
       });
     }
 
@@ -474,9 +497,10 @@
           });
           out.innerHTML = '';
           UI.ok('Logo updated. It is on every screen and every document from now on.');
-          // The shell is holding the old one.
+          // The shell is holding the old one — re-read the session rather than
+          // reloading the page, which loses where they were.
           await APP.loadMasters(true);
-          window.location.reload();
+          await APP.refreshShell();
         } catch (err) {
           out.innerHTML = `<div class="alert danger mt">${esc(err.message)}</div>`;
         }
@@ -484,11 +508,11 @@
     });
 
     pane.querySelectorAll('[data-clear]').forEach((b) => b.addEventListener('click', async () => {
-      const sure = await UI.confirm('Go back to the drawn placeholder?', { danger: true });
+      const sure = await UI.confirm('Go back to the plain placeholder?', { danger: true });
       if (!sure) return;
       await API.del(`/api/masters/branding/${b.dataset.clear}`);
       UI.ok('Reverted.');
-      window.location.reload();
+      await APP.refreshShell();
     }));
   }
 
