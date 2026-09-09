@@ -221,8 +221,11 @@ function chain(kind, id) {
     const quote = salesOrder.quotation_id
       ? one('SELECT * FROM sales_quotations WHERE id = ?', salesOrder.quotation_id) : null;
     if (enquiry) enquiry = null;   // the client's enquiry is pushed from the quotation below
-    if (quote && quote.enquiry_id) {
-      const e = one('SELECT * FROM enquiries WHERE id = ?', quote.enquiry_id);
+    // The order carries the enquiry itself now; older ones reach it through
+    // the quotation they came off.
+    const clientEnquiryId = salesOrder.enquiry_id || (quote && quote.enquiry_id);
+    if (clientEnquiryId) {
+      const e = one('SELECT * FROM enquiries WHERE id = ?', clientEnquiryId);
       push('Client enquiry', e && {
         kind: 'enquiry', id: e.id, ref: e.enquiry_no, on_date: e.received_on,
         who: client && client.name, status: e.status, route: 'enquiries',
@@ -271,8 +274,13 @@ function chain(kind, id) {
     out.partner = one('SELECT * FROM partners WHERE id = ?', supplierQuote.partner_id);
   }
 
-  // Oldest first — the story reads forwards.
-  out.steps.sort((a, b) => (a.on_date < b.on_date ? -1 : a.on_date > b.on_date ? 1 : a.id - b.id));
+  /*
+   * Oldest first — the story reads forwards. Documents raised on the same day
+   * keep the order they were pushed in, which is the order the trade happened;
+   * comparing row ids across different tables put a quotation before the
+   * enquiry it answered whenever both were logged the same morning.
+   */
+  out.steps.sort((a, b) => (a.on_date < b.on_date ? -1 : a.on_date > b.on_date ? 1 : 0));
   return out;
 }
 

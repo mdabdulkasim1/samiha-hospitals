@@ -19,7 +19,8 @@ SELL  client's enquiry → our quotation → the client's LPO → delivery note 
 
 Both sides start with an **enquiry**, and it is the same screen read in two directions: on the sell
 side it is what a client has asked us to price, on the buy side what we have asked a manufacturer to
-price. **No supplier quotation exists without one** — the system refuses to log a maker's price that
+price. **Its number is then on every document of that job, both sides** — quotation, LPO, goods
+receipt, bill, delivery note, tax invoice and the voucher that settles it. **No supplier quotation exists without one** — the system refuses to log a maker's price that
 does not answer an enquiry we raised, so there is always a record of what was asked, of whom and
 when, including the makers who never came back.
 
@@ -46,6 +47,16 @@ rather than one of its own:
 ```
 AGAINST INVOICE       INVOICE DATE   OUR ENQUIRY          INVOICE TOTAL    APPLIED
 AKR-BILL-092026-001   09 Sep 2026    AKR-RFQ-092026-001       24,633.00   24,633.00
+```
+
+On the selling side the same number is on the client's LPO, the **delivery note** and the **tax
+invoice**, printed on both:
+
+```
+INVOICE NO.            INVOICE DATE   DUE DATE       CURRENCY
+AKR-INV-092026-001     09 Sep 2026    09 Sep 2026    AED
+ENQUIRY REF.           OUR ORDER
+AKR-ENQ-092026-001     AKR-SO-092026-001
 ```
 
 An **advance** has no invoice behind it yet, so the voucher can be told which enquiry it belongs to
@@ -483,8 +494,8 @@ A4, on the company's letterhead, with the application title under the document t
 |---|---|
 | **Quotation** | Lines, rates, VAT, validity, delivery, payment terms, terms & conditions |
 | **Local Purchase Order** | Supplier and their TRN, attention, incoterms, deliver-to, **our enquiry**, their own quotation number and ours, the SO reference, approving authority, amount in words, the numbered conditions, buyer details, acknowledgement |
-| **Delivery Note** | Quantities and part numbers, no prices; a signature block; a payment-on-delivery warning where the terms call for one |
-| **Tax Invoice** | Both TRNs, the client's LPO, the delivery note, taxable value, 5% VAT, total, amount in words, bank details |
+| **Delivery Note** | Quantities and part numbers, no prices; **the enquiry** and our order; a signature block; a payment-on-delivery warning where the terms call for one |
+| **Tax Invoice** | Both TRNs, the client's LPO, **the enquiry**, our order, the delivery note, taxable value, 5% VAT, total, amount in words, bank details |
 | **Receipt / Payment Voucher** | What was received or paid, against which invoices and **under which enquiry**, cheque details |
 | **Goods Receipt Note** | Accepted and rejected quantities, the supplier's own delivery note reference, **our enquiry** and our LPO |
 | **Statement of Account** | Every entry with a running balance, and the ageing underneath |

@@ -63,6 +63,23 @@ router.patch('/enquiries/:id', seller, wrap(async (req, res) => {
   res.json(enquiries.update('client', req.params.id, req.body));
 }));
 
+/**
+ * The client's enquiry a document belongs to.
+ *
+ * Given explicitly, or taken from the quotation it came off — the sell side
+ * records the enquiry on the quotation, and everything after it inherits.
+ */
+function clientEnquiry(given, quotationId) {
+  if (given) {
+    const e = enquiries.get(given, 'client');
+    if (!e) throw notFound('No such client enquiry.');
+    return e.id;
+  }
+  if (!quotationId) return null;
+  const q = db.prepare('SELECT enquiry_id FROM sales_quotations WHERE id = ?').get(quotationId);
+  return q ? q.enquiry_id || null : null;
+}
+
 // ============================================================ our quotations
 const SQ_SELECT = `
   SELECT q.*, p.name AS client_name, p.code AS client_code, p.trn AS client_trn,
@@ -306,13 +323,16 @@ const SO_SELECT = `
          a.name AS application_name, a.code AS application_code,
          t.name AS terms_name, t.kind AS terms_kind,
          c.code AS company_code, c.name AS company_name,
-         q.quote_no, u.name AS created_by_name
+         q.quote_no, u.name AS created_by_name,
+         COALESCE(e.enquiry_no, qe.enquiry_no) AS enquiry_no
     FROM sales_orders o
     JOIN partners p ON p.id = o.partner_id
     LEFT JOIN applications a ON a.id = o.application_id
     LEFT JOIN payment_terms t ON t.id = o.payment_terms_id
     LEFT JOIN companies c ON c.id = o.company_id
     LEFT JOIN sales_quotations q ON q.id = o.quotation_id
+    LEFT JOIN enquiries e ON e.id = o.enquiry_id
+    LEFT JOIN enquiries qe ON qe.id = q.enquiry_id
     LEFT JOIN users u ON u.id = o.created_by`;
 
 router.get('/orders', wrap(async (req, res) => {
@@ -391,22 +411,27 @@ router.post('/orders', seller, wrap(async (req, res) => {
   const paymentTermsId = b.payment_terms_id || client.payment_terms_id || null;
   const schedule = terms.schedule(paymentTermsId, priced.footer.total);
   const orderDate = v.date(b.order_date) || v.today();
+  // The client's enquiry travels from the quotation onto the order, and from
+  // there onto the delivery note and the tax invoice, so one number runs the
+  // length of the job on this side too.
+  const enquiryId = clientEnquiry(b.enquiry_id, b.quotation_id);
 
   const result = tx(() => {
     const soNo = ids.docNo('salesOrder', company.code);
     const info = db.prepare(`
       INSERT INTO sales_orders (company_id, so_no, client_lpo_no, client_lpo_date, partner_id,
-        quotation_id, application_id, project, order_date, delivery_date, purchase_officer,
+        quotation_id, enquiry_id, application_id, project, order_date, delivery_date, purchase_officer,
         purchase_officer_mobile, delivery_contact, delivery_mobile, delivery_location,
         delivery_address, payment_terms_id, currency, subtotal, discount, vat_amount, total,
         advance_required, notes, created_by)
       VALUES (@company_id, @so_no, @client_lpo_no, @client_lpo_date, @partner_id, @quotation_id,
-        @application_id, @project, @order_date, @delivery_date, @purchase_officer,
+        @enquiry_id, @application_id, @project, @order_date, @delivery_date, @purchase_officer,
         @purchase_officer_mobile, @delivery_contact, @delivery_mobile, @delivery_location,
         @delivery_address, @payment_terms_id, @currency, @subtotal, @discount, @vat_amount, @total,
         @advance_required, @notes, @created_by)`).run({
       company_id: company.id,
       so_no: soNo,
+      enquiry_id: enquiryId,
       client_lpo_no: v.str(b.client_lpo_no),
       client_lpo_date: v.date(b.client_lpo_date),
       partner_id: client.id,
@@ -516,10 +541,15 @@ router.get('/deliveries', wrap(async (req, res) => {
   const rows = db.prepare(`
     SELECT d.*, p.name AS client_name, o.so_no, o.client_lpo_no, a.name AS application_name,
            u.name AS created_by_name,
+           COALESCE(e.enquiry_no, oe.enquiry_no, qe.enquiry_no) AS enquiry_no,
            (SELECT COALESCE(SUM(qty), 0) FROM delivery_note_items di WHERE di.dn_id = d.id) AS total_qty
       FROM delivery_notes d
       JOIN partners p ON p.id = d.partner_id
       LEFT JOIN sales_orders o ON o.id = d.so_id
+      LEFT JOIN enquiries e ON e.id = d.enquiry_id
+      LEFT JOIN enquiries oe ON oe.id = o.enquiry_id
+      LEFT JOIN sales_quotations oq ON oq.id = o.quotation_id
+      LEFT JOIN enquiries qe ON qe.id = oq.enquiry_id
       LEFT JOIN applications a ON a.id = d.application_id
       LEFT JOIN users u ON u.id = d.created_by
      ORDER BY d.delivery_date DESC, d.id DESC LIMIT ? OFFSET ?`).all(limit, offset);
@@ -534,10 +564,15 @@ router.get('/deliveries/:id', wrap(async (req, res) => {
            o.purchase_officer, o.purchase_officer_mobile,
            a.name AS application_name, c.name AS company_name, c.code AS company_code,
            c.trn AS company_trn, c.address AS company_address, c.phone AS company_phone,
-           t.name AS terms_name, u.name AS created_by_name
+           t.name AS terms_name, u.name AS created_by_name,
+           COALESCE(e.enquiry_no, oe.enquiry_no, qe.enquiry_no) AS enquiry_no
       FROM delivery_notes d
       JOIN partners p ON p.id = d.partner_id
       LEFT JOIN sales_orders o ON o.id = d.so_id
+      LEFT JOIN enquiries e ON e.id = d.enquiry_id
+      LEFT JOIN enquiries oe ON oe.id = o.enquiry_id
+      LEFT JOIN sales_quotations oq ON oq.id = o.quotation_id
+      LEFT JOIN enquiries qe ON qe.id = oq.enquiry_id
       LEFT JOIN applications a ON a.id = d.application_id
       LEFT JOIN companies c ON c.id = d.company_id
       LEFT JOIN payment_terms t ON t.id = o.payment_terms_id
@@ -610,13 +645,16 @@ router.post('/deliveries', shipper, wrap(async (req, res) => {
     const dnNo = ids.docNo('deliveryNote', company.code);
     const deliveredOn = v.date(b.delivery_date) || v.today();
     const info = db.prepare(`
-      INSERT INTO delivery_notes (company_id, dn_no, so_id, partner_id, location_id, application_id,
-        delivery_date, delivery_address, vehicle_no, driver_name, received_by, notes, status, created_by)
-      VALUES (@company_id, @dn_no, @so_id, @partner_id, @location_id, @application_id, @delivery_date,
-        @delivery_address, @vehicle_no, @driver_name, @received_by, @notes, @status, @created_by)`).run({
+      INSERT INTO delivery_notes (company_id, dn_no, so_id, enquiry_id, partner_id, location_id,
+        application_id, delivery_date, delivery_address, vehicle_no, driver_name, received_by, notes,
+        status, created_by)
+      VALUES (@company_id, @dn_no, @so_id, @enquiry_id, @partner_id, @location_id, @application_id,
+        @delivery_date, @delivery_address, @vehicle_no, @driver_name, @received_by, @notes, @status,
+        @created_by)`).run({
       company_id: company.id,
       dn_no: dnNo,
       so_id: order ? order.id : null,
+      enquiry_id: clientEnquiry(b.enquiry_id) || (order ? order.enquiry_id : null),
       partner_id: b.partner_id,
       location_id: location ? location.id : null,
       application_id: b.application_id || (order ? order.application_id : null),
@@ -689,12 +727,17 @@ const SI_SELECT = `
   SELECT i.*, p.name AS partner_name, p.code AS partner_code,
          a.name AS application_name, a.code AS application_code,
          t.name AS terms_name, o.so_no, d.dn_no, c.code AS company_code,
-         (i.total - i.paid_amount) AS outstanding, u.name AS created_by_name
+         (i.total - i.paid_amount) AS outstanding, u.name AS created_by_name,
+         COALESCE(e.enquiry_no, oe.enquiry_no, qe.enquiry_no) AS enquiry_no
     FROM sales_invoices i
     JOIN partners p ON p.id = i.partner_id
     LEFT JOIN applications a ON a.id = i.application_id
     LEFT JOIN payment_terms t ON t.id = i.payment_terms_id
     LEFT JOIN sales_orders o ON o.id = i.so_id
+    LEFT JOIN enquiries e ON e.id = i.enquiry_id
+    LEFT JOIN enquiries oe ON oe.id = o.enquiry_id
+    LEFT JOIN sales_quotations oq ON oq.id = o.quotation_id
+    LEFT JOIN enquiries qe ON qe.id = oq.enquiry_id
     LEFT JOIN delivery_notes d ON d.id = i.dn_id
     LEFT JOIN companies c ON c.id = i.company_id
     LEFT JOIN users u ON u.id = i.created_by`;
@@ -802,11 +845,13 @@ router.post('/invoices', bookkeeper, wrap(async (req, res) => {
   const result = tx(() => {
     const invoiceNo = ids.docNo('salesInvoice', company.code);
     const info = db.prepare(`
-      INSERT INTO sales_invoices (company_id, invoice_no, partner_id, so_id, dn_id, application_id,
+      INSERT INTO sales_invoices (company_id, invoice_no, partner_id, so_id, dn_id, enquiry_id,
+        application_id,
         project, invoice_date, due_date, payment_terms_id, currency, company_name, company_trn,
         company_address, client_name, client_trn, client_address, client_lpo_no, place_of_supply,
         subtotal, discount, vat_amount, total, status, notes, created_by)
-      VALUES (@company_id, @invoice_no, @partner_id, @so_id, @dn_id, @application_id, @project,
+      VALUES (@company_id, @invoice_no, @partner_id, @so_id, @dn_id, @enquiry_id, @application_id,
+        @project,
         @invoice_date, @due_date, @payment_terms_id, @currency, @company_name, @company_trn,
         @company_address, @client_name, @client_trn, @client_address, @client_lpo_no,
         @place_of_supply, @subtotal, @discount, @vat_amount, @total, 'unpaid', @notes, @created_by)`).run({
@@ -815,6 +860,8 @@ router.post('/invoices', bookkeeper, wrap(async (req, res) => {
       partner_id: client.id,
       so_id: order ? order.id : null,
       dn_id: delivery ? delivery.id : null,
+      enquiry_id: clientEnquiry(b.enquiry_id)
+        || (order ? order.enquiry_id : null) || (delivery ? delivery.enquiry_id : null),
       application_id: docs.resolveApplication(
         b.application_id || (order ? order.application_id : null), priced.lines),
       project: v.str(b.project) || (order ? order.project : null),

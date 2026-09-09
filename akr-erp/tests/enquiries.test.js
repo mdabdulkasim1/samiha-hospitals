@@ -307,6 +307,63 @@ test("a client's receipt reaches back to their own enquiry", async () => {
     "the receipt voucher names the client's own enquiry");
 });
 
+test("the delivery note and the tax invoice carry the client's enquiry", async () => {
+  const client = ctx.client;
+  const enquiry = await sales.post('/api/sales/enquiries', {
+    partner_id: client.id, subject: 'Gratings for the pump room' });
+  const quote = await sales.post('/api/sales/quotations', {
+    partner_id: client.id, enquiry_id: enquiry.id,
+    items: [{ item_id: ctx.item.id, qty: 3, unit_price: 800, cost_price: 500 }],
+  });
+  const order = await sales.post('/api/sales/orders', {
+    partner_id: client.id, quotation_id: quote.id, client_lpo_no: 'CLI/LPO/91',
+    items: [{ item_id: ctx.item.id, qty: 3, unit_price: 800, cost_price: 500 }],
+  });
+  const soFull = await sales.get(`/api/sales/orders/${order.id}`);
+  assert.equal(soFull.order.enquiry_no, enquiry.enquiry_no,
+    "the client's LPO carries the enquiry it answers");
+
+  await admin.post('/api/stock/adjustments',
+    { item_id: ctx.item.id, qty: 10, reason: 'Opening for the delivery reference test' });
+  const dn = await logistics.post('/api/sales/deliveries', {
+    partner_id: client.id, so_id: order.id, items: [{ so_item_id: soFull.items[0].id, qty: 3 }] });
+  const dnFull = await logistics.get(`/api/sales/deliveries/${dn.id}`);
+  assert.equal(dnFull.delivery.enquiry_no, enquiry.enquiry_no, 'so does the delivery note');
+  assert.equal((await logistics.get('/api/sales/deliveries?limit=50')).rows
+    .find((r) => r.id === dn.id).enquiry_no, enquiry.enquiry_no, 'and its list');
+
+  const invoice = await accounts.post('/api/sales/invoices',
+    { partner_id: client.id, so_id: order.id, dn_id: dn.id });
+  const invFull = await accounts.get(`/api/sales/invoices/${invoice.id}`);
+  assert.equal(invFull.invoice.enquiry_no, enquiry.enquiry_no, 'and the tax invoice');
+  assert.equal((await accounts.get('/api/sales/invoices?limit=50')).rows
+    .find((r) => r.id === invoice.id).enquiry_no, enquiry.enquiry_no);
+
+  // The whole sell-side chain, from the enquiry to the invoice.
+  const res = await sales.get(`/api/reports/trace?ref=${encodeURIComponent(invoice.invoice_no)}`);
+  assert.equal(res.chain.steps[0].ref, enquiry.enquiry_no);
+  ctx.sellEnquiry = enquiry;
+});
+
+test('a delivery or invoice raised without a quotation can name the enquiry', async () => {
+  const client = ctx.client;
+  const enquiry = await sales.post('/api/sales/enquiries', {
+    partner_id: client.id, subject: 'Straight order, no quotation' });
+  const order = await sales.post('/api/sales/orders', {
+    partner_id: client.id, client_lpo_no: 'CLI/LPO/92', enquiry_id: enquiry.id,
+    items: [{ item_id: ctx.item.id, qty: 1, unit_price: 500, cost_price: 300 }],
+  });
+  assert.equal((await sales.get(`/api/sales/orders/${order.id}`)).order.enquiry_no,
+    enquiry.enquiry_no);
+
+  await assert.rejects(
+    () => sales.post('/api/sales/orders', {
+      partner_id: client.id, client_lpo_no: 'CLI/LPO/93', enquiry_id: ctx.rfq.id,
+      items: [{ item_id: ctx.item.id, qty: 1, unit_price: 5 }] }),
+    (err) => err.status === 404, 'our own enquiry to a maker is not a client order reference',
+  );
+});
+
 test('the whole chain reads from the enquiry to the order', async () => {
   const res = await kam.get(`/api/reports/trace?ref=${encodeURIComponent(ctx.lpo.lpo_no)}`);
   const refs = res.chain.steps.map((s) => s.ref);

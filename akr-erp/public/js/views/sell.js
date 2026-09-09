@@ -305,6 +305,7 @@
         <div class="grid g2 mb">
           <div>${UI.facts([
             ['Their LPO', `<b>${esc(o.client_lpo_no)}</b> · ${UI.date(o.client_lpo_date)}`],
+            ['Their enquiry', o.enquiry_no ? `<span class="mono">${esc(o.enquiry_no)}</span>` : '—'],
             ['Our quotation', esc(o.quote_no || '—')],
             ['Project', esc(o.project || '—')],
             ['Their purchase officer', esc([o.purchase_officer, o.purchase_officer_mobile]
@@ -552,7 +553,8 @@
           box.innerHTML = UI.loading();
           const res = await API.get('/api/sales/deliveries?limit=200');
           box.innerHTML = UI.table([
-            { label: 'DN', render: (r) => `<span class="mono">${esc(r.dn_no)}</span>` },
+            { label: 'DN', render: (r) => `<span class="mono">${esc(r.dn_no)}</span>
+                ${r.enquiry_no ? `<div class="muted small">${esc(r.enquiry_no)}</div>` : ''}` },
             { label: 'Client', render: (r) => `<b>${esc(r.client_name)}</b>
                 <div class="muted small">${esc(r.client_lpo_no ? 'their LPO ' + r.client_lpo_no : '')}</div>` },
             { label: 'Against', key: 'so_no' },
@@ -579,6 +581,7 @@
           payment against the signed delivery note — the driver should not come back without it.</div>` : ''}
         <div class="grid g2 mb">
           <div>${UI.facts([
+            ['Their enquiry', n.enquiry_no ? `<span class="mono">${esc(n.enquiry_no)}</span>` : '—'],
             ['Against', esc(n.so_no ? `${n.so_no} · their LPO ${n.client_lpo_no || ''}` : '—')],
             ['Delivered on', UI.date(n.delivery_date)],
             ['Address', esc(n.delivery_address || '—')],
@@ -714,7 +717,8 @@
           box.innerHTML = UI.loading();
           const res = await API.get('/api/sales/invoices' + API.qs({ q: v.q, status: v.status, limit: 200 }));
           box.innerHTML = UI.table([
-            { label: 'Invoice', render: (r) => `<span class="mono">${esc(r.invoice_no)}</span>` },
+            { label: 'Invoice', render: (r) => `<span class="mono">${esc(r.invoice_no)}</span>
+                ${r.enquiry_no ? `<div class="muted small">${esc(r.enquiry_no)}</div>` : ''}` },
             { label: 'Client', render: (r) => `<b>${esc(r.partner_name)}</b>
                 <div class="muted small">${esc(r.client_lpo_no ? 'their LPO ' + r.client_lpo_no : '')}</div>` },
             { label: 'Application', render: (r) => (r.application_name ? UI.badge(r.application_name, 'navy') : '—') },
@@ -747,6 +751,7 @@
         </div>
         <div class="grid g2 mb">
           <div>${UI.facts([
+            ['Their enquiry', i.enquiry_no ? `<span class="mono">${esc(i.enquiry_no)}</span>` : '—'],
             ['Their LPO', esc(i.client_lpo_no || '—')],
             ['Our order', esc(i.so_no || '—')],
             ['Delivery note', esc(i.dn_no || '—')],

@@ -568,6 +568,9 @@ CREATE TABLE IF NOT EXISTS sales_orders (
   client_lpo_date  TEXT,
   partner_id       INTEGER NOT NULL REFERENCES partners(id),
   quotation_id     INTEGER REFERENCES sales_quotations(id),
+  -- The client's enquiry that started it, carried onto the order so the
+  -- delivery note and the tax invoice can take it from here.
+  enquiry_id       INTEGER REFERENCES enquiries(id),
   application_id   INTEGER REFERENCES applications(id),
   project          TEXT,
   order_date       TEXT NOT NULL DEFAULT (date('now')),
@@ -629,6 +632,7 @@ CREATE TABLE IF NOT EXISTS delivery_notes (
   company_id     INTEGER NOT NULL REFERENCES companies(id),
   dn_no          TEXT NOT NULL UNIQUE,
   so_id          INTEGER REFERENCES sales_orders(id),
+  enquiry_id     INTEGER REFERENCES enquiries(id),
   partner_id     INTEGER NOT NULL REFERENCES partners(id),
   location_id    INTEGER REFERENCES locations(id),
   application_id INTEGER REFERENCES applications(id),
@@ -669,6 +673,7 @@ CREATE TABLE IF NOT EXISTS sales_invoices (
   partner_id       INTEGER NOT NULL REFERENCES partners(id),
   so_id            INTEGER REFERENCES sales_orders(id),
   dn_id            INTEGER REFERENCES delivery_notes(id),
+  enquiry_id       INTEGER REFERENCES enquiries(id),
   application_id   INTEGER REFERENCES applications(id),
   project          TEXT,
   invoice_date     TEXT NOT NULL DEFAULT (date('now')),

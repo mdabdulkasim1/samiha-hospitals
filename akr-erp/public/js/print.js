@@ -389,6 +389,8 @@
         ${meta([
           ['Delivery note no.', d.dn_no],
           ['Date', UI.date(d.delivery_date)],
+          ['Enquiry ref.', d.enquiry_no || '—'],
+          ['Our order', d.so_no || '—'],
           ['Location', d.delivery_location || '—'],
           ['Site contact', [d.delivery_contact, d.delivery_mobile].filter(Boolean).join(' · ') || '—'],
           ['Vehicle', d.vehicle_no || '—'],
@@ -434,6 +436,8 @@
           ['Invoice date', UI.date(i.invoice_date)],
           ['Due date', UI.date(i.due_date)],
           ['Currency', i.currency || 'AED'],
+          ['Enquiry ref.', i.enquiry_no || '—'],
+          ['Our order', i.so_no || '—'],
         ])}
         ${itemsTable(data.items)}
         ${totalsBlock(i, { words: data.amountInWords })}

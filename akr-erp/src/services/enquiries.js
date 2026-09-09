@@ -181,11 +181,13 @@ const INVOICE_ENQUIRY = {
       LEFT JOIN enquiries oe ON oe.id = o.enquiry_id
      WHERE i.id = ?`,
   sales: `
-    SELECT e.enquiry_no AS enquiry_no
+    SELECT COALESCE(e.enquiry_no, oe.enquiry_no, qe.enquiry_no) AS enquiry_no
       FROM sales_invoices i
+      LEFT JOIN enquiries e ON e.id = i.enquiry_id
       LEFT JOIN sales_orders so ON so.id = i.so_id
+      LEFT JOIN enquiries oe ON oe.id = so.enquiry_id
       LEFT JOIN sales_quotations q ON q.id = so.quotation_id
-      LEFT JOIN enquiries e ON e.id = q.enquiry_id
+      LEFT JOIN enquiries qe ON qe.id = q.enquiry_id
      WHERE i.id = ?`,
 };
 
@@ -203,18 +205,22 @@ function forInvoice(side, invoiceId) {
  */
 const PAYMENT_ENQUIRIES_SQL = `(
   SELECT group_concat(ref) FROM (
-    SELECT DISTINCT COALESCE(be.enquiry_no, boe.enquiry_no, se.enquiry_no) AS ref
+    SELECT DISTINCT COALESCE(be.enquiry_no, boe.enquiry_no,
+                             sie.enquiry_no, soe.enquiry_no, se.enquiry_no) AS ref
       FROM payment_allocations a
       LEFT JOIN supplier_invoices bi ON a.invoice_side = 'purchase' AND bi.id = a.invoice_id
       LEFT JOIN enquiries be ON be.id = bi.enquiry_id
       LEFT JOIN purchase_orders bo ON bo.id = bi.po_id
       LEFT JOIN enquiries boe ON boe.id = bo.enquiry_id
       LEFT JOIN sales_invoices si ON a.invoice_side = 'sales' AND si.id = a.invoice_id
+      LEFT JOIN enquiries sie ON sie.id = si.enquiry_id
       LEFT JOIN sales_orders so ON so.id = si.so_id
+      LEFT JOIN enquiries soe ON soe.id = so.enquiry_id
       LEFT JOIN sales_quotations sq ON sq.id = so.quotation_id
       LEFT JOIN enquiries se ON se.id = sq.enquiry_id
      WHERE a.payment_id = p.id
-       AND COALESCE(be.enquiry_no, boe.enquiry_no, se.enquiry_no) IS NOT NULL
+       AND COALESCE(be.enquiry_no, boe.enquiry_no,
+                    sie.enquiry_no, soe.enquiry_no, se.enquiry_no) IS NOT NULL
   ))`;
 
 module.exports = { SIDES, STATUSES, SELECT, PAYMENT_ENQUIRIES_SQL,
