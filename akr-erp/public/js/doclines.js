@@ -46,6 +46,9 @@
       rows: lines.length ? lines.map(normalise) : [blank()],
       side,
       showCost: showCost && side === 'sell',
+      // Who works a rate up from the maker's price: the desks that price the
+      // work. The same rule the server holds — see auth.RATE_ROLES.
+      buildsRates: side === 'sell' && APP.can(['sales', 'kam']),
     };
 
     function blank() {
@@ -130,7 +133,7 @@
           ${state.showCost ? `<td><input class="rate" type="number" step="0.01" min="0" data-f="cost_price" value="${row.cost_price}"></td>` : ''}
           <td>
             <input class="rate" type="number" step="0.01" min="0" data-f="unit_price" value="${row.unit_price}">
-            ${state.side === 'sell' && !readonly ? `<button type="button" class="link-btn small"
+            ${state.buildsRates && !readonly ? `<button type="button" class="link-btn small"
               data-build="${i}" title="Work this rate out from the maker's price and the charges on it"
               >${row.cost_build ? 'rate built ✎' : 'build the rate'}</button>` : ''}
           </td>

@@ -138,6 +138,33 @@ test('none of it reaches the client', async () => {
     'nor what the goods cost us');
 });
 
+test('the rate builder belongs to the desks that price the work', async () => {
+  const kam = await h.signIn('kam@akr365.com');
+  const accounts = await h.signIn('accounts@akr365.com');
+  const logistics = await h.signIn('logistics@akr365.com');
+  const body = { material: 100, qty: 1, profit_percent: 10 };
+
+  for (const desk of [sales, kam, admin]) {
+    assert.equal((await desk.post('/api/sales/costing', body)).rate, 110);
+  }
+  for (const desk of [accounts, logistics]) {
+    await assert.rejects(() => desk.post('/api/sales/costing', body),
+      (err) => err.status === 403, 'they do not set the price');
+    await assert.rejects(() => desk.get('/api/sales/costing/charges'),
+      (err) => err.status === 403);
+  }
+
+  // And the working on an existing quotation is theirs to read, not everyone's.
+  const forSales = await sales.get(`/api/sales/quotations/${ctx.quote.id}`);
+  assert.ok(forSales.items[0].cost_build, 'the desk that built it reads it back');
+  assert.ok((await kam.get(`/api/sales/quotations/${ctx.quote.id}`)).items[0].cost_build,
+    'so does the manager who approves it');
+  assert.equal((await accounts.get(`/api/sales/quotations/${ctx.quote.id}`)).items[0].cost_build,
+    null, 'accounts book what was agreed rather than how it was reached');
+  assert.equal((await logistics.get(`/api/sales/quotations/${ctx.quote.id}`)).items[0].cost_build,
+    null);
+});
+
 test('a revision carries the working with it', async () => {
   const revised = await sales.post(`/api/sales/quotations/${ctx.quote.id}/revise`);
   const full = await sales.get(`/api/sales/quotations/${revised.id}`);

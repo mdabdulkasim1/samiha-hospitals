@@ -91,11 +91,13 @@ function clientEnquiry(given, quotationId) {
  * stores it on the line, so the figure on the screen and the figure kept
  * against the quotation can never disagree — and none of it is printed.
  */
-router.get('/costing/charges', wrap(async (_req, res) => {
+const ratePricer = auth.requireRole('sales', 'kam');   // and the administrator
+
+router.get('/costing/charges', ratePricer, wrap(async (_req, res) => {
   res.json({ suggested: costing.SUGGESTED, bases: costing.BASES });
 }));
 
-router.post('/costing', seller, wrap(async (req, res) => {
+router.post('/costing', ratePricer, wrap(async (req, res) => {
   res.json(costing.build(req.body || {}));
 }));
 
@@ -120,14 +122,22 @@ function screenQuote(user, row, items) {
   if (auth.seesCost(user)) return { row, items };
   if (row) { row.cost_total = null; row.margin = null; row.margin_percent = null; }
   for (const i of items || []) i.cost_price = null;
-  /*
-   * The rate build-up stays, deliberately. What is withheld from a sales
-   * officer is what the manufacturer charged us — the cost carried on the item
-   * master and behind the margin. The build-up is the desk's own working on
-   * this quotation, typed by them to arrive at a rate, and taking it away
-   * would leave them unable to read back the figure they are about to quote.
-   */
   return { row, items };
+}
+
+/**
+ * The working behind a rate belongs to the desks that price the work.
+ *
+ * A sales officer sees it although they do not see cost elsewhere — it is
+ * their own working on this quotation, typed by them to arrive at a rate, and
+ * withholding it would leave them unable to read back the figure they are
+ * about to quote. Accounts and logistics do not: one books what was agreed and
+ * the other moves the goods; neither sets the price.
+ */
+function screenRateBuild(user, items) {
+  if (auth.buildsRates(user)) return items;
+  for (const i of items || []) i.cost_build = null;
+  return items;
 }
 
 router.get('/quotations', wrap(async (req, res) => {
@@ -169,6 +179,7 @@ router.get('/quotations/:id', wrap(async (req, res) => {
   }
   const margin = pricing.margin(row.subtotal - row.discount, row.cost_total);
   screenQuote(req.user, row, items);
+  screenRateBuild(req.user, items);
   res.json({
     quotation: row,
     items,

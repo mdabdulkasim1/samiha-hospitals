@@ -502,13 +502,13 @@ rather than left out, so the expenses column still comes to the group's.
 
 Money is not everybody's business, and the rule is enforced on the server, not just hidden on screen:
 
-| | Prices | Cost & margin | The books | VAT & profit |
-|---|---|---|---|---|
-| Administrator | ✓ | ✓ | ✓ | ✓ |
-| Key Account Manager | ✓ | ✓ | ✓ | — |
-| Accounts | ✓ | ✓ | ✓ | — |
-| Sales Officer | ✓ | — | — | — |
-| Logistics | — | — | — | — |
+| | Prices | Cost & margin | Rate builder | The books | VAT & profit |
+|---|---|---|---|---|---|
+| Administrator | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Key Account Manager | ✓ | ✓ | ✓ | ✓ | — |
+| Accounts | ✓ | ✓ | — | ✓ | — |
+| Sales Officer | ✓ | — | ✓ | — | — |
+| Logistics | — | — | — | — | — |
 
 A sales officer works to a price list and never sees what the manufacturer charged. A driver's
 delivery note carries quantities and part numbers and no prices at all — a priced one in the wrong
@@ -564,6 +564,12 @@ answer.
 
 **None of it is printed.** The client's quotation shows the rate and nothing behind it — which is
 what lets the build-up hold what it holds.
+
+It belongs to the desks that price the work: the **sales officer**, the **key account manager** and
+the **administrator**. Accounts book what was agreed rather than set it, and logistics never see
+money at all, so neither gets the builder or the working behind a quoted rate — the server refuses
+both, not just the screen. The sales officer is the one deliberate exception to the rule that they
+never see cost: this is their own working on their own quotation.
 
 ## The documents it prints
 

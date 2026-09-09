@@ -117,10 +117,19 @@ function requireRole(...roles) {
 const PRICE_ROLES = ['admin', 'kam', 'accounts', 'sales'];
 const MONEY_ROLES = ['admin', 'kam', 'accounts'];
 const COST_ROLES  = ['admin', 'kam', 'accounts'];
+/*
+ * buildsRates — who works a selling rate up from the maker's price and the
+ * charges on it. The desks that price the work: the sales officer who prepares
+ * the quotation, the key account manager who approves it, and the
+ * administrator. Not accounts, who book what was agreed rather than set it,
+ * and not logistics, who never see money at all.
+ */
+const RATE_ROLES  = ['admin', 'kam', 'sales'];
 
 const seesPrices = (user) => Boolean(user) && PRICE_ROLES.includes(user.role);
 const seesMoney  = (user) => Boolean(user) && MONEY_ROLES.includes(user.role);
 const seesCost   = (user) => Boolean(user) && COST_ROLES.includes(user.role);
+const buildsRates = (user) => Boolean(user) && RATE_ROLES.includes(user.role);
 
 /** Strip the fields a role may not see from a row or list of rows. */
 function screen(user, rows, fields) {
@@ -139,7 +148,8 @@ function screenCost(user, rows) {
 }
 
 module.exports = {
-  PRICE_ROLES, MONEY_ROLES, COST_ROLES, seesPrices, seesMoney, seesCost, screen, screenCost,
+  PRICE_ROLES, MONEY_ROLES, COST_ROLES, RATE_ROLES,
+  seesPrices, seesMoney, seesCost, buildsRates, screen, screenCost,
   hashPassword, verifyPassword, passwordProblems,
   createSession, destroySession, purgeExpiredSessions, userForToken,
   attachUser, requireAuth, requireRole, readToken,
