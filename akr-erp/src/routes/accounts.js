@@ -9,6 +9,7 @@ const { wrap, badRequest, notFound, conflict } = require('../lib/http');
 const docs = require('../services/documents');
 const pricing = require('../services/pricing');
 const settlement = require('../services/settlement');
+const enquiries = require('../services/enquiries');
 const ledger = require('../services/ledger');
 const notify = require('../services/notify');
 
@@ -27,9 +28,12 @@ const reader = auth.requireRole('accounts', 'kam');
 const PAY_SELECT = `
   SELECT p.*, pt.name AS partner_name, pt.code AS partner_code, c.code AS company_code,
          c.name AS company_name, u.name AS created_by_name,
-         (p.amount - p.allocated) AS unapplied
+         (p.amount - p.allocated) AS unapplied,
+         pe.enquiry_no AS enquiry_no,
+         ${enquiries.PAYMENT_ENQUIRIES_SQL} AS allocated_enquiries
     FROM payments p
     LEFT JOIN partners pt ON pt.id = p.partner_id
+    LEFT JOIN enquiries pe ON pe.id = p.enquiry_id
     LEFT JOIN companies c ON c.id = p.company_id
     LEFT JOIN users u ON u.id = p.created_by`;
 
@@ -64,7 +68,9 @@ router.get('/payments/:id', reader, wrap(async (req, res) => {
       const meta = settlement.TABLES[a.invoice_side];
       const inv = db.prepare(`SELECT * FROM ${meta.table} WHERE id = ?`).get(a.invoice_id);
       return { ...a, doc_no: inv ? inv[meta.noCol] : null, invoice_total: inv ? inv.total : null,
-        invoice_date: inv ? inv.invoice_date : null };
+        invoice_date: inv ? inv.invoice_date : null,
+        // Which job this part of the money belongs to.
+        enquiry_no: enquiries.forInvoice(a.invoice_side, a.invoice_id) };
     });
   res.json({ payment: row, allocations, amountInWords: pricing.inWords(row.amount, row.currency) });
 }));
@@ -101,22 +107,38 @@ router.post('/payments', bookkeeper, wrap(async (req, res) => {
    * cleared on the day it is handed over would show money the company does not
    * have, which is precisely the mistake a cheque register exists to prevent.
    */
+  const kind = v.oneOf(b.kind, ['advance', 'settlement', 'refund'], 'kind') || 'settlement';
   const chequeDate = v.date(b.cheque_date);
   const defaultStatus = mode === 'cheque'
     ? (chequeDate && chequeDate > v.today() ? 'pending' : 'deposited')
     : 'cleared';
 
+  /*
+   * An advance goes out before there is any invoice to attach it to, so the
+   * voucher can be told which enquiry it belongs to. Where it settles invoices,
+   * their own enquiries are what the voucher carries and this stays empty.
+   */
+  let enquiryId = null;
+  if (b.enquiry_id) {
+    const e = enquiries.get(b.enquiry_id, direction === 'out' ? 'supplier' : 'client');
+    if (!e) throw notFound('No such enquiry.');
+    enquiryId = e.id;
+  }
+
   const result = tx(() => {
     const paymentNo = ids.docNo(direction === 'in' ? 'receipt' : 'payment', company.code);
     const info = db.prepare(`
-      INSERT INTO payments (company_id, payment_no, direction, partner_id, payment_date, mode, amount,
-        currency, reference, bank_name, cheque_no, cheque_date, status, kind, notes, created_by)
-      VALUES (@company_id, @payment_no, @direction, @partner_id, @payment_date, @mode, @amount,
-        @currency, @reference, @bank_name, @cheque_no, @cheque_date, @status, @kind, @notes, @created_by)`).run({
+      INSERT INTO payments (company_id, payment_no, direction, partner_id, enquiry_id, payment_date,
+        mode, amount, currency, reference, bank_name, cheque_no, cheque_date, status, kind, notes,
+        created_by)
+      VALUES (@company_id, @payment_no, @direction, @partner_id, @enquiry_id, @payment_date, @mode,
+        @amount, @currency, @reference, @bank_name, @cheque_no, @cheque_date, @status, @kind, @notes,
+        @created_by)`).run({
       company_id: company.id,
       payment_no: paymentNo,
       direction,
       partner_id: partner ? partner.id : null,
+      enquiry_id: enquiryId,
       payment_date: v.date(b.payment_date) || v.today(),
       mode,
       amount,
@@ -127,7 +149,7 @@ router.post('/payments', bookkeeper, wrap(async (req, res) => {
       cheque_date: chequeDate,
       status: v.oneOf(b.status, ['pending', 'deposited', 'cleared', 'bounced', 'cancelled'], 'status')
         || defaultStatus,
-      kind: v.oneOf(b.kind, ['advance', 'settlement', 'refund'], 'kind') || 'settlement',
+      kind,
       notes: v.str(b.notes),
       created_by: req.user.id,
     });
@@ -139,7 +161,11 @@ router.post('/payments', bookkeeper, wrap(async (req, res) => {
   if (Array.isArray(b.allocations) && b.allocations.length) {
     settlement.allocate(result.id, b.allocations);
     applied = { allocated: settlement.refreshForPayment(result.id) };
-  } else if (partner && v.bool(b.autoAllocate, true)) {
+  } else if (partner && v.bool(b.autoAllocate, kind !== 'advance')) {
+    // A round figure "against our account" is applied to the oldest open
+    // invoices, which is what the desk means by it. An advance is not that: it
+    // is money paid ahead of any invoice, for a job somebody has named, and
+    // swallowing it into an older bill is how an advance stops being one.
     applied = settlement.autoAllocate(result.id);
   }
 

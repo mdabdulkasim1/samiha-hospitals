@@ -24,8 +24,8 @@ does not answer an enquiry we raised, so there is always a record of what was as
 when, including the makers who never came back.
 
 The enquiry's reference then travels the whole way — onto their quotation, our LPO, the goods
-receipt and the bill we file when their invoice arrives, so one number ties the job together from
-the first phone call to the payment. On **our LPO it prints** beside their own quotation number, so
+receipt, the bill we file when their invoice arrives, and the voucher that pays it, so one number
+ties the job together from the first phone call to the money leaving the bank. On **our LPO it prints** beside their own quotation number, so
 the manufacturer holding the order can see what they priced and when they were asked:
 
 ```
@@ -35,9 +35,24 @@ OUR ENQUIRY        YOUR QUOTATION      OUR QUOTATION REF     SO REFERENCE
 AKR-RFQ-092026-001 GVM/Q/26/1188       AKR-SQ-092026-001     AKR-SO-092026-001
 ```
 
-It prints on the goods receipt as well, and shows on the supplier's bill on screen — a receipt or a
-bill entered with no order behind it can be given the enquiry directly, so nothing falls outside
-the filing.
+It prints on the goods receipt as well, and shows on the supplier's bill on screen. A receipt or a
+bill entered with no order behind it can be given the enquiry directly, so nothing falls outside the
+filing.
+
+The **payment voucher** is the end of the chain rather than a link in it — one cheque can settle
+three of a manufacturer's bills — so it carries the enquiry of each invoice it pays, line by line,
+rather than one of its own:
+
+```
+AGAINST INVOICE       INVOICE DATE   OUR ENQUIRY          INVOICE TOTAL    APPLIED
+AKR-BILL-092026-001   09 Sep 2026    AKR-RFQ-092026-001       24,633.00   24,633.00
+```
+
+An **advance** has no invoice behind it yet, so the voucher can be told which enquiry it belongs to
+when it is written. An advance is also no longer applied automatically to the oldest open bill:
+money paid ahead for a named job is not a round figure against the account, and swallowing it into
+an older invoice is how an advance stops being one. A receipt from a client reaches the same way
+back to **their** enquiry, through the order and the quotation.
 
 Every document carries the **application** it belongs to — potable water, storm water, sewerage,
 district cooling or irrigation — and 5% UAE VAT. Payment terms are chosen per document from a list
@@ -470,7 +485,7 @@ A4, on the company's letterhead, with the application title under the document t
 | **Local Purchase Order** | Supplier and their TRN, attention, incoterms, deliver-to, **our enquiry**, their own quotation number and ours, the SO reference, approving authority, amount in words, the numbered conditions, buyer details, acknowledgement |
 | **Delivery Note** | Quantities and part numbers, no prices; a signature block; a payment-on-delivery warning where the terms call for one |
 | **Tax Invoice** | Both TRNs, the client's LPO, the delivery note, taxable value, 5% VAT, total, amount in words, bank details |
-| **Receipt / Payment Voucher** | What was received or paid, against which invoices, cheque details |
+| **Receipt / Payment Voucher** | What was received or paid, against which invoices and **under which enquiry**, cheque details |
 | **Goods Receipt Note** | Accepted and rejected quantities, the supplier's own delivery note reference, **our enquiry** and our LPO |
 | **Statement of Account** | Every entry with a running balance, and the ageing underneath |
 

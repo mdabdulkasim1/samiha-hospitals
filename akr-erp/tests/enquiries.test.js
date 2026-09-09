@@ -234,6 +234,79 @@ test('a receipt or a bill with no order behind it can still name the enquiry', a
   );
 });
 
+test('the payment voucher carries the enquiries it pays', async () => {
+  const bill = (await accounts.get('/api/purchase/invoices?limit=50')).rows
+    .find((r) => r.enquiry_no === ctx.rfq.enquiry_no);
+  assert.ok(bill, 'the bill under this enquiry is there to pay');
+
+  const voucher = await accounts.post('/api/accounts/payments', {
+    direction: 'out', partner_id: ctx.supplier.id, amount: bill.total,
+    mode: 'bank_transfer', reference: 'TT-88213',
+    allocations: [{ invoice_side: 'purchase', invoice_id: bill.id, amount: bill.total }],
+  });
+  const full = await accounts.get(`/api/accounts/payments/${voucher.id}`);
+  assert.equal(full.allocations.length, 1);
+  assert.equal(full.allocations[0].enquiry_no, ctx.rfq.enquiry_no,
+    'each line of the voucher says which job the money is for');
+
+  const listed = (await accounts.get('/api/accounts/payments?limit=50')).rows
+    .find((r) => r.id === voucher.id);
+  assert.match(listed.allocated_enquiries || '', new RegExp(ctx.rfq.enquiry_no),
+    'and the list shows it without opening the voucher');
+});
+
+test('an advance names the enquiry itself, having no invoice to name', async () => {
+  const rfq = await kam.post('/api/purchase/enquiries', {
+    partner_id: ctx.supplier.id, subject: 'Mobilisation advance' });
+  const voucher = await accounts.post('/api/accounts/payments', {
+    direction: 'out', partner_id: ctx.supplier.id, amount: 5000, kind: 'advance',
+    mode: 'cheque', cheque_no: '004599', enquiry_id: rfq.id,
+  });
+  const full = await accounts.get(`/api/accounts/payments/${voucher.id}`);
+  assert.equal(full.payment.enquiry_no, rfq.enquiry_no);
+  assert.equal(full.allocations.length, 0, 'it settles nothing yet, and still says what it is for');
+
+  await assert.rejects(
+    () => accounts.post('/api/accounts/payments', {
+      direction: 'out', partner_id: ctx.supplier.id, amount: 100,
+      enquiry_id: ctx.clientEnquiry.id }),
+    (err) => err.status === 404, "money out does not belong to a client's enquiry",
+  );
+});
+
+test("a client's receipt reaches back to their own enquiry", async () => {
+  // The sell side keeps the enquiry on the quotation, so the receipt has to
+  // walk order → quotation to find it. Worth holding: it is the one chain here
+  // that is not a column on the document.
+  const client = ctx.client;
+  const enquiry = await sales.post('/api/sales/enquiries', {
+    partner_id: client.id, subject: 'Fabrication, block C' });
+  const quote = await sales.post('/api/sales/quotations', {
+    partner_id: client.id, enquiry_id: enquiry.id,
+    items: [{ item_id: ctx.item.id, qty: 4, unit_price: 700, cost_price: 400 }],
+  });
+  const order = await sales.post('/api/sales/orders', {
+    partner_id: client.id, quotation_id: quote.id, client_lpo_no: 'CLI/LPO/77',
+    items: [{ item_id: ctx.item.id, qty: 4, unit_price: 700, cost_price: 400 }],
+  });
+  await admin.post('/api/stock/adjustments',
+    { item_id: ctx.item.id, qty: 10, reason: 'Opening for the receipt test' });
+  const so = await sales.get(`/api/sales/orders/${order.id}`);
+  const dn = await logistics.post('/api/sales/deliveries', {
+    partner_id: client.id, so_id: order.id, items: [{ so_item_id: so.items[0].id, qty: 4 }] });
+  const invoice = await accounts.post('/api/sales/invoices',
+    { partner_id: client.id, so_id: order.id, dn_id: dn.id });
+
+  const receipt = await accounts.post('/api/accounts/payments', {
+    direction: 'in', partner_id: client.id, amount: invoice.total, mode: 'cheque',
+    cheque_no: '112233',
+    allocations: [{ invoice_side: 'sales', invoice_id: invoice.id, amount: invoice.total }],
+  });
+  const full = await accounts.get(`/api/accounts/payments/${receipt.id}`);
+  assert.equal(full.allocations[0].enquiry_no, enquiry.enquiry_no,
+    "the receipt voucher names the client's own enquiry");
+});
+
 test('the whole chain reads from the enquiry to the order', async () => {
   const res = await kam.get(`/api/reports/trace?ref=${encodeURIComponent(ctx.lpo.lpo_no)}`);
   const refs = res.chain.steps.map((s) => s.ref);

@@ -38,7 +38,7 @@ function migrate() {
   ensureColumn('supplier_quotations', 'enquiry_id', 'INTEGER REFERENCES enquiries(id)');
   // The enquiry number travels the length of the buy side: onto the order the
   // supplier holds, and onto what we file when the goods and the bill arrive.
-  for (const table of ['purchase_orders', 'grns', 'supplier_invoices']) {
+  for (const table of ['purchase_orders', 'grns', 'supplier_invoices', 'payments']) {
     ensureColumn(table, 'enquiry_id', 'INTEGER REFERENCES enquiries(id)');
   }
   // Indexed here rather than in the schema: on a database created before the

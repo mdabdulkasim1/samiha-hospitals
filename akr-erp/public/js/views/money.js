@@ -43,7 +43,9 @@
           q, direction: document.getElementById('f-direction').value,
           status: document.getElementById('f-status').value, limit: 200 }));
         box.innerHTML = UI.table([
-          { label: 'Voucher', render: (r) => `<span class="mono">${esc(r.payment_no)}</span>` },
+          { label: 'Voucher', render: (r) => `<span class="mono">${esc(r.payment_no)}</span>
+              ${r.enquiry_no || r.allocated_enquiries
+                ? `<div class="muted small">${esc(r.enquiry_no || r.allocated_enquiries)}</div>` : ''}` },
           { label: '', render: (r) => UI.badge(r.direction === 'in' ? 'Received' : 'Paid',
             r.direction === 'in' ? 'ok' : 'gold') },
           { label: 'Party', key: 'partner_name' },
@@ -71,6 +73,10 @@
   async function showPayment(id) {
     const d = await API.get(`/api/accounts/payments/${id}`);
     const p = d.payment;
+    // Which job the money belongs to: the enquiries behind the invoices it
+    // settles, or — for an advance, paid before any invoice — its own.
+    const jobs = [...new Set(d.allocations.map((a) => a.enquiry_no).filter(Boolean))];
+    if (!jobs.length && p.enquiry_no) jobs.push(p.enquiry_no);
     UI.modal({
       title: `${p.payment_no} — ${p.direction === 'in' ? 'received from' : 'paid to'} ${p.partner_name || '—'}`,
       size: 'wide',
@@ -81,6 +87,8 @@
             ['Mode', UI.titleise(p.mode)],
             p.mode === 'cheque' ? ['Cheque', `${esc(p.cheque_no || '')} dated ${UI.date(p.cheque_date)}${p.bank_name ? ' · ' + esc(p.bank_name) : ''}`] : null,
             ['Reference', esc(p.reference || '—')],
+            ['Our enquiry', jobs.length
+              ? `<span class="mono">${esc(jobs.join(', '))}</span>` : '—'],
             ['Status', UI.statusBadge(p.status)],
           ])}</div>
           <div>${UI.facts([
@@ -95,6 +103,8 @@
         ${UI.table([
           { label: 'Invoice', key: 'doc_no' },
           { label: 'Date', render: (r) => UI.date(r.invoice_date) },
+          { label: 'Our enquiry', render: (r) => (r.enquiry_no
+            ? `<span class="mono small">${esc(r.enquiry_no)}</span>` : '—') },
           { label: 'Invoice total', num: true, render: (r) => UI.money(r.invoice_total, { symbol: false }) },
           { label: 'Applied', num: true, render: (r) => `<b>${UI.money(r.amount, { symbol: false })}</b>` },
         ], d.allocations, { emptyText: 'Nothing applied yet — this is sitting on account.' })}`,
@@ -140,6 +150,11 @@
     const direction = opts.direction || 'in';
     const type = direction === 'in' ? 'client' : 'supplier';
     const partners = (await API.get(`/api/partners?type=${type}&limit=500`)).rows;
+    // An advance to a manufacturer goes out before any invoice exists, so the
+    // voucher can be told which enquiry it belongs to; a settlement takes the
+    // reference from the invoices it pays and needs no answer here.
+    const openEnquiries = direction === 'out'
+      ? (await API.get('/api/purchase/enquiries?limit=200')).rows : [];
 
     UI.modal({
       title: direction === 'in' ? 'Receipt from a client' : 'Payment to a supplier',
@@ -169,6 +184,11 @@
             hint: 'A date in the future is held as a post-dated cheque.' })}
           ${UI.field({ name: 'bank_name', label: 'Bank' })}
         </div>
+        ${openEnquiries.length ? UI.field({ name: 'enquiry_id', label: 'Against our enquiry',
+          blank: 'Take it from the invoices this pays',
+          hint: 'Worth setting on an advance, which has no invoice behind it yet.',
+          options: openEnquiries.map((e) => ({ value: e.id,
+            label: `${e.enquiry_no} — ${e.partner_name || e.client_name || ''} ${e.subject || ''}`.trim() })) }) : ''}
         <div id="open-invoices" class="mt"></div>
         ${UI.field({ name: 'notes', label: 'Notes', rows: 2 })}
         ${opts.sales_order_id ? `<input type="hidden" name="sales_order_id" value="${opts.sales_order_id}">` : ''}

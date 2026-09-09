@@ -454,8 +454,14 @@
       const p = data.payment;
       const rows = (data.allocations || []).map((a) => `<tr>
         <td>${esc(a.doc_no || '')}</td><td>${UI.date(a.invoice_date)}</td>
+        <td class="code">${esc(a.enquiry_no || '—')}</td>
         <td class="num">${UI.money(a.invoice_total, { symbol: false })}</td>
         <td class="num">${UI.money(a.amount, { symbol: false })}</td></tr>`).join('');
+      // Which job the money belongs to: what it settles, or — for an advance
+      // paid before any invoice exists — what the voucher was told.
+      const jobs = [...new Set((data.allocations || [])
+        .map((a) => a.enquiry_no).filter(Boolean))];
+      if (!jobs.length && p.enquiry_no) jobs.push(p.enquiry_no);
       const body = `<div class="doc">
         ${letterhead(APP.company)}
         ${title(p.direction === 'in' ? 'Receipt Voucher' : 'Payment Voucher')}
@@ -469,9 +475,11 @@
           ['Mode', UI.titleise(p.mode)],
           [p.mode === 'cheque' ? 'Cheque' : 'Reference',
             p.mode === 'cheque' ? `${p.cheque_no || ''} · ${UI.date(p.cheque_date)}` : (p.reference || '—')],
+          ['Our enquiry', jobs.length ? jobs.join(', ') : '—'],
         ])}
         ${rows ? `<table class="items"><thead><tr><th>Against invoice</th><th>Invoice date</th>
-          <th class="num">Invoice total</th><th class="num">Applied</th></tr></thead><tbody>${rows}</tbody></table>`
+          <th>Our enquiry</th><th class="num">Invoice total</th><th class="num">Applied</th></tr></thead>
+          <tbody>${rows}</tbody></table>`
           : '<div class="block"><p>Received on account — not yet applied to a specific invoice.</p></div>'}
         ${p.amount - p.allocated > 0.005
           ? `<div class="terms-band"><b>On account:</b> ${UI.money(p.amount - p.allocated)} of this

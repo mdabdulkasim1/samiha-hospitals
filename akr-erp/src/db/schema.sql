@@ -730,6 +730,10 @@ CREATE TABLE IF NOT EXISTS payments (
   payment_no    TEXT NOT NULL UNIQUE,
   direction     TEXT NOT NULL CHECK (direction IN ('in','out')),
   partner_id    INTEGER REFERENCES partners(id),
+  -- An advance paid before any invoice exists still belongs to a job, so the
+  -- voucher can name the enquiry itself. Where the payment settles invoices,
+  -- their own enquiries are what the voucher prints.
+  enquiry_id    INTEGER REFERENCES enquiries(id),
   payment_date  TEXT NOT NULL DEFAULT (date('now')),
   mode          TEXT NOT NULL DEFAULT 'bank_transfer'
                   CHECK (mode IN ('cash','cheque','bank_transfer','card','lc','adjustment')),
