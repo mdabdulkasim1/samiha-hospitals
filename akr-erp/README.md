@@ -94,6 +94,18 @@ Sign in with any of the desks below and the starter password **`akr@2026`**.
 > **Change every one of those passwords before this touches real trading data,** and set a real
 > `SESSION_SECRET` and `COMPANY_TRN` in `.env`. A tax invoice without a TRN is not a valid one.
 
+### The company's own mark
+
+Upload it once under **Masters → Logo** and it is everywhere: the sidebar, the sign-in page, the
+letterhead on every printed document, the watermark behind them, and the browser tab. There are two
+slots — the badge on its own and the badge with the wordmark — and **either stands in for the other**,
+so one upload is enough. Replacing it changes every one of those at once, because the URL carries a
+fingerprint of the file.
+
+It is uploaded rather than committed on purpose: a logo is a fact about the company, like its address
+or its TRN. Hand-drawing an approximation of somebody's mark and shipping it is how the wrong bird
+ends up on every invoice the system prints.
+
 ### Setting the company's own details
 
 `COMPANY_TRN`, the address, the telephone and the bank details in `.env` are copied onto the default
@@ -542,7 +554,8 @@ an order carries no cost at all.
 
 ### What a job costs
 
-A client's LPO carries the answer to the question the desk actually asks — *we are selling this at
+Shown to the **sales officer, the key account manager and the administrator** — the desks that price
+the work. A client's LPO carries the answer to the question the desk actually asks — *we are selling this at
 that rate; what are we paying, and what has gone out on top?*
 
 ```

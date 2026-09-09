@@ -51,6 +51,18 @@ function find(slot) {
 }
 
 /**
+ * The file to serve for a slot: the one uploaded for it, or the other one.
+ *
+ * One upload should be enough. If only the badge has been given it stands in
+ * for the lock-up on the sign-in page, and if only the lock-up has, it goes on
+ * the documents — rather than half the system showing the company's mark and
+ * the other half showing a drawing of it.
+ */
+function resolve(slot) {
+  return find(slot) || find(slot === 'mark' ? 'full' : 'mark');
+}
+
+/**
  * What a screen or a document should point at for this slot.
  *
  * The uploaded file is served through the API with a fingerprint on the query,
@@ -58,12 +70,12 @@ function find(slot) {
  * week is the same bug as not replacing it.
  */
 function urlFor(slot) {
-  const found = find(slot);
+  const found = resolve(slot);
   if (!found) return SLOTS[slot].fallback;
   const stat = fs.statSync(found.file);
   const stamp = crypto.createHash('sha1')
     .update(`${stat.size}:${stat.mtimeMs}`).digest('hex').slice(0, 10);
-  return `/api/branding/${slot}?v=${stamp}`;
+  return `/api/branding/${found.slot}?v=${stamp}`;
 }
 
 /** Work out what an uploaded file really is, from its bytes. */
@@ -147,4 +159,4 @@ const status = () => Object.entries(SLOTS).map(([slot, meta]) => {
   };
 });
 
-module.exports = { SLOTS, find, urlFor, save, clear, status };
+module.exports = { SLOTS, find, resolve, urlFor, save, clear, status };

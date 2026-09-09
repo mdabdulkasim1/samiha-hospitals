@@ -16,8 +16,12 @@ const router = express.Router();
  * what a company puts on its letterhead — there is nothing in it to protect.
  */
 router.get('/:slot', wrap(async (req, res) => {
-  const found = branding.find(req.params.slot);
-  if (!found) throw notFound('No logo has been uploaded for that.');
+  const slot = req.params.slot;
+  if (!branding.SLOTS[slot]) throw notFound('There is no such logo.');
+  const found = branding.resolve(slot);
+  // Nothing uploaded at all: hand back the file bundled with the source rather
+  // than a 404 the page then has to work around.
+  if (!found) return res.redirect(302, branding.SLOTS[slot].fallback);
   res.type(found.mime);
   // Fingerprinted in the URL, so it can be cached hard and still change at once.
   res.setHeader('Cache-Control', req.query.v ? 'public, max-age=31536000, immutable' : 'no-cache');

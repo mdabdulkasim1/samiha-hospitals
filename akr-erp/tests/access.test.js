@@ -152,3 +152,21 @@ test('the sales desk sees what a job is costing, and never prints it', async () 
   assert.equal(theirs.jobCost, null, 'logistics work in quantities');
   assert.equal(theirs.items[0].cost_price, null);
 });
+
+test('the key account manager and the administrator see the same job cost', async () => {
+  const kam = await h.signIn('kam@akr365.com');
+  const order = (await admin.get('/api/sales/orders?limit=50')).rows
+    .find((r) => r.client_lpo_no === 'JOB/COST/1');
+  assert.ok(order, 'the order from the test above');
+
+  const forSales = (await sales.get(`/api/sales/orders/${order.id}`)).jobCost;
+  for (const [who, desk] of [['the key account manager', kam], ['the administrator', admin]]) {
+    const theirs = (await desk.get(`/api/sales/orders/${order.id}`)).jobCost;
+    assert.ok(theirs, `${who} sees it`);
+    assert.equal(theirs.revenue, forSales.revenue, `${who} sees the same figures`);
+    assert.equal(theirs.goods_cost, forSales.goods_cost);
+    assert.equal(theirs.expense_total, forSales.expense_total);
+    assert.equal(theirs.margin, forSales.margin);
+    assert.equal(theirs.expenses.length, forSales.expenses.length);
+  }
+});

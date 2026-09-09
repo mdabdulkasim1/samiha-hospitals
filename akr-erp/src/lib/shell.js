@@ -36,11 +36,22 @@ function buildStamp(publicDir) {
   return hash.digest('hex').slice(0, 10);
 }
 
-/** Reads index.html once and stamps every local asset URL it names. */
+/**
+ * Reads index.html once, stamps every local asset URL it names, and points the
+ * browser-tab icon at the company's own mark where one has been uploaded — so
+ * one upload covers the tab as well as the sidebar and the documents.
+ */
 function shellHtml(publicDir) {
   const stamp = buildStamp(publicDir);
-  const html = fs.readFileSync(path.join(publicDir, 'index.html'), 'utf8');
-  return html.replace(ASSET, (_m, attr, url) => `${attr}="${url}?v=${stamp}"`);
+  const html = fs.readFileSync(path.join(publicDir, 'index.html'), 'utf8')
+    .replace(ASSET, (_m, attr, url) => `${attr}="${url}?v=${stamp}"`);
+
+  const branding = require('../services/branding');
+  const mark = branding.resolve('mark');
+  if (!mark) return html;
+  return html.replace(
+    /<link rel="icon"[^>]*>/,
+    `<link rel="icon" href="${branding.urlFor('mark')}" type="${mark.mime}">`);
 }
 
 module.exports = { shellHtml, buildStamp };
