@@ -34,7 +34,14 @@ module.exports = router;
 const admin = express.Router();
 
 admin.get('/', wrap(async (_req, res) => {
-  res.json({ slots: branding.status() });
+  res.json({ slots: branding.status(), settings: branding.settings() });
+}));
+
+/** Whether the artwork carries its own background. */
+admin.patch('/', auth.requireRole('admin'), wrap(async (req, res) => {
+  const saved = branding.setSettings({ plate: v.bool(req.body.plate, true) });
+  audit.log(req, 'branding.settings', 'branding', 'settings', saved);
+  res.json({ slots: branding.status(), settings: saved });
 }));
 
 admin.post('/:slot', auth.requireRole('admin'), wrap(async (req, res) => {

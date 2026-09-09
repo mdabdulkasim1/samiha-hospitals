@@ -30,6 +30,8 @@ function context(user) {
       website: company.website, currency: company.currency, vatPercent: company.vat_percent,
       // Whatever the company has uploaded, falling back to the bundled file.
       logo: branding.urlFor('mark'), logoFull: branding.urlFor('full'),
+      // Whether to put a light plate behind it — see services/branding.js.
+      logoPlate: branding.settings().plate,
       bankName: company.bank_name, bankAccount: company.bank_account, iban: company.iban, swift: company.swift,
     } : null,
     group: {
@@ -49,6 +51,15 @@ function context(user) {
     screens: screens.effective(user),
   };
 }
+
+/**
+ * What the sign-in page needs before anybody has signed in: the company's name
+ * and whether its artwork carries its own background. Open on purpose — it is
+ * the letterhead, which is public by nature.
+ */
+router.get('/look', wrap(async (_req, res) => {
+  res.json({ logoPlate: branding.settings().plate });
+}));
 
 router.post('/login', wrap(async (req, res) => {
   v.required(req.body, ['username', 'password']);

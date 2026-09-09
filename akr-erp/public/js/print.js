@@ -75,8 +75,9 @@
       @media print { body { background: #fff; padding: 0; } .doc { width: auto; padding: 0; box-shadow: none; } }
 
       .head { display: flex; align-items: flex-start; gap: 14px; border-bottom: 2px solid #0E3A5C; padding-bottom: 9px; }
-      .head .logo { width: 74px; flex: 0 0 74px; }
-      .head .logo img { width: 100%; }
+      /* Contained, never stretched: a logo squashed to fit is not the logo. */
+      .head .logo { width: 78px; flex: 0 0 78px; display: flex; align-items: center; }
+      .head .logo img { max-width: 100%; max-height: 62px; width: auto; height: auto; object-fit: contain; }
       .head .who { flex: 1; }
       .head .who .name { font: 700 17px Georgia, "Times New Roman", serif; color: #0E3A5C; letter-spacing: .4px; }
       .head .who .tag { font-size: 8px; letter-spacing: 1.6px; text-transform: uppercase; color: #14663F; margin-top: 2px; font-weight: 600; }

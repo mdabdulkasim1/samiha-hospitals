@@ -153,13 +153,25 @@
    */
   const LOGO_FULL = '/api/branding/full';
 
+  /*
+   * Signed out there is no company record, so whether the artwork carries its
+   * own background is asked of the server before the page is drawn. It is one
+   * small request on a page that is doing nothing else.
+   */
+  let loginPlate = true;
+
   // ------------------------------------------------------------------ login
-  function renderLogin() {
+  async function renderLogin() {
     if (window.UI && UI.closeAllModals) UI.closeAllModals();
+    try {
+      const look = await API.get('/api/auth/look');
+      loginPlate = look.logoPlate !== false;
+    } catch { /* the placeholder wants its plate */ }
     document.getElementById('root').innerHTML = `
       <div class="login-shell">
         <div class="login-hero">
-          <img class="logo-full" src="${LOGO_FULL}" alt="AKR General Trading L.L.C"
+          <img class="logo-full${loginPlate ? '' : ' plain'}" src="${LOGO_FULL}"
+               alt="AKR General Trading L.L.C"
                onerror="this.onerror=null;this.src='/assets/logo.svg'">
           <h1>Trading ERP</h1>
           <p>One system for both sides of the trade — the quotation you ask a manufacturer for and
@@ -236,8 +248,9 @@
       <div class="app">
         <aside class="sidebar">
           <div class="brand">
-            <div class="mark"><img src="${UI.esc(APP.company.logo || '/assets/logo-icon.svg')}" alt=""
-                 onerror="this.onerror=null;this.src='/assets/logo-icon.svg'"></div>
+            <div class="mark${APP.company.logoPlate === false ? ' plain' : ''}">
+              <img src="${UI.esc(APP.company.logo || '/assets/logo-icon.svg')}" alt=""
+                   onerror="this.onerror=null;this.src='/assets/logo-icon.svg'"></div>
             <div class="brand-text"><strong>AKR</strong><span>General Trading</span></div>
           </div>
           <nav class="nav" id="nav"></nav>

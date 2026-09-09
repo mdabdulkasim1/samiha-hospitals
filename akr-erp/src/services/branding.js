@@ -39,6 +39,31 @@ const dir = () => {
   return d;
 };
 
+/*
+ * How the artwork wants to be shown.
+ *
+ * A logo on a transparent background needs a light plate behind it or it
+ * disappears into a dark sidebar. A logo that carries its own background — most
+ * of them do — looks like a sticker on one. Only the person who uploaded it
+ * knows which they have, so they say, once, and every screen follows.
+ */
+const settingsFile = () => path.join(dir(), 'settings.json');
+
+function settings() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(settingsFile(), 'utf8'));
+    return { plate: raw.plate !== false };
+  } catch {
+    return { plate: true };
+  }
+}
+
+function setSettings(next) {
+  const now = { ...settings(), ...next, plate: next.plate !== false };
+  fs.writeFileSync(settingsFile(), JSON.stringify(now, null, 2));
+  return now;
+}
+
 /** The stored file for a slot, or null. */
 function find(slot) {
   if (!SLOTS[slot]) return null;
@@ -159,4 +184,4 @@ const status = () => Object.entries(SLOTS).map(([slot, meta]) => {
   };
 });
 
-module.exports = { SLOTS, find, resolve, urlFor, save, clear, status };
+module.exports = { SLOTS, find, resolve, urlFor, save, clear, status, settings, setSettings };

@@ -86,3 +86,34 @@ test('what is uploaded has to be an image', async () => {
       { data: Buffer.from('<?php echo "not a logo"; ?>').toString('base64'), mime: 'image/png' }),
     (err) => err.status === 400);
 });
+
+test('artwork that carries its own background says so, once', async () => {
+  // The default suits a transparent PNG: a light plate, or it vanishes into a
+  // dark sidebar.
+  const before = await admin.get('/api/masters/branding');
+  assert.equal(before.settings.plate, true);
+  assert.equal((await admin.get('/api/auth/me')).company.logoPlate, true);
+  assert.equal((await fetch(`${h.base}/api/auth/look`).then((r) => r.json())).logoPlate, true,
+    'and the sign-in page can ask before anybody has signed in');
+
+  const after = await admin.patch('/api/masters/branding', { plate: false });
+  assert.equal(after.settings.plate, false);
+  assert.equal((await admin.get('/api/auth/me')).company.logoPlate, false,
+    'every screen follows from the session');
+  assert.equal((await fetch(`${h.base}/api/auth/look`).then((r) => r.json())).logoPlate, false);
+
+  await admin.patch('/api/masters/branding', { plate: true });
+});
+
+test('the artwork is never stretched to fit', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');
+  const brandMark = css.match(/\.brand \.mark img \{[^}]+\}/)[0];
+  assert.match(brandMark, /object-fit: contain/, 'the sidebar contains it');
+  assert.ok(!/\bwidth: 100%; height: 100%/.test(brandMark),
+    'rather than squashing it into a square');
+  assert.match(css.match(/\.login-hero \.logo-full \{[^}]+\}/)[0], /object-fit: contain/);
+
+  const printer = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'print.js'), 'utf8');
+  assert.match(printer.match(/\.head \.logo img \{[^}]+\}/)[0], /object-fit: contain/,
+    'and so does the letterhead');
+});

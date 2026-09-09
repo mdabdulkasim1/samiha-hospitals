@@ -106,6 +106,19 @@ It is uploaded rather than committed on purpose: a logo is a fact about the comp
 or its TRN. Hand-drawing an approximation of somebody's mark and shipping it is how the wrong bird
 ends up on every invoice the system prints.
 
+Two things decide whether it *looks* right:
+
+- **It is never stretched.** Every place that draws it contains the artwork at its own proportions —
+  a tall badge and a wide lock-up both come out as themselves rather than squashed into a square.
+- **The plate.** Artwork with a transparent background needs a light plate behind it or it
+  disappears into the dark sidebar; artwork that carries its own background looks like a sticker on
+  one. The switch is on the Logo tab: **Put a light plate behind it** — leave it on for a transparent
+  PNG or SVG, turn it off for artwork with its own background.
+
+Upload the largest version you have. An **SVG is sharpest** at any size; a PNG is fine if it is a
+few hundred pixels across or more — a small one enlarged onto a letterhead is soft, and no setting
+can undo that.
+
 ### Setting the company's own details
 
 `COMPANY_TRN`, the address, the telephone and the bank details in `.env` are copied onto the default

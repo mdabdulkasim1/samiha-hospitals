@@ -416,12 +416,30 @@
             </div>`).join('')}
         </div>
         <div id="brand-out"></div>
+        <div class="mt">${UI.checkbox({ name: 'plate', label: 'Put a light plate behind it',
+          checked: data.settings ? data.settings.plate !== false : true })}
+          <div class="muted small">Leave this on for artwork with a transparent background, which
+            would otherwise disappear into the dark sidebar. <b>Turn it off if the logo carries its
+            own background</b> — otherwise it looks like a sticker stuck on the page.</div></div>
         <div class="muted small mt">The watermark uses the mark on its own, at four per cent —
-          faint enough not to compete with a line of text.</div>
+          faint enough not to compete with a line of text. Whichever artwork has been uploaded is
+          used everywhere: sidebar, sign-in page, every printed document and the browser tab.</div>
       </div>`;
 
     if (!isAdmin) return;
     const out = pane.querySelector('#brand-out');
+
+    const plate = pane.querySelector('[name=plate]');
+    if (plate) {
+      plate.addEventListener('change', async () => {
+        await API.patch('/api/masters/branding', { plate: plate.checked });
+        UI.ok(plate.checked ? 'A plate goes behind it.' : 'The artwork stands on its own.');
+        // The sidebar is drawn from the session, so it follows on the next paint.
+        const me = await API.get('/api/auth/me');
+        if (me && me.company) APP.company = me.company;
+        APP.reload();
+      });
+    }
 
     pane.querySelectorAll('input[data-slot]').forEach((input) => {
       input.addEventListener('change', async () => {
