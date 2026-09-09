@@ -47,7 +47,7 @@ const bookkeeper = auth.requireRole('accounts');          // books and pays
  * the bills and what is falling due; entering and paying them stays with
  * accounts.
  */
-const billReader = auth.requireRole('accounts', 'kam');
+const billReader = auth.requireScreen('supplier-bills');
 
 /**
  * The enquiry a buy-side document belongs to.

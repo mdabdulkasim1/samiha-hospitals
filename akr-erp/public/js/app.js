@@ -61,6 +61,7 @@
     currencySymbol: 'AED',
     vatPercent: 5,
     permissions: {},
+    screens: null,
     tagline: 'Trusted Trading Partner for Valves, Fittings & Construction Materials',
     route: 'dashboard',
     params: {},
@@ -72,7 +73,17 @@
       if (!APP.user) return false;
       return APP.user.role === 'admin' || roles.includes(APP.user.role);
     },
+    /*
+     * Which screens this person may open.
+     *
+     * The server decides it — their desk's default with whatever the
+     * administrator has changed for them — and sends the list at sign-in. The
+     * roles above each menu entry are the fallback for a session opened before
+     * the list existed, and for deciding what somebody may *do* on a screen,
+     * which is a different question from whether they may open it.
+     */
     canOpen(route) {
+      if (Array.isArray(APP.screens)) return APP.screens.includes(route);
       const item = NAV.flatMap((g) => g.items).find((i) => i.id === route);
       return item ? APP.can(item.roles) : true;
     },
@@ -284,7 +295,7 @@
 
   function renderNav() {
     document.getElementById('nav').innerHTML = NAV.map((g) => {
-      const items = g.items.filter((i) => APP.can(i.roles));
+      const items = g.items.filter((i) => APP.canOpen(i.id));
       if (!items.length) return '';
       return `<div class="nav-group"><h5>${UI.esc(g.group)}</h5>` + items.map((i) =>
         `<a href="#/${i.id}" data-nav="${i.id}"><span class="ico">${i.icon}</span>${UI.esc(i.label)}` +
@@ -403,10 +414,10 @@
     }
 
     const navItem = NAV.flatMap((g) => g.items).find((i) => i.id === route);
-    if (navItem && !APP.can(navItem.roles)) {
+    if (navItem && !APP.canOpen(navItem.id)) {
       document.getElementById('view').innerHTML =
-        `<div class="alert danger">Your desk (<b>${UI.esc(roleLabel(APP.user.role))}</b>) does not have
-          access to ${UI.esc(navItem.label)}.</div>`;
+        `<div class="alert danger">${UI.esc(navItem.label)} is not part of your access.
+          Ask the administrator for it.</div>`;
       return;
     }
 

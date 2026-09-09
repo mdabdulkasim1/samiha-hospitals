@@ -57,6 +57,18 @@ CREATE TABLE IF NOT EXISTS users (
   created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+/*
+ * Which screens one person may open, where the administrator wants them to
+ * differ from what their desk gives by default. Only the exceptions are kept —
+ * see src/services/screens.js.
+ */
+CREATE TABLE IF NOT EXISTS user_screens (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  screen  TEXT NOT NULL,
+  allowed INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY (user_id, screen)
+);
+
 CREATE TABLE IF NOT EXISTS sessions (
   token      TEXT PRIMARY KEY,
   user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

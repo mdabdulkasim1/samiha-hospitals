@@ -15,7 +15,14 @@ const notify = require('../services/notify');
 
 const router = express.Router();
 const bookkeeper = auth.requireRole('accounts');
-const reader = auth.requireRole('accounts', 'kam');
+/*
+ * Reading the money screens follows what the administrator has granted, not the
+ * role alone — a desk given Payments & Receipts under Staff can open it. Every
+ * route that changes something still asks for the accounts role below.
+ */
+const reader = auth.requireScreen('payments');
+const expenseReader = auth.requireScreen('expenses');
+const ledgerReader = auth.requireScreen('ledgers');
 
 /*
  * The money desk: what came in, what went out, what the group spent, and the
@@ -245,7 +252,7 @@ router.post('/payments/:id/status', bookkeeper, wrap(async (req, res) => {
  * falling due first. Post-dated cheques are the ordinary way business is done
  * here, and a company that loses track of them is a company that bounces one.
  */
-router.get('/cheques', reader, wrap(async (req, res) => {
+router.get('/cheques', auth.requireScreen('cheques'), wrap(async (req, res) => {
   const rows = db.prepare(`
     SELECT p.id, p.payment_no, p.direction, p.cheque_no, p.cheque_date, p.bank_name, p.amount,
            p.status, p.payment_date, pt.name AS partner_name, c.code AS company_code
@@ -279,7 +286,7 @@ const EXP_SELECT = `
     LEFT JOIN partners p ON p.id = e.partner_id
     LEFT JOIN users u ON u.id = e.created_by`;
 
-router.get('/expenses', reader, wrap(async (req, res) => {
+router.get('/expenses', expenseReader, wrap(async (req, res) => {
   const { limit, offset, page } = v.paging(req.query, 50);
   const where = [];
   const params = { limit, offset };
@@ -394,7 +401,7 @@ router.delete('/expenses/:id', bookkeeper, wrap(async (req, res) => {
 }));
 
 // ================================================================== the books
-router.get('/ageing/:side', reader, wrap(async (req, res) => {
+router.get('/ageing/:side', ledgerReader, wrap(async (req, res) => {
   const side = v.oneOf(req.params.side, ['receivable', 'payable'], 'side');
   res.json(ledger.ageing(side, {
     companyId: req.query.company_id || null,
@@ -408,7 +415,7 @@ router.get('/ageing/:side', reader, wrap(async (req, res) => {
  * decision — they are the two figures that say what the business made and what
  * it owes, and they are not part of running a desk.
  */
-const owner = auth.requireRole('admin');
+const owner = auth.requireScreen('vat');
 
 router.get('/vat-return', owner, wrap(async (req, res) => {
   const to = v.date(req.query.to) || v.today();

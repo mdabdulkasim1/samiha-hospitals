@@ -85,6 +85,24 @@ function requireAuth(req, _res, next) {
  * one person covers two desks on any given week, and the account that answers
  * for all of it must be able to work all of it.
  */
+/**
+ * Gate a route on a screen the administrator has granted, rather than on the
+ * role alone.
+ *
+ * Used where a whole screen is the thing being protected — the profit page, the
+ * staff list, the money screens — so that granting somebody that screen under
+ * Staff actually lets them open it. What they may *do* there is still decided
+ * by requireRole on the routes that change something.
+ */
+function requireScreen(screen) {
+  const screens = require('../services/screens');
+  return (req, _res, next) => {
+    if (!req.user) return next(unauthorized());
+    if (screens.can(req.user, screen)) return next();
+    next(forbidden('That screen is not part of your access. Ask the administrator for it.'));
+  };
+}
+
 function requireRole(...roles) {
   const allowed = new Set(roles.flat());
   return (req, _res, next) => {
@@ -152,5 +170,5 @@ module.exports = {
   seesPrices, seesMoney, seesCost, buildsRates, screen, screenCost,
   hashPassword, verifyPassword, passwordProblems,
   createSession, destroySession, purgeExpiredSessions, userForToken,
-  attachUser, requireAuth, requireRole, readToken,
+  attachUser, requireAuth, requireRole, requireScreen, readToken,
 };

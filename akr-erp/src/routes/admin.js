@@ -8,7 +8,16 @@ const v = require('../lib/validate');
 const { wrap, badRequest, notFound } = require('../lib/http');
 
 const router = express.Router();
-router.use(auth.requireRole('admin'));
+const screens = require('../services/screens');
+
+/*
+ * Opening the Staff screen follows the administrator's own grant; changing
+ * anything on it stays with the administrator. Otherwise granting somebody
+ * Staff would be granting them the power to grant themselves everything else,
+ * which is not what an access list is for.
+ */
+router.use(auth.requireScreen('staff'));
+const owner = auth.requireRole('admin');
 
 const ROLES = ['admin', 'kam', 'accounts', 'sales', 'logistics'];
 
@@ -32,7 +41,7 @@ router.get('/users', wrap(async (_req, res) => {
   });
 }));
 
-router.post('/users', wrap(async (req, res) => {
+router.post('/users', owner, wrap(async (req, res) => {
   const b = req.body;
   v.required(b, ['name', 'email', 'role', 'password']);
   const role = v.oneOf(b.role, ROLES, 'role');
@@ -49,7 +58,7 @@ router.post('/users', wrap(async (req, res) => {
     .get(info.lastInsertRowid));
 }));
 
-router.patch('/users/:id', wrap(async (req, res) => {
+router.patch('/users/:id', owner, wrap(async (req, res) => {
   const row = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
   if (!row) throw notFound('No such user.');
   const b = req.body;
@@ -90,6 +99,40 @@ router.patch('/users/:id', wrap(async (req, res) => {
 }));
 
 /** The audit trail: who did what, and when. */
+// ------------------------------------------------------- who may open what
+router.get('/screens', wrap(async (_req, res) => {
+  res.json({
+    screens: screens.SCREENS,
+    defaults: screens.DEFAULTS,
+  });
+}));
+
+router.get('/users/:id/screens', wrap(async (req, res) => {
+  const user = db.prepare('SELECT id, name, role FROM users WHERE id = ?').get(req.params.id);
+  if (!user) throw notFound('No such member of staff.');
+  res.json({
+    user,
+    role_default: screens.forRole(user.role),
+    allowed: screens.effective(user),
+    overrides: screens.overridesFor(user.id),
+  });
+}));
+
+router.put('/users/:id/screens', owner, wrap(async (req, res) => {
+  const user = db.prepare('SELECT id, name, role FROM users WHERE id = ?').get(req.params.id);
+  if (!user) throw notFound('No such member of staff.');
+  const allowed = req.body && req.body.reset
+    ? (screens.reset(user.id), screens.effective(user))
+    : screens.set(user.id, user.role, Array.isArray(req.body.screens) ? req.body.screens : []);
+  audit.log(req, 'user.screens_set', 'user', user.id, { allowed });
+  res.json({
+    user,
+    role_default: screens.forRole(user.role),
+    allowed,
+    overrides: screens.overridesFor(user.id),
+  });
+}));
+
 router.get('/audit', wrap(async (req, res) => {
   const { limit, offset, page } = v.paging(req.query, 100, 500);
   const where = [];

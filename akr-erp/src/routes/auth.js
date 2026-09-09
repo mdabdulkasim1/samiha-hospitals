@@ -7,6 +7,7 @@ const audit = require('../lib/audit');
 const v = require('../lib/validate');
 const { wrap, badRequest, unauthorized } = require('../lib/http');
 const branding = require('../services/branding');
+const screens = require('../services/screens');
 
 const router = express.Router();
 
@@ -43,6 +44,9 @@ function context(user) {
       seesMoney: auth.seesMoney(user),
       seesCost: auth.seesCost(user),
     },
+    // The screens this person may open: their desk's default, with whatever
+    // the administrator has changed for them.
+    screens: screens.effective(user),
   };
 }
 

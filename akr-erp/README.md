@@ -498,6 +498,32 @@ makers invoiced *in this period*, whenever those goods are sold. Where the yard 
 the difference between them is stock. Overheads booked to no supplier are shown as their own row
 rather than left out, so the expenses column still comes to the group's.
 
+## Who may open what
+
+A desk sets what somebody starts with; the administrator changes it person by person, under
+**Staff → what they can open**. Tick the screens that suit them — the sales officer who also follows
+the buying side, the accounts clerk trusted with the profit page — and *Back to the desk's default*
+undoes the lot.
+
+The rule underneath, and the reason this is safe to hand out:
+
+> **A screen grant says what somebody may OPEN and READ. Their desk still says what they may DO.**
+
+Give a sales officer Payments & Receipts and they can see what has been received; they still cannot
+book a receipt, because that is gated on the accounts desk where the route is written. Give somebody
+Staff and they can read the list; creating an account and changing anybody's access stays with the
+administrator, or granting Staff would be granting everything. My Account can never be taken away —
+somebody who cannot change their own password has no way back in.
+
+Only the difference from the desk's default is stored, so changing what a desk gives still reaches
+everybody left on it. What the app hides, the server refuses: the menu, the routing and the API all
+read the same list.
+
+The **sales desk carries both sides of the trade** by default — enquiries, quotations, client LPOs,
+deliveries and invoices, and the buying screens down to goods receipts. The money screens (bills,
+payments, cheques, ledgers, VAT) stay with the desks that answer for them until the administrator
+says otherwise.
+
 ## What each desk sees
 
 Money is not everybody's business, and the rule is enforced on the server, not just hidden on screen:

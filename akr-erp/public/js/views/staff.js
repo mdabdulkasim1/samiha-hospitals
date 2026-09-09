@@ -30,9 +30,10 @@
       if (state.tab === 'staff') {
         pane.innerHTML = `
           <div class="card">
-            <div class="card-sub">A desk decides what somebody can reach, and what they can see of the
-              money. Logistics work in quantities and documents; prices and the books belong to the
-              desks that negotiate and collect.</div>
+            <div class="card-sub">A desk decides what somebody can see of the money — logistics work
+              in quantities, prices and the books belong to the desks that negotiate and collect — and
+              it sets the screens they start with. <b>What they can open is yours to change</b>, one
+              person at a time: <b>what they can open</b> beside their name.</div>
             <div class="grid g5 mb">
               ${data.roles.map((r) => `<div class="stat">
                 <div class="k">${esc(APP.roleLabel(r.value))}</div>
@@ -49,9 +50,17 @@
           { label: 'Desk', render: (r) => UI.badge(APP.roleLabel(r.role), 'navy') },
           { label: 'Company', key: 'company_code' },
           { label: 'Last signed in', render: (r) => (r.last_login_at ? UI.dateTime(r.last_login_at) : 'never') },
+          { label: 'Screens', render: (r) => `<button type="button" class="link-btn small"
+              data-access="${r.id}">what they can open</button>` },
           { label: '', render: (r) => (r.active ? '' : UI.badge('inactive', 'danger')) },
         ], data.rows, { onRow: true });
         UI.bindRows(box, data.rows, (row) => editUser(row, data.roles));
+        // The access list is its own thing, so opening it does not open the
+        // account editor underneath.
+        box.querySelectorAll('[data-access]').forEach((b) => b.addEventListener('click', (e) => {
+          e.stopPropagation();
+          editAccess(Number(b.dataset.access));
+        }));
         return;
       }
 
@@ -80,6 +89,68 @@
         ], counters.rows, { emptyText: 'Nothing has been numbered yet.' })}</div>`;
     },
   });
+
+
+  /**
+   * Which screens one person may open.
+   *
+   * Their desk gives them a sensible set; this is where the owner says
+   * otherwise for somebody in particular — the sales officer who also follows
+   * the buying side, the accounts clerk trusted with the profit page. Only the
+   * difference from the desk's default is kept, so changing what a desk gives
+   * still reaches everybody left on it.
+   *
+   * What this does not do is widen what somebody may change. A screen granted
+   * here can be opened and read; entering a payment, confirming a price or
+   * adding a member of staff still belongs to the desk that answers for it.
+   */
+  async function editAccess(userId) {
+    const [catalogue, current] = await Promise.all([
+      API.get('/api/admin/screens'),
+      API.get(`/api/admin/users/${userId}/screens`),
+    ]);
+    const allowed = new Set(current.allowed);
+    const base = new Set(current.role_default);
+    const groups = [...new Set(catalogue.screens.map((s) => s.group))];
+
+    const body = groups.map((g) => `<div class="mb">
+      <h4>${esc(g)}</h4>
+      <div class="grid g3">
+        ${catalogue.screens.filter((s) => s.group === g).map((s) => `
+          <label class="inline-check">
+            <input type="checkbox" data-screen="${esc(s.id)}"${allowed.has(s.id) ? ' checked' : ''}
+              ${s.id === 'account' ? ' disabled' : ''}>
+            <span>${esc(s.label)}
+              ${s.id === 'account' ? '<span class="muted small"> — always</span>'
+                : (base.has(s.id) ? '' : '<span class="muted small"> — not on this desk</span>')}</span>
+          </label>`).join('')}
+      </div></div>`).join('');
+
+    UI.modal({
+      title: `${current.user.name} — what they can open`,
+      size: 'wide',
+      body: `<div class="muted small mb">Their desk is
+        <b>${esc(APP.roleLabel(current.user.role))}</b>, which gives the screens ticked when this was
+        opened. Tick or untick to suit them. Opening a screen is not the same as being able to change
+        anything on it — that still follows their desk.</div>
+        ${body}`,
+      footer: `<button class="btn ghost" data-act="__close">Cancel</button>
+        <button class="btn ghost" data-act="reset">Back to the desk's default</button>
+        <button class="btn" data-act="save">Save</button>`,
+      async onAction(act, modal) {
+        if (act === 'reset') {
+          await API.put(`/api/admin/users/${userId}/screens`, { reset: true });
+          UI.ok("Back to the desk's default.");
+          return;
+        }
+        if (act !== 'save') return;
+        const screens = [...modal.querySelectorAll('[data-screen]')]
+          .filter((el) => el.checked || el.disabled).map((el) => el.dataset.screen);
+        await API.put(`/api/admin/users/${userId}/screens`, { screens });
+        UI.ok('Saved. They will see it the next time they sign in.');
+      },
+    });
+  }
 
   function editUser(user, roles) {
     const isNew = !user;
