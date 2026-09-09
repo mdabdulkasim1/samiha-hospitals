@@ -208,13 +208,19 @@
       let control;
       if (options) {
         const list = blank === undefined ? options : [{ value: '', label: blank }, ...options];
+        // An entry carrying its own `options` is a heading with a list under
+        // it — clients and suppliers on one picker, without them running into
+        // each other.
+        const option = (o) => {
+          const val = o.value !== undefined ? o.value : o;
+          const lab = o.label !== undefined ? o.label : o;
+          const sel = String(val) === String(value === null ? '' : value) ? ' selected' : '';
+          return `<option value="${esc(val)}"${sel}${o.disabled ? ' disabled' : ''}>${esc(lab)}</option>`;
+        };
         control = `<select name="${esc(name)}"${required ? ' required' : ''}${disabled ? ' disabled' : ''}>` +
-          list.map((o) => {
-            const val = o.value !== undefined ? o.value : o;
-            const lab = o.label !== undefined ? o.label : o;
-            const sel = String(val) === String(value === null ? '' : value) ? ' selected' : '';
-            return `<option value="${esc(val)}"${sel}${o.disabled ? ' disabled' : ''}>${esc(lab)}</option>`;
-          }).join('') + '</select>';
+          list.map((o) => (Array.isArray(o.options)
+            ? `<optgroup label="${esc(o.label)}">${o.options.map(option).join('')}</optgroup>`
+            : option(o))).join('') + '</select>';
       } else if (type === 'textarea' || rows) {
         control = `<textarea name="${esc(name)}" rows="${rows || 3}" placeholder="${esc(placeholder)}"${required ? ' required' : ''}>${esc(value)}</textarea>`;
       } else {

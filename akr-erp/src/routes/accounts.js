@@ -271,7 +271,8 @@ router.get('/cheques', reader, wrap(async (req, res) => {
 // ============================================== the group's income & expenses
 const EXP_SELECT = `
   SELECT e.*, c.code AS company_code, c.name AS company_name, ec.name AS category_name,
-         ec.kind AS category_kind, p.name AS partner_name, u.name AS created_by_name
+         ec.kind AS category_kind, p.name AS partner_name, p.type AS partner_type,
+         u.name AS created_by_name
     FROM expenses e
     LEFT JOIN companies c ON c.id = e.company_id
     LEFT JOIN expense_categories ec ON ec.id = e.category_id
@@ -285,6 +286,9 @@ router.get('/expenses', reader, wrap(async (req, res) => {
   if (req.query.kind) { where.push('e.kind = @kind'); params.kind = req.query.kind; }
   if (req.query.company_id) { where.push('e.company_id = @company_id'); params.company_id = req.query.company_id; }
   if (req.query.category_id) { where.push('e.category_id = @category_id'); params.category_id = req.query.category_id; }
+  // Which account carries it — or, with `overhead`, the ones carried by none.
+  if (req.query.partner_id) { where.push('e.partner_id = @partner_id'); params.partner_id = req.query.partner_id; }
+  else if (v.bool(req.query.overhead)) where.push('e.partner_id IS NULL');
   if (req.query.from) { where.push('e.expense_date >= @from'); params.from = v.date(req.query.from); }
   if (req.query.to) { where.push('e.expense_date <= @to'); params.to = v.date(req.query.to); }
   if (req.query.q) {
@@ -425,6 +429,12 @@ router.get('/profit-and-loss', owner, wrap(async (req, res) => {
     // each manufacturer cost us.
     clients: ledger.byClient({ from, to, companyId }),
     suppliers: ledger.bySupplier({ from, to, companyId }),
+    // The bottom line, in the owner's own order: selling price less buying
+    // price and the overheads on each side, then VAT off the gross.
+    statement: ledger.statement({ from, to, companyId }),
+    // What is left to spread: AKR's own overheads, booked to no account.
+    overheads: ledger.unbookedOverheads({ from, to, companyId },
+      companyId ? 'AND e.company_id = @companyId' : ''),
   });
 }));
 

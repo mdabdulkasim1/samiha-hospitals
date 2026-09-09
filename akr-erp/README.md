@@ -456,6 +456,38 @@ manufacturer cost us** — what they billed us for material in the period, what 
 their account as an expense, and the two together. Every account is listed, including the ones that
 did nothing this period, and each table folds down to the ones that traded.
 
+### Whose expense is it
+
+Every expense is booked to somebody: a **manufacturer's** account (inspection at their works,
+freight in), a **client's** account (a site visit, testing for their job), or to nobody — AKR's own
+overheads: rent, salaries, the trade licence. The picker on the expense form says so in those words,
+and the expense list can be filtered by the account carrying it.
+
+The general overheads are then **spread across the accounts pro rata**, on what each client was
+invoiced and on what each manufacturer billed us, so a per-account figure means something. The
+tables show it either way: as entered — the pot as its own row — or spread, one link either way.
+The shares always come to the pot exactly; where there is nothing to apportion on, nothing is
+spread and the pot stays visible rather than being shared out on a basis that does not exist.
+
+### The bottom line
+
+The page closes with the arithmetic the owner reads, in that order:
+
+```
+  Selling price                    invoiced to clients, before VAT      30,048.00
+− Buying price                     what those goods cost us           − 23,460.00
+− Buying overhead expenses         booked to a manufacturer            − 1,500.00
+− Selling overhead expenses        booked to a client                  −   600.00
+− AKR general overheads            rent, salaries, the licence         − 9,850.00
+= Gross profit                                                         − 5,362.00
+− VAT payable to the FTA           output tax less input tax           −   286.90
+= Net profit                                                           − 5,648.90
+```
+
+The VAT line is the owner's own reading, and worth saying plainly: the net payable is money
+collected from clients and handed to the FTA rather than a cost of the trade, so an accountant would
+stop at the gross profit above it. Both figures are on the card, so either reading is one line away.
+
 Two figures on that page are deliberately not the same, and both are right: **cost of sales** is
 what the goods *invoiced to clients* cost, whenever they were bought; **billed us** is what the
 makers invoiced *in this period*, whenever those goods are sold. Where the yard fills or empties,

@@ -290,6 +290,7 @@
 
     async render(host) {
       const m = await APP.loadMasters();
+      const expenseAccounts = (await API.get('/api/partners?limit=500')).rows;
       APP.actions(APP.can(['accounts']) ? [
         { id: 'exp', label: '+ Expense', kind: 'gold', onClick: () => openExpense('expense') },
         { id: 'inc', label: '+ Other income', kind: 'green', onClick: () => openExpense('income') },
@@ -308,6 +309,11 @@
               <option value="">All heads</option>
               ${m.expenseCategories.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}
             </select></label>
+            <label class="field"><span>Booked to</span><select id="f-partner">
+              <option value="">Every account</option>
+              <option value="overhead">AKR general overheads only</option>
+              ${expenseAccounts.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}
+            </select></label>
             <label class="field"><span>From</span>
               <input id="f-from" type="date" value="${UI.today().slice(0, 4)}-01-01"></label>
             <label class="field"><span>To</span><input id="f-to" type="date" value="${UI.today()}"></label>
@@ -320,8 +326,10 @@
         const box = document.getElementById('rows');
         box.innerHTML = UI.loading();
         const get = (id) => document.getElementById(id).value;
+        const who = get('f-partner');
         const res = await API.get('/api/accounts/expenses' + API.qs({
           q: get('f-q'), company_id: get('f-company'), category_id: get('f-category'),
+          partner_id: who === 'overhead' ? '' : who, overhead: who === 'overhead' ? '1' : '',
           from: get('f-from'), to: get('f-to'), limit: 300 }));
         document.getElementById('summary').innerHTML = `<div class="grid g3 mb">
           ${UI.stat({ label: 'Spent', value: UI.money(res.summary.spent), kind: 'gold' })}
@@ -335,6 +343,10 @@
           { label: 'Head', key: 'category_name' },
           { label: 'Description', render: (r) => `<b>${esc(r.description)}</b>
               <div class="muted small">${esc([r.payee, r.project].filter(Boolean).join(' · '))}</div>` },
+          { label: 'Booked to', render: (r) => (r.partner_name
+            ? `${esc(r.partner_name)}<div class="muted small">${
+              r.partner_type === 'client' ? 'client' : 'manufacturer'}</div>`
+            : '<span class="muted small">AKR — spread pro rata</span>') },
           { label: 'Mode', render: (r) => UI.titleise(r.mode) },
           { label: 'Net', num: true, render: (r) => UI.money(r.amount, { symbol: false }) },
           { label: 'VAT', num: true, render: (r) => (r.vat_amount ? UI.money(r.vat_amount, { symbol: false }) : '—') },
@@ -354,6 +366,59 @@
       await load();
     },
   });
+
+
+  /**
+   * The bottom line, written the way the owner asks for it:
+   *
+   *   selling price − buying price − buying overheads − selling overheads
+   *     = gross profit,  then  − VAT  = net profit
+   *
+   * AKR's own general overheads are their own line rather than folded into
+   * either side, because they belong to the business and not to the buying or
+   * the selling of any particular job — the tables above are where they get
+   * spread across the accounts.
+   */
+  function statementCard(st) {
+    if (!st) return '';
+    /*
+     * A deduction line is written with its sign and a positive figure, the way
+     * a statement is read. An answer line — the gross, the net — is written as
+     * it stands, minus included: a loss that prints as a profit is the one
+     * mistake this card must not make.
+     */
+    const line = (label, value, opts = {}) => `<tr class="${opts.cls || ''}">
+      <td>${opts.sign ? `<span class="muted">${opts.sign}</span> ` : ''}${esc(label)}
+        ${opts.note ? `<div class="muted small">${esc(opts.note)}</div>` : ''}</td>
+      <td class="num">${opts.sign
+        ? `${value ? `${opts.sign} ` : ''}${UI.money(Math.abs(value), { symbol: false })}`
+        : `${value < 0 ? '− ' : ''}${UI.money(Math.abs(value), { symbol: false })}`}</td></tr>`;
+    return `<div class="card">
+      <h3>The bottom line</h3>
+      <div class="card-sub">Selling price, less what those goods cost, less the overheads on each
+        side — that is the gross profit; VAT off it is the net.</div>
+      <table class="statement">
+        ${line('Selling price', st.selling_price, { note: 'invoiced to clients, before VAT' })}
+        ${line('Buying price', st.buying_price, { sign: '−', note: 'what those goods cost us' })}
+        ${line('Buying overhead expenses', st.buying_overheads,
+          { sign: '−', note: "booked to a manufacturer's account" })}
+        ${line('Selling overhead expenses', st.selling_overheads,
+          { sign: '−', note: "booked to a client's account" })}
+        ${line('AKR general overheads', st.general_overheads,
+          { sign: '−', note: 'rent, salaries, the licence — spread pro rata above' })}
+        ${st.other_income ? line('Other income', st.other_income, { sign: '+' }) : ''}
+        ${line('Gross profit', st.gross_profit, { cls: 'sub',
+          note: `${st.gross_margin_percent}% of the selling price` })}
+        ${line(st.vat >= 0 ? 'VAT payable to the FTA' : 'VAT recoverable from the FTA', st.vat,
+          { sign: st.vat >= 0 ? '−' : '+', note: 'output tax on our invoices, less input tax' })}
+        ${line('Net profit', st.net_profit, { cls: 'grand' })}
+      </table>
+      <div class="muted small mt">The VAT line is the owner's own reading. Strictly, the net payable
+        is money collected from clients and passed to the FTA rather than a cost of the trade — the
+        gross profit above it is the figure an accountant would call the result. Both are here, so
+        either reading is one line away.</div>
+    </div>`;
+  }
 
   async function openExpense(kind, existing) {
     const m = await APP.loadMasters();
@@ -380,9 +445,17 @@
         <div class="grid g3">
           ${UI.field({ name: 'payee', label: kind === 'income' ? 'Received from' : 'Paid to',
             value: existing ? existing.payee || '' : '' })}
-          ${UI.field({ name: 'partner_id', label: 'Or an account on the books', blank: 'None',
+          ${UI.field({ name: 'partner_id', label: 'Booked to',
+            blank: 'AKR — a general overhead, spread pro rata',
             value: existing ? existing.partner_id : '',
-            options: partners.map((p) => ({ value: p.id, label: p.name })) })}
+            hint: 'An account carries it on the profit page; left as a general overhead it is '
+              + 'spread across the accounts pro rata.',
+            options: [
+              { label: 'Clients', options: partners.filter((p) => p.type !== 'supplier')
+                .map((p) => ({ value: p.id, label: p.name })) },
+              { label: 'Manufacturers & suppliers', options: partners.filter((p) => p.type !== 'client')
+                .map((p) => ({ value: p.id, label: p.name })) },
+            ].filter((g) => g.options.length) })}
           ${UI.field({ name: 'project', label: 'Project', value: existing ? existing.project || '' : '' })}
         </div>
         <div class="grid g3">
@@ -579,6 +652,13 @@
         <div id="out">${UI.loading()}</div>`;
 
       const quiet = { clients: true, suppliers: true };
+      /*
+       * AKR's own overheads read two ways. As entered, they are one row of
+       * their own — the rent belongs to no manufacturer. Spread, they are the
+       * share each account carries pro rata, which is how the accounts desk
+       * apportions them and what makes a per-account figure worth anything.
+       */
+      let spread = true;
 
       const load = async () => {
         const out = document.getElementById('out');
@@ -600,7 +680,13 @@
          * table can be folded down to the accounts that actually traded.
          */
         const clients = quiet.clients ? pl.clients : pl.clients.filter((r) => r.traded);
-        const suppliers = quiet.suppliers ? pl.suppliers : pl.suppliers.filter((r) => r.traded);
+        // Spread, the unallocated row would be counted twice: once as itself
+        // and once as everybody's share of it.
+        const supplierRows = spread ? pl.suppliers.filter((r) => !r.unattributed) : pl.suppliers;
+        const suppliers = quiet.suppliers ? supplierRows : supplierRows.filter((r) => r.traded);
+        const spreadToggle = pl.overheads ? `<button class="link-btn small" data-spread="1">${spread
+          ? "Show AKR's overheads as entered, in one row"
+          : `Spread AKR's overheads (${UI.money(pl.overheads, { symbol: false })}) pro rata`}</button>` : '';
         const sumOf = (rows, key) => rows.reduce((a, r) => a + (r[key] || 0), 0);
         const hideQuiet = (all, shown, key) => {
           const idle = all.filter((r) => !r.traded).length;
@@ -661,8 +747,10 @@
             <h3>Revenue, client by client</h3>
             <div class="card-sub">Where the invoiced sales came from, with the cost of those
               particular goods against each account. Every trading client is listed — an account
-              that bought nothing this period is worth seeing too. <b>Still owed</b> is where the
-              account stands today, not a figure for the period.</div>
+              that bought nothing this period is worth seeing too.${spread && pl.overheads
+                ? " AKR's own overheads are spread across them pro rata, on what each was invoiced,"
+                  + ' and the contribution is what the account is left carrying.' : ''}
+              <b>Still owed</b> is where the account stands today, not a figure for the period.</div>
             ${UI.table([
               { label: 'Client', render: (r) => `<b>${esc(r.name)}</b>
                   <div class="muted small mono">${esc(r.code)}</div>` },
@@ -676,6 +764,15 @@
               { label: 'Margin on goods', num: true, render: (r) => (r.revenue
                 ? `${UI.money(r.margin, { symbol: false })}
                    <div class="muted small">${r.margin_percent}%</div>` : '—') },
+              { label: 'Booked to them', num: true, render: (r) => (r.expenses
+                ? `− ${UI.money(r.expenses, { symbol: false })}
+                   <div class="muted small">${r.expense_count} entr${r.expense_count === 1 ? 'y' : 'ies'}</div>` : '—') },
+              ...(spread ? [
+                { label: 'Share of overheads', num: true, render: (r) => (r.overhead_share
+                  ? `− ${UI.money(r.overhead_share, { symbol: false })}` : '—') },
+                { label: 'Contribution', num: true, render: (r) => (r.traded
+                  ? `<b>${UI.money(r.contribution, { symbol: false })}</b>` : '—') },
+              ] : []),
               { label: 'Still owed', num: true, render: (r) => (r.outstanding > 0
                 ? `<span class="badge warn">${UI.money(r.outstanding, { symbol: false })}</span>` : '—') },
             ], clients, { emptyText: 'No clients on the books yet.',
@@ -685,15 +782,23 @@
                 <td class="num">${UI.money(sumOf(clients, 'vat'), { symbol: false })}</td>
                 <td class="num">− ${UI.money(sumOf(clients, 'cost_of_sales'), { symbol: false })}</td>
                 <td class="num">${UI.money(sumOf(clients, 'margin'), { symbol: false })}</td>
+                <td class="num">− ${UI.money(sumOf(clients, 'expenses'), { symbol: false })}</td>
+                ${spread ? `<td class="num">− ${UI.money(sumOf(clients, 'overhead_share'), { symbol: false })}</td>
+                  <td class="num"><b>${UI.money(sumOf(clients, 'contribution'), { symbol: false })}</b></td>` : ''}
                 <td class="num">${UI.money(sumOf(clients, 'outstanding'), { symbol: false })}</td></tr>` })}
-            ${hideQuiet(pl.clients, clients, 'clients')}
+            <div class="row-between mt">
+              ${hideQuiet(pl.clients, clients, 'clients')}
+              ${spreadToggle}
+            </div>
           </div>
           <div class="card">
             <h3>What each manufacturer cost us</h3>
             <div class="card-sub">What every supplier billed us for material in this period, and
               what was booked against their account as an expense — freight, testing, a mobilisation
-              charge. Together, what that manufacturer cost the group. <b>Still owed</b> is where
-              the account stands today, not a figure for the period.</div>
+              charge. Together, what that manufacturer cost the group.${spread && pl.overheads
+                ? " AKR's own overheads are spread across them pro rata, on what each billed us."
+                : ''} <b>Still owed</b> is where the account stands today, not a figure for the
+              period.</div>
             ${UI.table([
               { label: 'Manufacturer / supplier', render: (r) => `<b>${esc(r.name)}</b>
                   <div class="muted small mono">${esc(r.code)}</div>` },
@@ -707,8 +812,13 @@
               { label: 'Expenses', num: true, render: (r) => (r.expenses
                 ? `${UI.money(r.expenses, { symbol: false })}
                    <div class="muted small">${r.expense_count} entr${r.expense_count === 1 ? 'y' : 'ies'}</div>` : '—') },
-              { label: 'Cost to us', num: true, render: (r) => (r.total_cost
-                ? `<b>${UI.money(r.total_cost, { symbol: false })}</b>` : '—') },
+              ...(spread ? [
+                { label: 'Share of overheads', num: true, render: (r) => (r.overhead_share
+                  ? UI.money(r.overhead_share, { symbol: false }) : '—') },
+              ] : []),
+              { label: spread ? 'Cost to us, all in' : 'Cost to us', num: true,
+                render: (r) => ((spread ? r.cost_with_overheads : r.total_cost)
+                  ? `<b>${UI.money(spread ? r.cost_with_overheads : r.total_cost, { symbol: false })}</b>` : '—') },
               { label: 'Still owed', num: true, render: (r) => (r.outstanding > 0
                 ? `<span class="badge warn">${UI.money(r.outstanding, { symbol: false })}</span>` : '—') },
             ], suppliers, { emptyText: 'No suppliers on the books yet.',
@@ -718,9 +828,14 @@
                 <td class="num"><b>${UI.money(sumOf(suppliers, 'billed'), { symbol: false })}</b></td>
                 <td class="num">${UI.money(sumOf(suppliers, 'input_vat'), { symbol: false })}</td>
                 <td class="num">${UI.money(sumOf(suppliers, 'expenses'), { symbol: false })}</td>
-                <td class="num"><b>${UI.money(sumOf(suppliers, 'total_cost'), { symbol: false })}</b></td>
+                ${spread ? `<td class="num">${UI.money(sumOf(suppliers, 'overhead_share'), { symbol: false })}</td>` : ''}
+                <td class="num"><b>${UI.money(sumOf(suppliers,
+                  spread ? 'cost_with_overheads' : 'total_cost'), { symbol: false })}</b></td>
                 <td class="num">${UI.money(sumOf(suppliers, 'outstanding'), { symbol: false })}</td></tr>` })}
-            ${hideQuiet(pl.suppliers, suppliers, 'suppliers')}
+            <div class="row-between mt">
+              ${hideQuiet(pl.suppliers.filter((r) => !r.unattributed), suppliers, 'suppliers')}
+              ${spreadToggle}
+            </div>
             <div class="muted small mt">This is not the same figure as the cost of sales above it,
               and should not be: cost of sales is what the goods <b>invoiced to clients</b> cost,
               whenever they were bought; this is what the makers <b>billed us in this period</b>,
@@ -750,16 +865,23 @@
               <tr><td class="muted">Overheads</td><td class="num">${UI.money(pl.group.expenses, { symbol: false })}</td></tr>
               <tr class="grand"><td>Gross profit</td><td class="num">${UI.money(pl.group.net_profit, { symbol: false })}</td></tr>
             </table></div>
-          </div>`;
+          </div>
+          ${statementCard(pl.statement)}`;
       };
 
       host.querySelectorAll('.filters input, .filters select')
         .forEach((el) => el.addEventListener('change', load));
       host.addEventListener('click', (e) => {
-        const btn = e.target.closest('[data-quiet]');
-        if (!btn) return;
-        quiet[btn.dataset.quiet] = !quiet[btn.dataset.quiet];
-        load();
+        const fold = e.target.closest('[data-quiet]');
+        if (fold) {
+          quiet[fold.dataset.quiet] = !quiet[fold.dataset.quiet];
+          load();
+          return;
+        }
+        if (e.target.closest('[data-spread]')) {
+          spread = !spread;
+          load();
+        }
       });
       await load();
     },

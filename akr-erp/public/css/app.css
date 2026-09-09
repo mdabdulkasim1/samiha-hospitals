@@ -431,3 +431,17 @@ ol.conditions li { margin-bottom: 3px; }
   .content { padding: 0; }
   .card { box-shadow: none; border: 0; }
 }
+
+/* ---------------------------------------------------------- profit statement
+ * The owner's own arithmetic, read top to bottom: selling price, what the
+ * goods cost, the overheads on each side, and what is left. Rules under the
+ * two answers, because those are the lines anybody looks for first.
+ */
+table.statement { width: 100%; border-collapse: collapse; max-width: 620px; }
+table.statement td { padding: 7px 4px; border-bottom: 1px solid var(--line); }
+table.statement td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+table.statement tr.sub td { border-top: 2px solid var(--line); font-weight: 700; }
+table.statement tr.grand td {
+  border-top: 2.5px solid var(--navy); border-bottom: 0;
+  font-weight: 800; font-size: 15.5px; padding-top: 10px;
+}

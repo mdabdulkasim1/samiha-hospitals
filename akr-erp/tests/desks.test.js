@@ -288,3 +288,67 @@ test('what a manufacturer cost us is their bills plus what was booked to them', 
   assert.equal(after.total_cost, after.billed + after.expenses,
     'and the cost to us is the two together');
 });
+
+test("the bottom line reads the owner's own formula", async () => {
+  const pl = await admin.get('/api/accounts/profit-and-loss?from=2000-01-01&to=2100-01-01');
+  const st = pl.statement;
+
+  // selling price − buying price − buying overheads − selling overheads
+  //   − AKR's own overheads (+ other income) = gross profit
+  const gross = st.selling_price - st.buying_price - st.buying_overheads
+    - st.selling_overheads - st.general_overheads + st.other_income;
+  assert.equal(Math.round(gross * 100) / 100, st.gross_profit, 'the gross profit is the deduction');
+  assert.equal(Math.round((st.gross_profit - st.vat) * 100) / 100, st.net_profit,
+    'and VAT off the gross is the net');
+
+  // Each term is the thing it says it is.
+  assert.equal(st.selling_price, pl.group.revenue);
+  assert.equal(st.buying_price, pl.group.cost_of_sales);
+  const overheads = Math.round(
+    (st.buying_overheads + st.selling_overheads + st.general_overheads) * 100) / 100;
+  assert.equal(overheads, pl.group.expenses,
+    'every overhead is on exactly one of the three lines');
+
+  const vat = await admin.get('/api/accounts/vat-return?from=2000-01-01&to=2100-01-01');
+  assert.equal(st.vat, vat.net, 'the VAT line is the net payable for the period');
+});
+
+test('an overhead booked to nobody is spread pro rata across the accounts', async () => {
+  const before = await admin.get('/api/accounts/profit-and-loss?from=2000-01-01&to=2100-01-01');
+  await admin.post('/api/accounts/expenses',
+    { description: 'Trade licence renewal', amount: 4000, mode: 'bank_transfer' });
+  const after = await admin.get('/api/accounts/profit-and-loss?from=2000-01-01&to=2100-01-01');
+
+  assert.equal(after.overheads, before.overheads + 4000, 'it lands in the pot to spread');
+  const share = (rows) => Math.round(rows.reduce((a, r) => a + r.overhead_share, 0) * 100) / 100;
+  assert.equal(share(after.clients), after.overheads,
+    'the shares across clients come to the pot exactly');
+
+  /*
+   * The same pot is offered to the buy side as well — but only where there is
+   * something to apportion on. Nothing was bought in this period here, so
+   * nothing is spread and the pot stays visible as its own row rather than
+   * being shared out on a basis that does not exist.
+   */
+  const billed = after.suppliers.reduce((a, r) => a + r.billed, 0);
+  if (billed > 0) {
+    assert.equal(share(after.suppliers), after.overheads, 'spread across the suppliers who traded');
+  } else {
+    assert.equal(share(after.suppliers), 0, 'nothing to apportion on, so nothing apportioned');
+    const loose = after.suppliers.find((r) => r.unattributed);
+    assert.ok(loose, 'and the pot is still on the page');
+    assert.equal(loose.expenses, after.overheads);
+  }
+
+  // Pro rata: the account that traded most carries most of it.
+  const traded = after.clients.filter((r) => r.revenue > 0)
+    .sort((a, b) => b.revenue - a.revenue);
+  if (traded.length > 1) {
+    assert.ok(traded[0].overhead_share >= traded[1].overhead_share,
+      'the bigger account carries the bigger share');
+  }
+  for (const r of after.clients) {
+    assert.equal(r.contribution,
+      Math.round((r.margin - r.expenses - r.overhead_share) * 100) / 100);
+  }
+});

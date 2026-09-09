@@ -256,6 +256,133 @@ function profitAndLoss({ from, to, companyId = null }) {
 }
 
 
+
+
+/**
+ * The bottom line, in the order the owner reads it:
+ *
+ *   selling price − buying price − buying overheads − selling overheads
+ *     = gross profit,   then   − VAT   = net profit
+ *
+ * Each term is exactly one thing:
+ *
+ *   selling price       what was invoiced to clients, before VAT
+ *   buying price        what those particular goods cost — the cost of sales
+ *   buying overheads    expenses booked to a manufacturer's account
+ *   selling overheads   expenses booked to a client's account
+ *   general overheads   AKR's own — rent, salaries, the licence — booked to
+ *                       nobody, and the pot spread pro rata across the accounts
+ *                       in the tables above. It is its own line because it
+ *                       belongs to the business rather than to either side of
+ *                       the trade, and folding it into one of them would put a
+ *                       cost where it was not incurred.
+ *
+ * A note on the VAT line, because it is the owner's own reading rather than
+ * the FTA's: what is deducted here is the net payable for the period — output
+ * tax on our invoices less the input tax we may recover. That money was
+ * collected from clients and passed on rather than earned, so it is not a cost
+ * of the trade in the accounting sense. It is shown as the owner asks for it,
+ * and both figures are on the page so either reading is available.
+ */
+function statement({ from, to, companyId = null }) {
+  const params = { from, to, companyId };
+  const invFilter = companyId ? 'AND i.company_id = @companyId' : '';
+  const expFilter = companyId ? 'AND e.company_id = @companyId' : '';
+
+  const sales = db.prepare(`
+    SELECT COALESCE(SUM(i.subtotal - i.discount), 0) AS revenue FROM sales_invoices i
+     WHERE i.status != 'cancelled' AND i.invoice_date BETWEEN @from AND @to ${invFilter}`).get(params);
+
+  const cost = db.prepare(`
+    SELECT COALESCE(SUM(li.cost_price * li.qty), 0) AS cost FROM sales_invoice_items li
+      JOIN sales_invoices i ON i.id = li.invoice_id
+     WHERE i.status != 'cancelled' AND i.invoice_date BETWEEN @from AND @to ${invFilter}`).get(params);
+
+  // Overheads, split by whose account carries them.
+  const overheads = db.prepare(`
+    SELECT
+      COALESCE(SUM(CASE WHEN p.type IN ('supplier','both') THEN e.amount END), 0) AS buying,
+      COALESCE(SUM(CASE WHEN p.type = 'client' THEN e.amount END), 0) AS selling,
+      COALESCE(SUM(CASE WHEN e.partner_id IS NULL THEN e.amount END), 0) AS general
+      FROM expenses e
+      LEFT JOIN partners p ON p.id = e.partner_id
+     WHERE e.kind = 'expense' AND e.expense_date BETWEEN @from AND @to ${expFilter}`).get(params);
+
+  const otherIncome = round(db.prepare(`
+    SELECT COALESCE(SUM(e.amount), 0) AS amount FROM expenses e
+     WHERE e.kind = 'income' AND e.expense_date BETWEEN @from AND @to ${expFilter}`).get(params).amount);
+
+  const sellingPrice = round(sales.revenue);
+  const buyingPrice = round(cost.cost);
+  const buyingOverheads = round(overheads.buying);
+  const sellingOverheads = round(overheads.selling);
+  const generalOverheads = round(overheads.general);
+
+  const grossProfit = round(sellingPrice - buyingPrice - buyingOverheads - sellingOverheads
+    - generalOverheads + otherIncome);
+  const vat = vatReturn({ from, to, companyId }).net;
+
+  return {
+    from,
+    to,
+    selling_price: sellingPrice,
+    buying_price: buyingPrice,
+    buying_overheads: buyingOverheads,
+    selling_overheads: sellingOverheads,
+    general_overheads: generalOverheads,
+    other_income: otherIncome,
+    gross_profit: grossProfit,
+    gross_margin_percent: sellingPrice ? round((grossProfit / sellingPrice) * 100) : 0,
+    vat,
+    net_profit: round(grossProfit - vat),
+  };
+}
+
+/**
+ * AKR's own overheads — the rent, the salaries, the trade licence — the ones
+ * nobody booked to a supplier's or a client's account, because they do not
+ * belong to one.
+ */
+function unbookedOverheads(params, expFilter) {
+  return round(db.prepare(`
+    SELECT COALESCE(SUM(e.amount), 0) AS amount FROM expenses e
+     WHERE e.partner_id IS NULL AND e.kind = 'expense'
+       AND e.expense_date BETWEEN @from AND @to ${expFilter}`).get(params).amount);
+}
+
+/**
+ * Spread a pot of overheads across accounts, pro rata on `basis`.
+ *
+ * The accountant's own rule: the accounts that carried the most of the year
+ * carry the most of its overheads. Rounding is settled on the largest share so
+ * the parts come to the pot exactly — an apportionment that does not add up to
+ * what was spent is not an apportionment.
+ *
+ * Every row gets an `overhead_share`, zero included, so a caller can always
+ * read the column. Where there is nothing to apportion on — no revenue, no
+ * purchases — nothing is spread, and the pot stays visible as unallocated
+ * rather than being shared out on a basis that does not exist.
+ */
+function apportion(rows, pot, basis) {
+  for (const r of rows) r.overhead_share = 0;
+  if (!pot) return rows;
+  const total = rows.reduce((a, r) => a + (r[basis] || 0), 0);
+  if (total <= 0) return rows;
+
+  let spread = 0;
+  let largest = null;
+  for (const r of rows) {
+    const share = round((pot * (r[basis] || 0)) / total);
+    r.overhead_share = share;
+    spread = round(spread + share);
+    if ((r[basis] || 0) > 0 && (!largest || r[basis] > largest[basis])) largest = r;
+  }
+  if (largest && spread !== pot) {
+    largest.overhead_share = round(largest.overhead_share + (pot - spread));
+  }
+  return rows;
+}
+
 /**
  * Who we sold to, and what it made.
  *
@@ -268,6 +395,7 @@ function profitAndLoss({ from, to, companyId = null }) {
 function byClient({ from, to, companyId = null }) {
   const params = { from, to, companyId };
   const filter = companyId ? 'AND i.company_id = @companyId' : '';
+  const expFilter = companyId ? 'AND e.company_id = @companyId' : '';
 
   const rows = db.prepare(`
     SELECT p.id, p.code, p.name,
@@ -285,15 +413,22 @@ function byClient({ from, to, companyId = null }) {
         WHERE i.partner_id = p.id AND i.status != 'cancelled'
           AND i.invoice_date BETWEEN @from AND @to ${filter}) AS cost_of_sales,
       (SELECT COALESCE(SUM(i.total - i.paid_amount), 0) FROM sales_invoices i
-        WHERE i.partner_id = p.id AND i.status NOT IN ('cancelled','paid')) AS outstanding
+        WHERE i.partner_id = p.id AND i.status NOT IN ('cancelled','paid')) AS outstanding,
+      (SELECT COALESCE(SUM(e.amount), 0) FROM expenses e
+        WHERE e.partner_id = p.id AND e.kind = 'expense'
+          AND e.expense_date BETWEEN @from AND @to ${expFilter}) AS expenses,
+      (SELECT COUNT(*) FROM expenses e
+        WHERE e.partner_id = p.id AND e.kind = 'expense'
+          AND e.expense_date BETWEEN @from AND @to ${expFilter}) AS expense_count
      FROM partners p
     WHERE p.active = 1 AND p.type IN ('client', 'both')
     ORDER BY revenue DESC, p.name`).all(params);
 
-  return rows.map((r) => {
+  const named = rows.map((r) => {
     const revenue = round(r.revenue);
     const cost = round(r.cost_of_sales);
     const margin = round(revenue - cost);
+    const expenses = round(r.expenses);
     return {
       ...r,
       revenue,
@@ -301,10 +436,19 @@ function byClient({ from, to, companyId = null }) {
       cost_of_sales: cost,
       margin,
       margin_percent: revenue ? round((margin / revenue) * 100) : 0,
+      expenses,
       outstanding: round(r.outstanding),
-      traded: Boolean(r.invoices),
+      traded: Boolean(r.invoices || r.expense_count),
     };
   });
+
+  // What the account is left carrying: its margin, less anything booked
+  // directly to it, less its share of the group's general overheads.
+  apportion(named, unbookedOverheads(params, expFilter), 'revenue');
+  for (const r of named) {
+    r.contribution = round(r.margin - r.expenses - r.overhead_share);
+  }
+  return named;
 }
 
 /**
@@ -377,20 +521,29 @@ function bySupplier({ from, to, companyId = null }) {
 
   /*
    * Rent, salaries, the trade licence: overheads nobody booked against a
-   * supplier's account, because they do not belong to one. Without this row
-   * the column would quietly disagree with the group's expenses, and a column
-   * that does not add up is worse than no column.
+   * supplier's account, because they do not belong to one. Read as they were
+   * entered they are their own row — without it the column would quietly
+   * disagree with the group's expenses, and a column that does not add up is
+   * worse than no column. Read pro rata they are the share on each row, which
+   * is how the accounts desk apportions them.
    */
   const loose = db.prepare(`
     SELECT COALESCE(SUM(e.amount), 0) AS amount, COUNT(*) AS n FROM expenses e
      WHERE e.partner_id IS NULL AND e.kind = 'expense'
        AND e.expense_date BETWEEN @from AND @to ${expFilter}`).get(params);
+
+  apportion(named, round(loose.amount), 'billed');
+  for (const r of named) {
+    r.cost_with_overheads = round(r.total_cost + r.overhead_share);
+  }
   if (loose.n) {
     named.push({
       id: null, code: '—', name: 'Overheads not booked to a supplier',
       bills: 0, billed: 0, input_vat: 0, paid: 0, outstanding: 0,
       expenses: round(loose.amount), expense_count: loose.n,
-      orders: 0, ordered: 0, total_cost: round(loose.amount), traded: true, unattributed: true,
+      orders: 0, ordered: 0, total_cost: round(loose.amount),
+      overhead_share: 0, cost_with_overheads: round(loose.amount),
+      traded: true, unattributed: true,
     });
   }
   return named;
@@ -503,5 +656,5 @@ function partnerBalance(partnerId, { companyId = null } = {}) {
   return { balance: l.closing, receivable, payable, opening: l.opening };
 }
 
-module.exports = { partnerLedger, ageing, vatReturn, profitAndLoss, byClient, bySupplier,
-  monthlyProfit, partnerBalance };
+module.exports = { partnerLedger, ageing, vatReturn, profitAndLoss, statement, byClient,
+  bySupplier, unbookedOverheads, monthlyProfit, partnerBalance };
