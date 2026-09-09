@@ -145,6 +145,52 @@ test('a client enquiry with nothing behind it yet still traces', async () => {
   assert.equal(res.chain.steps[0].ref, ctx.clientEnquiry.enquiry_no);
 });
 
+test('the LPO carries the enquiry, and prints it', async () => {
+  await kam.post(`/api/purchase/quotations/${ctx.quote.id}/approve`);
+  const lpo = await kam.post('/api/purchase/orders', {
+    partner_id: ctx.supplier.id, quotation_id: ctx.quote.id,
+    items: [{ item_id: ctx.item.id, qty: 8, unit_price: 1250 }],
+  });
+  const full = await kam.get(`/api/purchase/orders/${lpo.id}`);
+  assert.equal(full.order.enquiry_no, ctx.rfq.enquiry_no,
+    'the reference travels from the enquiry through the price onto the order');
+  assert.equal(full.order.supplier_quote_no, ctx.quote.quote_no);
+  assert.equal(full.order.supplier_quote_ref, 'YESS/Q/2026/119',
+    "and the maker's own quotation number, which is what they file by");
+
+  // It is on the list too, where somebody looks for it by eye.
+  const listed = (await kam.get('/api/purchase/orders?limit=50')).rows
+    .find((r) => r.id === lpo.id);
+  assert.equal(listed.enquiry_no, ctx.rfq.enquiry_no);
+  ctx.lpo = lpo;
+});
+
+test('an LPO raised without a quotation can still name the enquiry', async () => {
+  const rfq = await kam.post('/api/purchase/enquiries', {
+    partner_id: ctx.supplier.id, subject: 'Straight to order' });
+  const lpo = await kam.post('/api/purchase/orders', {
+    partner_id: ctx.supplier.id, enquiry_id: rfq.id,
+    items: [{ item_id: ctx.item.id, qty: 2, unit_price: 90 }],
+  });
+  const full = await kam.get(`/api/purchase/orders/${lpo.id}`);
+  assert.equal(full.order.enquiry_no, rfq.enquiry_no);
+
+  await assert.rejects(
+    () => kam.post('/api/purchase/orders', {
+      partner_id: ctx.supplier.id, enquiry_id: ctx.clientEnquiry.id,
+      items: [{ item_id: ctx.item.id, qty: 1, unit_price: 10 }] }),
+    (err) => err.status === 404, "a client's enquiry is not ours to order against",
+  );
+});
+
+test('the whole chain reads from the enquiry to the order', async () => {
+  const res = await kam.get(`/api/reports/trace?ref=${encodeURIComponent(ctx.lpo.lpo_no)}`);
+  const refs = res.chain.steps.map((s) => s.ref);
+  assert.equal(refs[0], ctx.rfq.enquiry_no, 'searching the LPO still starts at the enquiry');
+  assert.ok(refs.includes(ctx.quote.quote_no));
+  assert.ok(refs.includes(ctx.lpo.lpo_no));
+});
+
 test('the buying desks may raise one; the others may not', async () => {
   const body = { partner_id: ctx.supplier.id, subject: 'Desk test' };
   const mine = await kam.post('/api/purchase/enquiries', body);

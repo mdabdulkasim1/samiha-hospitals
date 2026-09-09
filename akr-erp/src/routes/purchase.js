@@ -298,6 +298,8 @@ const PO_SELECT = `
          c.code AS company_code, c.name AS company_name, c.trn AS company_trn,
          c.address AS company_address, c.phone AS company_phone, c.email AS company_email,
          l.name AS delivery_location, q.quote_no AS supplier_quote_no,
+         q.supplier_ref AS supplier_quote_ref,
+         COALESCE(e.enquiry_no, qe.enquiry_no) AS enquiry_no,
          so.so_no AS against_sales_order, so.client_lpo_no AS against_client_lpo,
          u.name AS created_by_name, ap.name AS approved_by_name
     FROM purchase_orders o
@@ -307,6 +309,8 @@ const PO_SELECT = `
     LEFT JOIN companies c ON c.id = o.company_id
     LEFT JOIN locations l ON l.id = o.delivery_location_id
     LEFT JOIN supplier_quotations q ON q.id = o.quotation_id
+    LEFT JOIN enquiries e ON e.id = o.enquiry_id
+    LEFT JOIN enquiries qe ON qe.id = q.enquiry_id
     LEFT JOIN sales_orders so ON so.id = o.sales_order_id
     LEFT JOIN users u ON u.id = o.created_by
     LEFT JOIN users ap ON ap.id = o.approved_by`;
@@ -365,12 +369,21 @@ router.post('/orders', buyer, wrap(async (req, res) => {
 
   // Ordering off an unconfirmed price is exactly what the company's own
   // sequence is designed to prevent.
+  // The enquiry the order came out of travels with it, so the reference is on
+  // the paper the supplier holds and not only in our own chain.
+  let enquiryId = b.enquiry_id || null;
   if (b.quotation_id) {
     const q = db.prepare('SELECT * FROM supplier_quotations WHERE id = ?').get(b.quotation_id);
     if (!q) throw notFound('No such supplier quotation.');
     if (q.status !== 'approved' && q.status !== 'ordered') {
       throw conflict(`Quotation ${q.quote_no} has not been price-confirmed yet. Approve it before raising the LPO.`);
     }
+    enquiryId = q.enquiry_id || enquiryId;
+  }
+  if (enquiryId) {
+    const e = enquiries.get(enquiryId, 'supplier');
+    if (!e) throw notFound('No such enquiry to a manufacturer.');
+    enquiryId = e.id;
   }
 
   const priced = docs.buildLines(b.items, { side: 'buy' });
@@ -399,11 +412,11 @@ router.post('/orders', buyer, wrap(async (req, res) => {
       payment_terms: terms.describe(paymentTermsId),
     });
     const info = db.prepare(`
-      INSERT INTO purchase_orders (company_id, lpo_no, partner_id, quotation_id, application_id,
+      INSERT INTO purchase_orders (company_id, lpo_no, partner_id, quotation_id, enquiry_id, application_id,
         sales_order_id, project, attention, incoterms, authority, lpo_date, delivery_date,
         delivery_location_id, delivery_address, payment_terms_id, currency, subtotal, discount,
         vat_amount, total, status, notes, terms_text, created_by)
-      VALUES (@company_id, @lpo_no, @partner_id, @quotation_id, @application_id, @sales_order_id,
+      VALUES (@company_id, @lpo_no, @partner_id, @quotation_id, @enquiry_id, @application_id, @sales_order_id,
         @project, @attention, @incoterms, @authority, @lpo_date, @delivery_date,
         @delivery_location_id, @delivery_address, @payment_terms_id, @currency, @subtotal, @discount,
         @vat_amount, @total, @status, @notes, @terms_text, @created_by)`).run({
@@ -411,6 +424,7 @@ router.post('/orders', buyer, wrap(async (req, res) => {
       lpo_no: lpoNo,
       partner_id: supplier.id,
       quotation_id: b.quotation_id || null,
+      enquiry_id: enquiryId,
       application_id: docs.resolveApplication(b.application_id, priced.lines),
       sales_order_id: b.sales_order_id || null,
       project: v.str(b.project),

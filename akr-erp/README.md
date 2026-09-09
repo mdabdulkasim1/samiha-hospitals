@@ -23,6 +23,17 @@ price. **No supplier quotation exists without one** — the system refuses to lo
 does not answer an enquiry we raised, so there is always a record of what was asked, of whom and
 when, including the makers who never came back.
 
+The enquiry's reference then travels the whole way: onto their quotation, and onto **our LPO, where
+it prints** beside their own quotation number, so the manufacturer holding the order can see what
+they priced and when they were asked:
+
+```
+LPO NO.        DATE           ATTN               SUPPLIER TRN
+AKR-FD26-001   09 Sep 2026    Mr. Sankar         100xxxxxxxxxxxx
+OUR ENQUIRY        YOUR QUOTATION      OUR QUOTATION REF     SO REFERENCE
+AKR-RFQ-092026-001 GVM/Q/26/1188       AKR-SQ-092026-001     AKR-SO-092026-001
+```
+
 Every document carries the **application** it belongs to — potable water, storm water, sewerage,
 district cooling or irrigation — and 5% UAE VAT. Payment terms are chosen per document from a list
 the company keeps, and they decide the advance an order waits for, the cheque the driver collects at
@@ -451,7 +462,7 @@ A4, on the company's letterhead, with the application title under the document t
 | Document | Carries |
 |---|---|
 | **Quotation** | Lines, rates, VAT, validity, delivery, payment terms, terms & conditions |
-| **Local Purchase Order** | Supplier and their TRN, attention, incoterms, deliver-to, your-quotation and SO references, approving authority, amount in words, the numbered conditions, buyer details, acknowledgement |
+| **Local Purchase Order** | Supplier and their TRN, attention, incoterms, deliver-to, **our enquiry**, their own quotation number and ours, the SO reference, approving authority, amount in words, the numbered conditions, buyer details, acknowledgement |
 | **Delivery Note** | Quantities and part numbers, no prices; a signature block; a payment-on-delivery warning where the terms call for one |
 | **Tax Invoice** | Both TRNs, the client's LPO, the delivery note, taxable value, 5% VAT, total, amount in words, bank details |
 | **Receipt / Payment Voucher** | What was received or paid, against which invoices, cheque details |

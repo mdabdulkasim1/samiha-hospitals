@@ -322,6 +322,9 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
   lpo_no            TEXT NOT NULL UNIQUE,
   partner_id        INTEGER NOT NULL REFERENCES partners(id),
   quotation_id      INTEGER REFERENCES supplier_quotations(id),
+  -- The enquiry the whole order came out of, carried onto the LPO itself so
+  -- the reference is on the paper the supplier holds.
+  enquiry_id        INTEGER REFERENCES enquiries(id),
   application_id    INTEGER REFERENCES applications(id),
   sales_order_id    INTEGER REFERENCES sales_orders(id),   -- back-to-back
   project           TEXT,

@@ -351,7 +351,11 @@
           ['Date', UI.date(o.lpo_date)],
           ['Attn', o.attention || '—'],
           ['Supplier TRN', o.supplier_trn || '—'],
-          ['Your quotation', o.supplier_quote_no || '—'],
+          // Their own quotation number is what the supplier files by; ours is
+          // there too, and above both the enquiry the whole order came out of.
+          ['Our enquiry', o.enquiry_no || '—'],
+          ['Your quotation', o.supplier_quote_ref || o.supplier_quote_no || '—'],
+          ['Our quotation ref', o.supplier_quote_no || '—'],
           ['SO reference', o.against_sales_order || '—'],
           ['Incoterms', o.incoterms || '—'],
           ['Required by', UI.date(o.delivery_date)],

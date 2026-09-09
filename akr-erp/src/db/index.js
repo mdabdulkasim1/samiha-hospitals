@@ -36,6 +36,7 @@ function migrate() {
   // was a client's.
   ensureColumn('enquiries', 'side', "TEXT NOT NULL DEFAULT 'client'");
   ensureColumn('supplier_quotations', 'enquiry_id', 'INTEGER REFERENCES enquiries(id)');
+  ensureColumn('purchase_orders', 'enquiry_id', 'INTEGER REFERENCES enquiries(id)');
   // Indexed here rather than in the schema: on a database created before the
   // column existed, the schema runs before the column is added.
   db.exec('CREATE INDEX IF NOT EXISTS idx_enquiries_side ON enquiries(side, status)');

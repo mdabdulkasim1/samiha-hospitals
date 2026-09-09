@@ -213,7 +213,8 @@
           box.innerHTML = UI.loading();
           const res = await API.get('/api/purchase/orders' + API.qs({ q: v.q, status: v.status, limit: 200 }));
           box.innerHTML = UI.table([
-            { label: 'LPO', render: (r) => `<span class="mono">${esc(r.lpo_no)}</span>` },
+            { label: 'LPO', render: (r) => `<span class="mono">${esc(r.lpo_no)}</span>
+                ${r.enquiry_no ? `<div class="muted small">${esc(r.enquiry_no)}</div>` : ''}` },
             { label: 'Manufacturer', render: (r) => `<b>${esc(r.supplier_name)}</b>
                 <div class="muted small">${esc(r.project || '')}</div>` },
             { label: 'Application', render: (r) => (r.application_name ? UI.badge(r.application_name, 'navy') : '—') },
@@ -248,7 +249,10 @@
           + 'this material on order in the stock register.</div>' : ''}
         <div class="grid g2 mb">
           <div>${UI.facts([
-            ['Their quotation', esc(o.supplier_quote_no || '—')],
+            ['Our enquiry', o.enquiry_no
+              ? `<span class="mono">${esc(o.enquiry_no)}</span>` : '—'],
+            ['Their quotation', esc(o.supplier_quote_no || '—')
+              + (o.supplier_quote_ref ? ` <span class="muted small">(their ${esc(o.supplier_quote_ref)})</span>` : '')],
             ['Project', esc(o.project || '—')],
             ['Against client order', esc(o.against_sales_order
               ? `${o.against_sales_order} (their LPO ${o.against_client_lpo || ''})` : 'bought for stock')],
@@ -328,6 +332,10 @@
     const suppliers = (await API.get('/api/partners?type=supplier&limit=500')).rows;
     const m = await APP.loadMasters();
     const sq = opts.fromSupplierQuote ? opts.fromSupplierQuote.quotation : null;
+    // The enquiry travels from the quotation onto the order; a direct LPO can
+    // be given one so its reference is on the paper too.
+    const enquiry = opts.enquiry || null;
+    const enquiryNo = (sq && sq.enquiry_no) || (enquiry && enquiry.enquiry_no) || '';
 
     UI.modal({
       title: 'New LPO to a manufacturer',
@@ -361,6 +369,9 @@
           ${UI.field({ name: 'project', label: 'Project', value: sq ? sq.project || '' : (opts.project || '') })}
           ${UI.field({ name: 'delivery_address', label: 'Delivery address', rows: 2 })}
         </div>
+        ${enquiryNo ? `<div class="alert info">This order carries our enquiry
+          <b class="mono">${esc(enquiryNo)}</b> — it prints on the LPO, so the maker can see what
+          they priced.</div>` : ''}
         <h4 class="mt">Lines</h4>
         <div id="lines"></div>
         ${UI.field({ name: 'notes', label: 'Notes to the maker', rows: 2 })}
@@ -371,6 +382,7 @@
           the standard list later will not alter it.</div>
         <div id="clauses">${UI.loading()}</div>
         ${sq ? `<input type="hidden" name="quotation_id" value="${sq.id}">` : ''}
+        ${!sq && enquiry ? `<input type="hidden" name="enquiry_id" value="${enquiry.id}">` : ''}
         ${opts.salesOrderId ? `<input type="hidden" name="sales_order_id" value="${opts.salesOrderId}">` : ''}
       </form>`,
       onMount(modal) {
