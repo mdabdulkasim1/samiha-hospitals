@@ -406,7 +406,6 @@
           { sign: '−', note: "booked to a client's account" })}
         ${line('AKR general overheads', st.general_overheads,
           { sign: '−', note: 'rent, salaries, the licence — spread pro rata above' })}
-        ${st.other_income ? line('Other income', st.other_income, { sign: '+' }) : ''}
         ${line('Gross profit', st.gross_profit, { cls: 'sub',
           note: `${st.gross_margin_percent}% of the selling price` })}
         ${line(st.vat >= 0 ? 'VAT payable to the FTA' : 'VAT recoverable from the FTA', st.vat,
@@ -724,8 +723,6 @@
               { label: 'Cost of goods', num: true, render: (r) => `− ${UI.money(r.cost_of_sales, { symbol: false })}` },
               { label: 'Margin on goods', num: true, render: (r) => `${UI.money(r.trading_margin, { symbol: false })}
                   <div class="muted small">${r.gross_margin_percent}%</div>` },
-              { label: 'Other income', num: true, render: (r) => (r.other_income
-                ? `+ ${UI.money(r.other_income, { symbol: false })}` : '—') },
               { label: 'Expenses this month', num: true, render: (r) => (r.expenses
                 ? `− ${UI.money(r.expenses, { symbol: false })}
                    <div class="muted small">${r.expense_count} entr${r.expense_count === 1 ? 'y' : 'ies'}</div>`
@@ -736,12 +733,15 @@
                 <td class="num">${UI.money(pl.monthly.total.revenue, { symbol: false })}</td>
                 <td class="num">− ${UI.money(pl.monthly.total.cost_of_sales, { symbol: false })}</td>
                 <td class="num">${UI.money(pl.monthly.total.trading_margin, { symbol: false })}</td>
-                <td class="num">${pl.monthly.total.other_income ? '+ ' + UI.money(pl.monthly.total.other_income, { symbol: false }) : '—'}</td>
                 <td class="num">− ${UI.money(pl.monthly.total.expenses, { symbol: false })}</td>
                 <td class="num"><b>${UI.money(pl.monthly.total.gross_profit, { symbol: false })}</b></td></tr>` })}
             <div class="muted small mt">An expense counts in the month it is dated, whichever month
               the trade it paid for happened in — which is how it is entered and how the bank sees it.
-              A month showing sales but no expenses is a month somebody has not finished entering.</div>
+              A month showing sales but no expenses is a month somebody has not finished entering.
+              ${pl.monthly.total.other_income
+                ? `<b>${UI.money(pl.monthly.total.other_income)}</b> of other income — a rebate, a
+                   scrap sale — was booked in this period and is not counted here: this page is what
+                   the trade made. It is in <a href="#/expenses">Expenses &amp; Income</a>.` : ''}</div>
           </div>
           <div class="card">
             <h3>Revenue, client by client</h3>
@@ -853,7 +853,6 @@
               { label: 'Cost of sales', num: true, render: (r) => UI.money(r.cost_of_sales, { symbol: false }) },
               { label: 'Margin on goods', num: true, render: (r) => `${UI.money(r.gross_profit, { symbol: false })}
                   <div class="muted small">${r.gross_margin_percent}%</div>` },
-              { label: 'Other income', num: true, render: (r) => UI.money(r.other_income, { symbol: false }) },
               { label: 'Expenses', num: true, render: (r) => UI.money(r.expenses, { symbol: false }) },
               { label: 'Gross profit', num: true, render: (r) => `<b>${
                 UI.money(r.net_profit, { symbol: false })}</b>` },

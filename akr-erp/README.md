@@ -484,6 +484,10 @@ The page closes with the arithmetic the owner reads, in that order:
 = Net profit                                                           − 5,648.90
 ```
 
+**Other income — a rebate, a scrap sale — is not on this page**, because the page is what the trade
+made. It is still on the books, in Expenses & Income, and where there is any in the period the month
+table says so in a line underneath rather than letting it go unmentioned.
+
 The VAT line is the owner's own reading, and worth saying plainly: the net payable is money
 collected from clients and handed to the FTA rather than a cost of the trade, so an accountant would
 stop at the gross profit above it. Both figures are on the card, so either reading is one line away.

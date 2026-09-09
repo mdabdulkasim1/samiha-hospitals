@@ -230,8 +230,7 @@ test('a month\'s expenses come off that month\'s gross profit', async () => {
   const rowAfter = after.monthly.rows.find((r) => r.month === month);
   assert.equal(rowAfter.trading_margin, rowBefore.trading_margin, 'the margin on the goods is untouched');
   assert.equal(rowAfter.expenses, spentBefore + 32400, "the month's overheads are all in");
-  assert.equal(rowAfter.gross_profit,
-    rowAfter.trading_margin + rowAfter.other_income - rowAfter.expenses,
+  assert.equal(rowAfter.gross_profit, rowAfter.trading_margin - rowAfter.expenses,
     'and the gross profit is the margin less this month\'s expenses');
   assert.equal(rowAfter.gross_profit, rowBefore.gross_profit - 32400,
     'so entering the month\'s overheads moves the gross profit down by exactly them');
@@ -296,7 +295,7 @@ test("the bottom line reads the owner's own formula", async () => {
   // selling price − buying price − buying overheads − selling overheads
   //   − AKR's own overheads (+ other income) = gross profit
   const gross = st.selling_price - st.buying_price - st.buying_overheads
-    - st.selling_overheads - st.general_overheads + st.other_income;
+    - st.selling_overheads - st.general_overheads;
   assert.equal(Math.round(gross * 100) / 100, st.gross_profit, 'the gross profit is the deduction');
   assert.equal(Math.round((st.gross_profit - st.vat) * 100) / 100, st.net_profit,
     'and VAT off the gross is the net');
@@ -351,4 +350,26 @@ test('an overhead booked to nobody is spread pro rata across the accounts', asyn
     assert.equal(r.contribution,
       Math.round((r.margin - r.expenses - r.overhead_share) * 100) / 100);
   }
+});
+
+test('other income is counted, but not as what the trade made', async () => {
+  const before = await admin.get('/api/accounts/profit-and-loss?from=2000-01-01&to=2100-01-01');
+  await admin.post('/api/accounts/income',
+    { description: 'Scrap sold off the yard', amount: 1750, mode: 'cash' }).catch(async () => {
+    await admin.post('/api/accounts/expenses',
+      { kind: 'income', description: 'Scrap sold off the yard', amount: 1750, mode: 'cash' });
+  });
+  const after = await admin.get('/api/accounts/profit-and-loss?from=2000-01-01&to=2100-01-01');
+
+  assert.equal(after.statement.other_income, before.statement.other_income + 1750,
+    'it is on the books');
+  assert.equal(after.statement.gross_profit, before.statement.gross_profit,
+    'and it does not move the gross profit — this page is the trade');
+  assert.equal(after.statement.net_profit, before.statement.net_profit);
+  assert.equal(after.group.net_profit, before.group.net_profit, 'nor the company figures');
+
+  const month = after.monthly.rows.find((r) => r.other_income > 0);
+  assert.ok(month, 'the month it was booked in still carries it as a figure');
+  assert.equal(month.gross_profit, month.trading_margin - month.expenses,
+    'while the month\'s profit stays the margin less its expenses');
 });

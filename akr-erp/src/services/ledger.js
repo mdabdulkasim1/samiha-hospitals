@@ -232,7 +232,7 @@ function profitAndLoss({ from, to, companyId = null }) {
       ...c, revenue, cost_of_sales: cost, gross_profit: gross,
       gross_margin_percent: revenue ? round((gross / revenue) * 100) : 0,
       expenses, other_income: otherIncome,
-      net_profit: round(gross + otherIncome - expenses),
+      net_profit: round(gross - expenses),
     };
   });
 
@@ -319,7 +319,7 @@ function statement({ from, to, companyId = null }) {
   const generalOverheads = round(overheads.general);
 
   const grossProfit = round(sellingPrice - buyingPrice - buyingOverheads - sellingOverheads
-    - generalOverheads + otherIncome);
+    - generalOverheads);
   const vat = vatReturn({ from, to, companyId }).net;
 
   return {
@@ -620,7 +620,11 @@ function monthlyProfit({ from, to, companyId = null }) {
         ...m,
         trading_margin: margin,
         gross_margin_percent: m.revenue ? round((margin / m.revenue) * 100) : 0,
-        gross_profit: round(margin + m.other_income - m.expenses),
+        // Other income — a rebate, a scrap sale — is not part of what the
+        // trade made, and the owner reads this page as the trade. It is still
+        // counted, in Expenses & Income, and the page says so where there is
+        // any.
+        gross_profit: round(margin - m.expenses),
         // A month with sales but no overheads booked is not a very profitable
         // month; it is a month somebody has not finished entering.
         expenses_booked: m.expense_count > 0,
