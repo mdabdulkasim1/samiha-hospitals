@@ -255,6 +255,147 @@ function profitAndLoss({ from, to, companyId = null }) {
   };
 }
 
+
+/**
+ * Who we sold to, and what it made.
+ *
+ * The group figure says what the business took; this says which clients it
+ * came from, with the cost of those particular goods against it — the same
+ * cut as the group's gross margin, read one account at a time. Every trading
+ * client is listed, including the quiet ones: an account that bought nothing
+ * this period is itself worth seeing.
+ */
+function byClient({ from, to, companyId = null }) {
+  const params = { from, to, companyId };
+  const filter = companyId ? 'AND i.company_id = @companyId' : '';
+
+  const rows = db.prepare(`
+    SELECT p.id, p.code, p.name,
+      (SELECT COUNT(*) FROM sales_invoices i
+        WHERE i.partner_id = p.id AND i.status != 'cancelled'
+          AND i.invoice_date BETWEEN @from AND @to ${filter}) AS invoices,
+      (SELECT COALESCE(SUM(i.subtotal - i.discount), 0) FROM sales_invoices i
+        WHERE i.partner_id = p.id AND i.status != 'cancelled'
+          AND i.invoice_date BETWEEN @from AND @to ${filter}) AS revenue,
+      (SELECT COALESCE(SUM(i.vat_amount), 0) FROM sales_invoices i
+        WHERE i.partner_id = p.id AND i.status != 'cancelled'
+          AND i.invoice_date BETWEEN @from AND @to ${filter}) AS vat,
+      (SELECT COALESCE(SUM(li.cost_price * li.qty), 0) FROM sales_invoice_items li
+         JOIN sales_invoices i ON i.id = li.invoice_id
+        WHERE i.partner_id = p.id AND i.status != 'cancelled'
+          AND i.invoice_date BETWEEN @from AND @to ${filter}) AS cost_of_sales,
+      (SELECT COALESCE(SUM(i.total - i.paid_amount), 0) FROM sales_invoices i
+        WHERE i.partner_id = p.id AND i.status NOT IN ('cancelled','paid')) AS outstanding
+     FROM partners p
+    WHERE p.active = 1 AND p.type IN ('client', 'both')
+    ORDER BY revenue DESC, p.name`).all(params);
+
+  return rows.map((r) => {
+    const revenue = round(r.revenue);
+    const cost = round(r.cost_of_sales);
+    const margin = round(revenue - cost);
+    return {
+      ...r,
+      revenue,
+      vat: round(r.vat),
+      cost_of_sales: cost,
+      margin,
+      margin_percent: revenue ? round((margin / revenue) * 100) : 0,
+      outstanding: round(r.outstanding),
+      traded: Boolean(r.invoices),
+    };
+  });
+}
+
+/**
+ * Where the money went, manufacturer by manufacturer.
+ *
+ * Two different things are owed to a supplier and both belong here: what they
+ * invoiced us for material, and what was booked against their account as an
+ * expense — freight, testing, a mobilisation charge. Together they are what
+ * that manufacturer cost the group in the period.
+ *
+ * This is deliberately not the same figure as the cost of sales above it. Cost
+ * of sales is what the goods *invoiced to clients* cost, whenever they were
+ * bought; this is what the makers billed us *in this period*, whenever those
+ * goods are sold. In a month where the yard fills or empties the two differ,
+ * and the difference is stock, not an error.
+ */
+function bySupplier({ from, to, companyId = null }) {
+  const params = { from, to, companyId };
+  const billFilter = companyId ? 'AND b.company_id = @companyId' : '';
+  const expFilter = companyId ? 'AND e.company_id = @companyId' : '';
+  const poFilter = companyId ? 'AND o.company_id = @companyId' : '';
+
+  const rows = db.prepare(`
+    SELECT p.id, p.code, p.name,
+      (SELECT COUNT(*) FROM supplier_invoices b
+        WHERE b.partner_id = p.id AND b.status != 'cancelled'
+          AND b.invoice_date BETWEEN @from AND @to ${billFilter}) AS bills,
+      (SELECT COALESCE(SUM(b.subtotal - b.discount), 0) FROM supplier_invoices b
+        WHERE b.partner_id = p.id AND b.status != 'cancelled'
+          AND b.invoice_date BETWEEN @from AND @to ${billFilter}) AS billed,
+      (SELECT COALESCE(SUM(b.vat_amount), 0) FROM supplier_invoices b
+        WHERE b.partner_id = p.id AND b.status != 'cancelled'
+          AND b.invoice_date BETWEEN @from AND @to ${billFilter}) AS input_vat,
+      (SELECT COALESCE(SUM(b.paid_amount), 0) FROM supplier_invoices b
+        WHERE b.partner_id = p.id AND b.status != 'cancelled'
+          AND b.invoice_date BETWEEN @from AND @to ${billFilter}) AS paid,
+      (SELECT COALESCE(SUM(b.total - b.paid_amount), 0) FROM supplier_invoices b
+        WHERE b.partner_id = p.id AND b.status NOT IN ('cancelled','paid')) AS outstanding,
+      (SELECT COALESCE(SUM(e.amount), 0) FROM expenses e
+        WHERE e.partner_id = p.id AND e.kind = 'expense'
+          AND e.expense_date BETWEEN @from AND @to ${expFilter}) AS expenses,
+      (SELECT COUNT(*) FROM expenses e
+        WHERE e.partner_id = p.id AND e.kind = 'expense'
+          AND e.expense_date BETWEEN @from AND @to ${expFilter}) AS expense_count,
+      (SELECT COUNT(*) FROM purchase_orders o
+        WHERE o.partner_id = p.id AND o.status != 'cancelled'
+          AND o.lpo_date BETWEEN @from AND @to ${poFilter}) AS orders,
+      (SELECT COALESCE(SUM(o.subtotal - o.discount), 0) FROM purchase_orders o
+        WHERE o.partner_id = p.id AND o.status != 'cancelled'
+          AND o.lpo_date BETWEEN @from AND @to ${poFilter}) AS ordered
+     FROM partners p
+    WHERE p.active = 1 AND p.type IN ('supplier', 'both')
+    ORDER BY billed DESC, p.name`).all(params);
+
+  const named = rows.map((r) => {
+    const billed = round(r.billed);
+    const expenses = round(r.expenses);
+    return {
+      ...r,
+      billed,
+      input_vat: round(r.input_vat),
+      paid: round(r.paid),
+      outstanding: round(r.outstanding),
+      expenses,
+      ordered: round(r.ordered),
+      total_cost: round(billed + expenses),
+      traded: Boolean(r.bills || r.expense_count || r.orders),
+    };
+  });
+
+  /*
+   * Rent, salaries, the trade licence: overheads nobody booked against a
+   * supplier's account, because they do not belong to one. Without this row
+   * the column would quietly disagree with the group's expenses, and a column
+   * that does not add up is worse than no column.
+   */
+  const loose = db.prepare(`
+    SELECT COALESCE(SUM(e.amount), 0) AS amount, COUNT(*) AS n FROM expenses e
+     WHERE e.partner_id IS NULL AND e.kind = 'expense'
+       AND e.expense_date BETWEEN @from AND @to ${expFilter}`).get(params);
+  if (loose.n) {
+    named.push({
+      id: null, code: '—', name: 'Overheads not booked to a supplier',
+      bills: 0, billed: 0, input_vat: 0, paid: 0, outstanding: 0,
+      expenses: round(loose.amount), expense_count: loose.n,
+      orders: 0, ordered: 0, total_cost: round(loose.amount), traded: true, unattributed: true,
+    });
+  }
+  return named;
+}
+
 /**
  * The same figures, month by month.
  *
@@ -362,4 +503,5 @@ function partnerBalance(partnerId, { companyId = null } = {}) {
   return { balance: l.closing, receivable, payable, opening: l.opening };
 }
 
-module.exports = { partnerLedger, ageing, vatReturn, profitAndLoss, monthlyProfit, partnerBalance };
+module.exports = { partnerLedger, ageing, vatReturn, profitAndLoss, byClient, bySupplier,
+  monthlyProfit, partnerBalance };

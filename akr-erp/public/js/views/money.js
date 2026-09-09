@@ -578,6 +578,8 @@
         </div>
         <div id="out">${UI.loading()}</div>`;
 
+      const quiet = { clients: true, suppliers: true };
+
       const load = async () => {
         const out = document.getElementById('out');
         out.innerHTML = UI.loading();
@@ -590,6 +592,23 @@
           API.get('/api/accounts/vat-return' + q),
           API.get('/api/accounts/profit-and-loss' + q),
         ]);
+
+        /*
+         * Every account is listed by default, quiet ones included: the owner
+         * asked for the names, and an account that bought nothing this month is
+         * itself a thing to notice. On a long list that becomes noise, so each
+         * table can be folded down to the accounts that actually traded.
+         */
+        const clients = quiet.clients ? pl.clients : pl.clients.filter((r) => r.traded);
+        const suppliers = quiet.suppliers ? pl.suppliers : pl.suppliers.filter((r) => r.traded);
+        const sumOf = (rows, key) => rows.reduce((a, r) => a + (r[key] || 0), 0);
+        const hideQuiet = (all, shown, key) => {
+          const idle = all.filter((r) => !r.traded).length;
+          if (!idle) return '';
+          return `<button class="link-btn small mt" data-quiet="${key}">${quiet[key]
+            ? `Hide the ${idle} account${idle === 1 ? '' : 's'} with nothing in this period`
+            : `Show all ${all.length}, including the ${idle} with nothing in this period`}</button>`;
+        };
 
         out.innerHTML = `
           <div class="card">
@@ -639,6 +658,76 @@
               A month showing sales but no expenses is a month somebody has not finished entering.</div>
           </div>
           <div class="card">
+            <h3>Revenue, client by client</h3>
+            <div class="card-sub">Where the invoiced sales came from, with the cost of those
+              particular goods against each account. Every trading client is listed — an account
+              that bought nothing this period is worth seeing too. <b>Still owed</b> is where the
+              account stands today, not a figure for the period.</div>
+            ${UI.table([
+              { label: 'Client', render: (r) => `<b>${esc(r.name)}</b>
+                  <div class="muted small mono">${esc(r.code)}</div>` },
+              { label: 'Invoices', num: true, render: (r) => (r.invoices || '—') },
+              { label: 'Revenue', num: true, render: (r) => (r.revenue
+                ? `<b>${UI.money(r.revenue, { symbol: false })}</b>` : '—') },
+              { label: 'VAT charged', num: true, render: (r) => (r.vat
+                ? UI.money(r.vat, { symbol: false }) : '—') },
+              { label: 'Cost of those goods', num: true, render: (r) => (r.cost_of_sales
+                ? `− ${UI.money(r.cost_of_sales, { symbol: false })}` : '—') },
+              { label: 'Margin on goods', num: true, render: (r) => (r.revenue
+                ? `${UI.money(r.margin, { symbol: false })}
+                   <div class="muted small">${r.margin_percent}%</div>` : '—') },
+              { label: 'Still owed', num: true, render: (r) => (r.outstanding > 0
+                ? `<span class="badge warn">${UI.money(r.outstanding, { symbol: false })}</span>` : '—') },
+            ], clients, { emptyText: 'No clients on the books yet.',
+              foot: `<tr><td><b>Total</b></td>
+                <td class="num">${clients.reduce((a, r) => a + r.invoices, 0) || '—'}</td>
+                <td class="num"><b>${UI.money(sumOf(clients, 'revenue'), { symbol: false })}</b></td>
+                <td class="num">${UI.money(sumOf(clients, 'vat'), { symbol: false })}</td>
+                <td class="num">− ${UI.money(sumOf(clients, 'cost_of_sales'), { symbol: false })}</td>
+                <td class="num">${UI.money(sumOf(clients, 'margin'), { symbol: false })}</td>
+                <td class="num">${UI.money(sumOf(clients, 'outstanding'), { symbol: false })}</td></tr>` })}
+            ${hideQuiet(pl.clients, clients, 'clients')}
+          </div>
+          <div class="card">
+            <h3>What each manufacturer cost us</h3>
+            <div class="card-sub">What every supplier billed us for material in this period, and
+              what was booked against their account as an expense — freight, testing, a mobilisation
+              charge. Together, what that manufacturer cost the group. <b>Still owed</b> is where
+              the account stands today, not a figure for the period.</div>
+            ${UI.table([
+              { label: 'Manufacturer / supplier', render: (r) => `<b>${esc(r.name)}</b>
+                  <div class="muted small mono">${esc(r.code)}</div>` },
+              { label: 'LPOs', num: true, render: (r) => (r.orders
+                ? `${r.orders}<div class="muted small">${UI.money(r.ordered, { symbol: false })}</div>` : '—') },
+              { label: 'Bills', num: true, render: (r) => (r.bills || '—') },
+              { label: 'Billed us', num: true, render: (r) => (r.billed
+                ? `<b>${UI.money(r.billed, { symbol: false })}</b>` : '—') },
+              { label: 'Input VAT', num: true, render: (r) => (r.input_vat
+                ? UI.money(r.input_vat, { symbol: false }) : '—') },
+              { label: 'Expenses', num: true, render: (r) => (r.expenses
+                ? `${UI.money(r.expenses, { symbol: false })}
+                   <div class="muted small">${r.expense_count} entr${r.expense_count === 1 ? 'y' : 'ies'}</div>` : '—') },
+              { label: 'Cost to us', num: true, render: (r) => (r.total_cost
+                ? `<b>${UI.money(r.total_cost, { symbol: false })}</b>` : '—') },
+              { label: 'Still owed', num: true, render: (r) => (r.outstanding > 0
+                ? `<span class="badge warn">${UI.money(r.outstanding, { symbol: false })}</span>` : '—') },
+            ], suppliers, { emptyText: 'No suppliers on the books yet.',
+              foot: `<tr><td><b>Total</b></td>
+                <td class="num">${suppliers.reduce((a, r) => a + r.orders, 0) || '—'}</td>
+                <td class="num">${suppliers.reduce((a, r) => a + r.bills, 0) || '—'}</td>
+                <td class="num"><b>${UI.money(sumOf(suppliers, 'billed'), { symbol: false })}</b></td>
+                <td class="num">${UI.money(sumOf(suppliers, 'input_vat'), { symbol: false })}</td>
+                <td class="num">${UI.money(sumOf(suppliers, 'expenses'), { symbol: false })}</td>
+                <td class="num"><b>${UI.money(sumOf(suppliers, 'total_cost'), { symbol: false })}</b></td>
+                <td class="num">${UI.money(sumOf(suppliers, 'outstanding'), { symbol: false })}</td></tr>` })}
+            ${hideQuiet(pl.suppliers, suppliers, 'suppliers')}
+            <div class="muted small mt">This is not the same figure as the cost of sales above it,
+              and should not be: cost of sales is what the goods <b>invoiced to clients</b> cost,
+              whenever they were bought; this is what the makers <b>billed us in this period</b>,
+              whenever those goods are sold. In a month where the yard fills or empties the two
+              differ, and the difference is stock.</div>
+          </div>
+          <div class="card">
             <h3>By company</h3>
             <div class="card-sub">Invoiced sales less what those goods cost us, less the overheads
               booked to each company — read in the same order as the months above.</div>
@@ -666,6 +755,12 @@
 
       host.querySelectorAll('.filters input, .filters select')
         .forEach((el) => el.addEventListener('change', load));
+      host.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-quiet]');
+        if (!btn) return;
+        quiet[btn.dataset.quiet] = !quiet[btn.dataset.quiet];
+        load();
+      });
       await load();
     },
   });

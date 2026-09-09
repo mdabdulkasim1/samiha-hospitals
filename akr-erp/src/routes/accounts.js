@@ -421,6 +421,10 @@ router.get('/profit-and-loss', owner, wrap(async (req, res) => {
     // Month by month, because the overheads are booked a month at a time and
     // the figure that matters is what is left after that month's are in.
     monthly: ledger.monthlyProfit({ from, to, companyId }),
+    // And the two sides by name: which clients the revenue came from, and what
+    // each manufacturer cost us.
+    clients: ledger.byClient({ from, to, companyId }),
+    suppliers: ledger.bySupplier({ from, to, companyId }),
   });
 }));
 

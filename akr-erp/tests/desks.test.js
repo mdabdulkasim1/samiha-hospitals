@@ -237,3 +237,54 @@ test('a month\'s expenses come off that month\'s gross profit', async () => {
     'so entering the month\'s overheads moves the gross profit down by exactly them');
   assert.ok(rowAfter.expenses_booked, 'the month is marked as having its expenses entered');
 });
+
+test('the profit page names every client and every manufacturer', async () => {
+  const pl = await admin.get('/api/accounts/profit-and-loss?from=2000-01-01&to=2100-01-01');
+
+  // Every trading account is listed, quiet ones included: the owner asked for
+  // the names, not only for the ones that happened to trade this period.
+  const clients = await admin.get('/api/partners?type=client&limit=500');
+  const suppliers = await admin.get('/api/partners?type=supplier&limit=500');
+  for (const c of clients.rows) {
+    assert.ok(pl.clients.some((r) => r.id === c.id), `${c.name} is on the revenue list`);
+  }
+  for (const sup of suppliers.rows) {
+    assert.ok(pl.suppliers.some((r) => r.id === sup.id), `${sup.name} is on the cost list`);
+  }
+
+  // The client revenue adds up to what the group made.
+  const revenue = pl.clients.reduce((a, r) => a + r.revenue, 0);
+  assert.equal(Math.round(revenue * 100) / 100, pl.group.revenue,
+    'client by client, it comes to the group figure');
+  const cost = pl.clients.reduce((a, r) => a + r.cost_of_sales, 0);
+  assert.equal(Math.round(cost * 100) / 100, pl.group.cost_of_sales);
+
+  // And the expenses column reconciles, because whatever is not booked to a
+  // supplier is shown as exactly that rather than left out.
+  const expenses = pl.suppliers.reduce((a, r) => a + r.expenses, 0);
+  assert.equal(Math.round(expenses * 100) / 100, pl.group.expenses,
+    'overheads booked to nobody are still on the list');
+
+  const traded = pl.clients.find((r) => r.revenue > 0);
+  assert.ok(traded, 'the client we invoiced is there');
+  assert.equal(traded.margin, traded.revenue - traded.cost_of_sales);
+  assert.ok(traded.traded, 'and is marked as having traded');
+  assert.ok(pl.clients.some((r) => !r.traded), 'as are the ones that did not');
+});
+
+test('what a manufacturer cost us is their bills plus what was booked to them', async () => {
+  const supplier = (await admin.get('/api/partners?type=supplier&limit=1')).rows[0];
+  const before = (await admin.get('/api/accounts/profit-and-loss?from=2000-01-01&to=2100-01-01'))
+    .suppliers.find((r) => r.id === supplier.id);
+
+  await admin.post('/api/accounts/expenses', {
+    description: 'Third-party testing at the works', amount: 1200,
+    partner_id: supplier.id, mode: 'bank_transfer' });
+
+  const after = (await admin.get('/api/accounts/profit-and-loss?from=2000-01-01&to=2100-01-01'))
+    .suppliers.find((r) => r.id === supplier.id);
+  assert.equal(after.expenses, before.expenses + 1200, 'the expense lands on their row');
+  assert.equal(after.billed, before.billed, 'what they invoiced is untouched');
+  assert.equal(after.total_cost, after.billed + after.expenses,
+    'and the cost to us is the two together');
+});

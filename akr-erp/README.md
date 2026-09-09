@@ -450,6 +450,18 @@ trade licence — against whichever company paid, and **VAT & Profit** gives eac
 cost of sales, gross margin and net, with the group total underneath. Rename the five placeholder
 companies under **Masters → Companies**.
 
+The same page reads the two sides by name. **Revenue, client by client** — invoiced, VAT charged,
+the cost of those particular goods and the margin on them, for every trading client. **What each
+manufacturer cost us** — what they billed us for material in the period, what was booked against
+their account as an expense, and the two together. Every account is listed, including the ones that
+did nothing this period, and each table folds down to the ones that traded.
+
+Two figures on that page are deliberately not the same, and both are right: **cost of sales** is
+what the goods *invoiced to clients* cost, whenever they were bought; **billed us** is what the
+makers invoiced *in this period*, whenever those goods are sold. Where the yard fills or empties,
+the difference between them is stock. Overheads booked to no supplier are shown as their own row
+rather than left out, so the expenses column still comes to the group's.
+
 ## What each desk sees
 
 Money is not everybody's business, and the rule is enforced on the server, not just hidden on screen:
