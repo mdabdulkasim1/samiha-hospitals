@@ -266,7 +266,9 @@ test('every document is printed on a letterhead, uploaded or not', async () => {
   const bare = await admin.get('/api/auth/me');
   assert.equal(bare.company.logoSet, true, 'there is always a mark to print');
   assert.equal(bare.company.logoUploaded, false, 'and it is the bundled one');
-  assert.match(bare.company.logo, /\/assets\/logo-icon\.svg$/);
+  // Fingerprinted, because the static file is cached for an hour in production
+  // and a deploy that changes it must not be defeated by that cache.
+  assert.match(bare.company.logo, /^\/assets\/logo-icon\.svg\?v=[0-9a-f]{10}$/);
 
   const printer = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'print.js'), 'utf8');
   assert.match(printer, /const watermark = \(\) => \(hasLogo\(\)/,
@@ -279,4 +281,24 @@ test('every document is printed on a letterhead, uploaded or not', async () => {
   const after = await admin.get('/api/auth/me');
   assert.equal(after.company.logoUploaded, true, 'the company\'s own file takes over');
   assert.match(after.company.logo, /^\/api\/branding\/mark\?v=/);
+});
+
+test('the health check says which build is running and what it shows', async () => {
+  /*
+   * "The logo is still not showing" has three causes that look identical from
+   * a screenshot: the deploy has not landed, the browser is holding the old
+   * file, or something uploaded is overriding the artwork in the build. This
+   * endpoint separates them, from outside, without a sign-in.
+   */
+  for (const slot of ['mark', 'full']) branding.clear(slot);
+  let health = await fetch(`${h.base}/api/health`).then((r) => r.json());
+  assert.match(health.build, /^[0-9a-f]{10}$/, 'the build that is running');
+  assert.equal(health.branding.mark, 'bundled');
+  assert.match(health.branding.markUrl, /^\/assets\/logo-icon\.svg\?v=/);
+
+  await admin.post('/api/masters/branding/mark',
+    { data: PNG.toString('base64'), mime: 'image/png', filename: 'akr.png' });
+  health = await fetch(`${h.base}/api/health`).then((r) => r.json());
+  assert.equal(health.branding.mark, 'uploaded', 'and when an upload is overriding it');
+  assert.match(health.branding.markUrl, /^\/api\/branding\/mark\?v=/);
 });

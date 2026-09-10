@@ -98,6 +98,31 @@ function resolve(slot) {
   return find(slot) || find(slot === 'mark' ? 'full' : 'mark');
 }
 
+/** A short fingerprint of a file, for the query string. */
+function fingerprint(file) {
+  const stat = fs.statSync(file);
+  return crypto.createHash('sha1')
+    .update(`${stat.size}:${stat.mtimeMs}`).digest('hex').slice(0, 10);
+}
+
+/**
+ * The bundled artwork, fingerprinted.
+ *
+ * Static files are served with an hour of cache in production, and this path
+ * never changes — so a browser that fetched the old file goes on showing it
+ * after a deploy has replaced it, which reads exactly like "the logo is still
+ * not there". The fingerprint changes when the file does, and a container
+ * rebuild changes every file's timestamp, so a deploy always wins.
+ */
+function fallbackUrl(slot) {
+  const rel = SLOTS[slot].fallback;
+  try {
+    return `${rel}?v=${fingerprint(path.join(config.root, 'public', rel.replace(/^\//, '')))}`;
+  } catch {
+    return rel;
+  }
+}
+
 /**
  * What a screen or a document should point at for this slot.
  *
@@ -107,11 +132,8 @@ function resolve(slot) {
  */
 function urlFor(slot) {
   const found = resolve(slot);
-  if (!found) return SLOTS[slot].fallback;
-  const stat = fs.statSync(found.file);
-  const stamp = crypto.createHash('sha1')
-    .update(`${stat.size}:${stat.mtimeMs}`).digest('hex').slice(0, 10);
-  return `/api/branding/${found.slot}?v=${stamp}`;
+  if (!found) return fallbackUrl(slot);
+  return `/api/branding/${found.slot}?v=${fingerprint(found.file)}`;
 }
 
 /** Work out what an uploaded file really is, from its bytes. */
@@ -344,5 +366,5 @@ function isSoft(d) {
   return Math.max(d.width, d.height) < SHARP_ENOUGH;
 }
 
-module.exports = { SLOTS, SHARP_ENOUGH, find, resolve, urlFor, save, clear, status,
+module.exports = { SLOTS, SHARP_ENOUGH, find, resolve, urlFor, fallbackUrl, save, clear, status,
   dimensions, isSoft, isEphemeral, dir, settings, setSettings, fromUrl, logoInPage };

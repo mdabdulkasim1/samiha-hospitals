@@ -33,6 +33,7 @@ function buildStamp(publicDir) {
   };
   walk(path.join(publicDir, 'js'));
   walk(path.join(publicDir, 'css'));
+  walk(path.join(publicDir, 'assets'));
   return hash.digest('hex').slice(0, 10);
 }
 
@@ -48,10 +49,14 @@ function shellHtml(publicDir) {
 
   const branding = require('../services/branding');
   const mark = branding.resolve('mark');
-  if (!mark) return html;
+  // The tab icon follows the same rule as everything else: the uploaded mark
+  // where there is one, and otherwise the bundled favicon — fingerprinted, so a
+  // deploy that changes the artwork is not defeated by an hour of cache.
   return html.replace(
     /<link rel="icon"[^>]*>/,
-    `<link rel="icon" href="${branding.urlFor('mark')}" type="${mark.mime}">`);
+    mark
+      ? `<link rel="icon" href="${branding.urlFor('mark')}" type="${mark.mime}">`
+      : `<link rel="icon" href="/assets/favicon.svg?v=${stamp}" type="image/svg+xml">`);
 }
 
 module.exports = { shellHtml, buildStamp };

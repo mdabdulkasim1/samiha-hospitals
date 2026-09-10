@@ -5,7 +5,12 @@ const config = require('./config');
 const { db } = require('./db');
 const auth = require('./lib/auth');
 const { ApiError } = require('./lib/http');
-const { shellHtml } = require('./lib/shell');
+const shell = require('./lib/shell');
+const { shellHtml } = shell;
+const branding = require('./services/branding');
+
+// Where the front end is served from — named before the health check reads it.
+const publicDir = path.join(__dirname, '..', 'public');
 
 const app = express();
 app.disable('x-powered-by');
@@ -52,6 +57,21 @@ app.get('/api/health', (_req, res) => {
     storage: config.dbIsEphemeral ? 'ephemeral' : (config.volumePath ? 'volume' : 'local'),
     // The logo and the attachments live wherever the database does.
     uploads: config.volumePath ? 'volume' : (config.isProd ? 'ephemeral' : 'local'),
+    /*
+     * Which build is actually running, and what it is showing as the logo.
+     *
+     * "The logo is still not there" has three possible causes and they are not
+     * distinguishable from a screenshot: the deploy has not happened, a browser
+     * is holding a cached copy of the old file, or something has been uploaded
+     * that overrides the artwork in the build. This says which — from outside,
+     * on an endpoint anybody can open, without a sign-in.
+     */
+    build: shell.buildStamp(publicDir),
+    branding: {
+      mark: branding.resolve('mark') ? 'uploaded' : 'bundled',
+      markUrl: branding.urlFor('mark'),
+      fullUrl: branding.urlFor('full'),
+    },
   });
 });
 
@@ -73,7 +93,6 @@ app.use('/api/reports', require('./routes/reports'));
 app.use('/api/admin', require('./routes/admin'));
 
 // --------------------------------------------------------------- static + SPA
-const publicDir = path.join(config.root, 'public');
 app.use(express.static(publicDir, { index: false, maxAge: config.isProd ? '1h' : 0 }));
 
 // The shell is read fresh in development so an edit shows on reload, and read
