@@ -166,7 +166,7 @@ test('the bundled artwork is real, safe and says what it is', () => {
 
   // The lock-up carries the wordmark; the mark on its own does not.
   const full = fs.readFileSync(path.join(__dirname, '..', 'public', 'assets', 'logo.svg'), 'utf8');
-  assert.match(full, /GENERAL TRADING L\.L\.C/);
+  assert.match(full, /GENERAL TRADING LLC/);
 });
 
 test('the screen warns when an upload would not survive a deploy', async () => {
@@ -319,4 +319,52 @@ test('an admin is told on screen when the books are not being kept', async () =>
   assert.match(shell, /storage-warning/);
   const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');
   assert.match(css, /\.storage-warning \{/, 'and it is styled to be read, not skimmed past');
+});
+
+test('the logo can be given to the deployment, so a deploy cannot lose it', async (t) => {
+  /*
+   * With no volume mounted an upload lives inside the container the platform
+   * rebuilds on every deploy — which is why the logo kept disappearing on the
+   * live service. An environment variable is held by the platform, not by the
+   * container, so it comes back on every start.
+   */
+  const config = require('../src/config');
+  const original = { url: config.company.logoUrl, data: config.company.logoData };
+  t.after(() => {
+    config.company.logoUrl = original.url;
+    config.company.logoData = original.data;
+    for (const slot of ['mark', 'full']) branding.clear(slot);
+  });
+
+  // 1. plain SVG markup, pasted straight into the setting
+  for (const slot of ['mark', 'full']) branding.clear(slot);
+  config.company.logoData = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8">'
+    + '<rect width="8" height="8" fill="#12563C"/></svg>';
+  config.company.logoUrl = '';
+  let done = await branding.installFromEnv();
+  assert.equal(done.source, 'COMPANY_LOGO_DATA');
+  assert.equal(branding.source('mark'), 'environment');
+  assert.equal(branding.find('mark').mime, 'image/svg+xml');
+  assert.match((await admin.get('/api/auth/me')).company.logo, /^\/api\/branding\/mark\?v=/);
+
+  // 2. the same thing as a data: URI, which is what a browser copies
+  for (const slot of ['mark', 'full']) branding.clear(slot);
+  config.company.logoData = `data:image/png;base64,${PNG.toString('base64')}`;
+  done = await branding.installFromEnv();
+  assert.equal(done.source, 'COMPANY_LOGO_DATA');
+  assert.equal(branding.find('mark').mime, 'image/png');
+
+  // 3. an upload by hand outranks it — a person's act beats a setting
+  const already = await branding.installFromEnv();
+  assert.ok(already.skipped, 'and it does not overwrite what is already there');
+
+  // 4. rubbish in the setting is reported, not fatal — the books still open
+  for (const slot of ['mark', 'full']) branding.clear(slot);
+  config.company.logoData = Buffer.from('this is not a picture').toString('base64');
+  const bad = await branding.installFromEnv();
+  assert.ok(bad.error, 'it says what went wrong');
+  assert.equal(branding.source('mark'), 'bundled', 'and falls back to the bundled mark');
+  const health = await fetch(`${h.base}/api/health`).then((r) => r.json());
+  assert.equal(health.ok, true);
+  assert.equal(health.branding.mark, 'bundled');
 });

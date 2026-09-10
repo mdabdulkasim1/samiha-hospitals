@@ -394,7 +394,7 @@ ol.conditions li { margin-bottom: 3px; }
   /* The hero is a column flexbox, which would otherwise stretch the image to
      the full width of it and leave the artwork adrift in a box of its own. */
   align-self: flex-start;
-  height: 132px; width: auto; max-width: min(340px, 88%); object-fit: contain;
+  height: 176px; width: auto; max-width: min(340px, 88%); object-fit: contain;
   background: #fff; border-radius: 10px; padding: 12px 16px;
 }
 .login-hero .logo-full.plain { background: none; padding: 0; }

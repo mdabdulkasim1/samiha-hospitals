@@ -68,7 +68,7 @@ app.get('/api/health', (_req, res) => {
      */
     build: shell.buildStamp(publicDir),
     branding: {
-      mark: branding.resolve('mark') ? 'uploaded' : 'bundled',
+      mark: branding.source('mark'),
       markUrl: branding.urlFor('mark'),
       fullUrl: branding.urlFor('full'),
     },
@@ -207,6 +207,24 @@ if (require.main === module) {
       console.log('');
     }
   });
+  /*
+   * The artwork given to the deployment, installed before anybody signs in.
+   *
+   * Not awaited by the listen: a logo that is slow to fetch, or that fails
+   * altogether, must not hold up or bring down the books. What it did is said
+   * once, in the log, and reported on the health check.
+   */
+  branding.installFromEnv().then((result) => {
+    if (!result || result.skipped) return;
+    if (result.error) {
+      console.warn(`  ⚠ ${result.source} did not load: ${result.error}`);
+      console.warn('    The mark that ships with the app is being used instead.\n');
+    } else {
+      console.log(`  ▸ Logo:        installed from ${result.source}`
+        + (result.taken_from ? ` (${result.taken_from})` : '') + '\n');
+    }
+  });
+
   startBackgroundJobs();
 
   for (const signal of ['SIGINT', 'SIGTERM']) {

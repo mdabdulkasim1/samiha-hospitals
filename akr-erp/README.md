@@ -125,6 +125,21 @@ itself a logo — and given the address of a picture it takes that. The bytes ar
 anything is kept, so a page that serves an error under an image's name is refused. It is the server
 that fetches, because it is the one with a plain route to the internet.
 
+**Or give it to the deployment instead of uploading it.** An upload is written beside the database,
+so on a service with no volume mounted it is inside the container the platform rebuilds on every
+deploy — the logo goes in on Monday and is the bundled drawing again on Tuesday. A platform holds
+its environment variables outside the container, so a logo set there comes back on every start. Set
+**one** of these on the service and redeploy:
+
+| Variable | What to put in it |
+| --- | --- |
+| `COMPANY_LOGO_URL` | A link to the artwork, or to a page it is on — the server looks for it the way a browser would. |
+| `COMPANY_LOGO_DATA` | The file itself: SVG markup pasted straight in, base64, or a `data:` URI. |
+
+Neither overwrites artwork somebody uploaded by hand — that is a deliberate act by a person and
+outranks a setting. A file that will not load is reported in the log and on `/api/health`, and the
+bundled mark is used instead; a logo is never allowed to stop the books opening.
+
 **Uploaded artwork lives where the database lives.** With a volume mounted it survives a deploy;
 without one it is written inside the container Railway replaces on each deploy, so a logo uploaded
 on Monday is the bundled drawing again on Tuesday. The Logo tab says so in red when that is the case,

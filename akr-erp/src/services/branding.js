@@ -343,6 +343,58 @@ async function fromUrl(slot, url) {
   return { ...saved, taken_from: got.url };
 }
 
+/* ------------------------------------------------------- given by the deploy
+ * Artwork that comes from the environment rather than from an upload.
+ *
+ * With no volume mounted, an upload lives inside the container the platform
+ * rebuilds on every deploy, so it cannot survive one. An environment variable
+ * can: the platform holds it and hands it back each time. Set COMPANY_LOGO_URL
+ * or COMPANY_LOGO_DATA on the service and the mark is installed at startup,
+ * every startup, for as long as the variable is set.
+ *
+ * It never overwrites artwork somebody uploaded by hand — that is a deliberate
+ * act by a person and outranks a setting.
+ */
+let envSource = null;
+
+/** Where the mark currently comes from: an upload, the deploy, or the source. */
+const source = (slot = 'mark') => {
+  if (!find(slot) && !find(slot === 'mark' ? 'full' : 'mark')) return 'bundled';
+  return envSource ? 'environment' : 'uploaded';
+};
+
+async function installFromEnv() {
+  const { logoData, logoUrl } = config.company;
+  if (!logoData && !logoUrl) return null;
+
+  // A person's upload wins. On a deployment with no volume there will not be
+  // one after a deploy, which is the whole reason this exists.
+  if (find('mark') || find('full')) return { skipped: 'something is already uploaded' };
+
+  try {
+    let saved;
+    if (logoData) {
+      // Markup, a data: URI, or plain base64 — all three get pasted into a
+      // settings box by somebody who should not have to know the difference.
+      const raw = logoData.replace(/^data:[^;]+;base64,/, '');
+      const looksMarkup = /^\s*<(\?xml|svg)/i.test(logoData);
+      saved = save('mark', {
+        data: looksMarkup ? Buffer.from(logoData, 'utf8').toString('base64') : raw,
+        filename: 'logo-from-settings',
+      });
+      envSource = 'COMPANY_LOGO_DATA';
+    } else {
+      saved = await fromUrl('mark', logoUrl);
+      envSource = 'COMPANY_LOGO_URL';
+    }
+    return { source: envSource, ...saved };
+  } catch (err) {
+    envSource = null;
+    // A logo that will not load must not stop the books opening.
+    return { error: err.message, source: logoData ? 'COMPANY_LOGO_DATA' : 'COMPANY_LOGO_URL' };
+  }
+}
+
 const status = () => Object.entries(SLOTS).map(([slot, meta]) => {
   const found = find(slot);
   return {
@@ -367,4 +419,5 @@ function isSoft(d) {
 }
 
 module.exports = { SLOTS, SHARP_ENOUGH, find, resolve, urlFor, fallbackUrl, save, clear, status,
+  installFromEnv, source,
   dimensions, isSoft, isEphemeral, dir, settings, setSettings, fromUrl, logoInPage };

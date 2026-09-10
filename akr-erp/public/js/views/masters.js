@@ -395,9 +395,15 @@
         ${data.ephemeral ? `<div class="alert danger"><b>Anything uploaded here will be lost on the
           next deploy.</b> No storage volume is mounted, so the artwork is written inside the
           container Railway replaces each time the app is deployed — which is why an uploaded logo
-          can turn back into the bundled drawing on its own. Mount a volume on the service (Railway →
-          the service → Variables/Volumes) and upload it again; the database has the same
-          problem until you do.</div>` : ''}
+          can turn back into the bundled drawing on its own. The database has the same problem, so
+          the real fix is a volume: Railway → the service → Variables/Volumes → <b>+ Volume</b>,
+          mounted at <b>/data</b>.
+          <br><br><b>Or give the logo to the deployment instead of uploading it.</b> Railway holds
+          its variables outside the container, so a logo set there comes back on every deploy with
+          no volume at all. On the service → Variables, add <b>one</b> of these and redeploy:
+          <br>· <b>COMPANY_LOGO_URL</b> — a link to the artwork, or to a page it is on
+          <br>· <b>COMPANY_LOGO_DATA</b> — the file itself: SVG markup, base64, or a data: URI
+          <br>Neither overwrites what you upload here by hand.</div>` : ''}
         <div class="card-sub">The ERP ships with the AKR eagle drawn in the source, so the mark is
           on every screen and every printed page from the first run. It is a rendition, not the
           artwork file — upload the real one here and it takes over everywhere at once: the
