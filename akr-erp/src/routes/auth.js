@@ -30,6 +30,10 @@ function context(user) {
       website: company.website, currency: company.currency, vatPercent: company.vat_percent,
       // Whatever the company has uploaded, falling back to the bundled file.
       logo: branding.urlFor('mark'), logoFull: branding.urlFor('full'),
+      // Whether real artwork has been uploaded at all. A printed document with
+      // no logo should carry the company's name in type — never a placeholder
+      // announcing that the logo is missing, on a page a client will read.
+      logoSet: Boolean(branding.resolve('mark')),
       // Whether to put a light plate behind it — see services/branding.js.
       logoPlate: branding.settings().plate,
       bankName: company.bank_name, bankAccount: company.bank_account, iban: company.iban, swift: company.swift,

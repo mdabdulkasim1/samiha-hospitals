@@ -431,7 +431,13 @@
                 <b>SVG</b>, or a PNG at least 480 pixels on its longer side.</div>` : ''}
             </div>`).join('')}
         </div>
-        ${isAdmin ? `<div class="mt">
+        ${isAdmin ? `<div class="drop-logo mt" id="brand-drop" tabindex="0">
+          <b>Drop the file here, or paste it</b>
+          <div class="muted small">Copy the logo anywhere — a message, a website, a document —
+            then click here and press Ctrl+V (⌘V on a Mac). A file dragged onto this box works
+            too. It goes in as the mark.</div>
+        </div>
+        <div class="mt">
           <label class="field"><span>Or take it from the company's website</span>
             <input id="brand-url" placeholder="https://www.akr365.com/" autocomplete="off"></label>
           <div class="btn-row">
@@ -455,6 +461,52 @@
 
     if (!isAdmin) return;
     const out = pane.querySelector('#brand-out');
+
+    /*
+     * Pasted or dropped, as well as picked from a file dialog.
+     *
+     * The artwork is usually already in somebody's hand — in a message, on the
+     * website, in a letterhead they have open. Copy it and paste it here, and
+     * it is in; a file dialog on a phone is the step where this keeps failing.
+     */
+    const drop = pane.querySelector('#brand-drop');
+    const put = async (blob, name) => {
+      out.innerHTML = UI.loading();
+      try {
+        const data = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result).replace(/^data:[^;]+;base64,/, ''));
+          reader.onerror = () => reject(new Error('That file could not be read.'));
+          reader.readAsDataURL(blob);
+        });
+        await API.post('/api/masters/branding/mark', {
+          data, mime: blob.type || null, filename: name || 'logo',
+        });
+        out.innerHTML = '';
+        UI.ok('Logo updated. It is on every screen and every document from now on.');
+        await APP.loadMasters(true);
+        await APP.refreshShell();
+      } catch (err) {
+        out.innerHTML = `<div class="alert danger mt">${esc(err.message)}</div>`;
+      }
+    };
+    if (drop) {
+      drop.addEventListener('paste', (e) => {
+        const item = [...(e.clipboardData || {}).items || []].find((i) => i.type.startsWith('image/'));
+        if (!item) return;
+        e.preventDefault();
+        put(item.getAsFile(), 'pasted-logo');
+      });
+      drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
+      drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+      drop.addEventListener('drop', (e) => {
+        e.preventDefault();
+        drop.classList.remove('over');
+        const file = e.dataTransfer.files[0];
+        if (file) put(file, file.name);
+      });
+      drop.addEventListener('click', () => drop.focus());
+    }
 
     pane.querySelectorAll('[data-fetch]').forEach((b) => b.addEventListener('click', async () => {
       const url = pane.querySelector('#brand-url').value.trim();

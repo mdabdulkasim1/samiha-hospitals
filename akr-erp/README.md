@@ -108,6 +108,15 @@ drawing of anybody's mark.** An earlier version of this system shipped an approx
 company's own logo, which is the one thing it must never do: an approximation printed as though it
 were the logo is worse than no logo at all.
 
+**Paste it, or drop it.** The artwork is usually already in somebody's hand — in a message, on the
+website, in a letterhead they have open. Copy it, click the box on the Logo tab and press Ctrl+V;
+a file dragged onto the box works too. Finding the file and picking it out of a dialog on a phone is
+the step where this most often fails.
+
+**With nothing uploaded, a printed document carries no logo at all** — not a placeholder. It goes to
+a client, and the company's name, address and TRN are already on it in type; a box announcing that
+the logo is missing is worse than a letterhead without one. The watermark is skipped too.
+
 **Or take it from the company's own website.** Paste `https://www.akr365.com/` into the Logo tab and
 the server fetches it: given a site it looks for the artwork the way a browser would — the
 social-sharing image the site declares for itself, then the touch icon, then an image that calls

@@ -241,3 +241,26 @@ test('a page that declares no logo says so plainly', async () => {
     bare.close();
   }
 });
+
+test('a document with no logo is a letterhead, not a complaint', async () => {
+  /*
+   * A quotation goes to a client. A box on it announcing that the logo has not
+   * been set is worse than no logo at all — the company's name, address and TRN
+   * are already there in type. So with nothing uploaded, no image is printed
+   * and no watermark is ghosted behind the page.
+   */
+  for (const slot of ['mark', 'full']) branding.clear(slot);
+  const me = await admin.get('/api/auth/me');
+  assert.equal(me.company.logoSet, false, 'the page is told there is no artwork');
+
+  const printer = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'print.js'), 'utf8');
+  assert.match(printer, /const watermark = \(\) => \(hasLogo\(\)/,
+    'the watermark is only drawn when there is artwork to draw');
+  assert.match(printer, /\$\{hasLogo\(\) \? `<div class="logo">/,
+    'and so is the mark on the letterhead');
+
+  await admin.post('/api/masters/branding/mark',
+    { data: PNG.toString('base64'), mime: 'image/png', filename: 'akr.png' });
+  assert.equal((await admin.get('/api/auth/me')).company.logoSet, true,
+    'and it says so the moment there is');
+});

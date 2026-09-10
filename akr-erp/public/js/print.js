@@ -177,15 +177,24 @@
 
   // ------------------------------------------------------------- fragments
   /** The mark, laid faintly behind whatever is printed. */
+  const hasLogo = () => Boolean(window.APP && APP.company && APP.company.logoSet);
   const logoSrc = () => location.origin
     + (((window.APP && APP.company && APP.company.logo) || '/assets/logo-icon.svg'));
 
-  const watermark = () => `<div class="watermark"><img src="${logoSrc()}" alt=""></div>`;
+  /*
+   * No artwork uploaded yet: print nothing rather than a placeholder.
+   *
+   * A document goes to a client. A box on the letterhead announcing that the
+   * logo has not been set is worse than a letterhead with no logo on it, which
+   * is simply a letterhead — the company's name, address and TRN are all there
+   * in type already.
+   */
+  const watermark = () => (hasLogo() ? `<div class="watermark"><img src="${logoSrc()}" alt=""></div>` : '');
 
   function letterhead(company) {
     const c = company || (window.APP && APP.company) || {};
     return `<div class="head">
-      <div class="logo"><img src="${logoSrc()}" alt=""></div>
+      ${hasLogo() ? `<div class="logo"><img src="${logoSrc()}" alt=""></div>` : ''}
       <div class="who">
         <div class="name">${esc(c.name || 'AKR GENERAL TRADING L.L.C')}</div>
         <div class="tag">${esc((window.APP && APP.tagline) || 'Trusted Trading Partner for Valves, Fittings & Construction Materials')}</div>

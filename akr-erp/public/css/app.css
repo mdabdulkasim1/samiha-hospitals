@@ -469,3 +469,15 @@ table.statement tr.grand td {
   border-top: 2.5px solid var(--navy); border-bottom: 0;
   font-weight: 800; font-size: 15.5px; padding-top: 10px;
 }
+
+/* ------------------------------------------------------------- logo dropbox
+ * The artwork is usually already in somebody's hand — in a message or on a
+ * website. Copying and pasting it is one step; finding the file on a phone and
+ * picking it out of a dialog is several, and it is where this keeps failing.
+ */
+.drop-logo {
+  border: 2px dashed var(--line); border-radius: var(--radius); padding: 18px;
+  text-align: center; cursor: text; background: #FBFDFE; outline: none;
+}
+.drop-logo:focus { border-color: var(--green); background: #F4FBF7; }
+.drop-logo.over { border-color: var(--green); background: #EFF9F3; }
