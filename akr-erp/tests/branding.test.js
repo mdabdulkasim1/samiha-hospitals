@@ -302,3 +302,21 @@ test('the health check says which build is running and what it shows', async () 
   assert.equal(health.branding.mark, 'uploaded', 'and when an upload is overriding it');
   assert.match(health.branding.markUrl, /^\/api\/branding\/mark\?v=/);
 });
+
+test('an admin is told on screen when the books are not being kept', async () => {
+  /*
+   * This was a warning in the server's console, and nobody reads a container's
+   * console. The context carries it now, and the shell paints it across the top
+   * of every screen for the person who can act on it.
+   */
+  const me = await admin.get('/api/auth/me');
+  assert.ok(['ephemeral', 'volume', 'local'].includes(me.storage));
+  assert.notEqual(me.storage, 'ephemeral', 'in a test run the books are kept');
+
+  const shell = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  assert.match(shell, /APP\.storage === 'ephemeral' && APP\.user\.role === 'admin'/,
+    'and the banner is shown to the one person who can mount a volume');
+  assert.match(shell, /storage-warning/);
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');
+  assert.match(css, /\.storage-warning \{/, 'and it is styled to be read, not skimmed past');
+});

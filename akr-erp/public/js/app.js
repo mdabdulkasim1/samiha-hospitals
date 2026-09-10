@@ -291,6 +291,15 @@
               🔔<span class="dot" id="bell-count" hidden></span>
             </button>
           </header>
+          ${APP.storage === 'ephemeral' && APP.user.role === 'admin' ? `
+            <div class="storage-warning">
+              <b>This system is not keeping your data.</b> No storage volume is mounted, so the
+              database sits inside the container the platform rebuilds on every deploy — every
+              invoice, payment, stock movement and uploaded logo is destroyed the next time the app
+              is deployed. Fix it in Railway: open the service → <b>Variables / Volumes</b> →
+              <b>+ Volume</b>, mount it at <b>/data</b>. The database moves there by itself on the
+              next start, and this message goes away.
+            </div>` : ''}
           <div class="content" id="view">${UI.loading()}</div>
         </div>
       </div>

@@ -130,6 +130,17 @@ code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-si
 }
 
 .content { padding: 20px 22px 60px; flex: 1; }
+/*
+ * The one thing worth interrupting somebody's day for: the books are not being
+ * kept. Red, across the top of every screen, and it does not dismiss — a banner
+ * you can close is a banner that gets closed, and this one has to stay until a
+ * volume is mounted.
+ */
+.storage-warning {
+  background: #FDECEC; border-bottom: 1px solid #F3B6B6; color: #7A1B1B;
+  padding: 11px 22px; font-size: 12.8px; line-height: 1.55;
+}
+.storage-warning b { color: #5E1010; }
 
 /* ------------------------------------------------------------------- pieces */
 .card {

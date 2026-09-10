@@ -50,6 +50,16 @@ function context(user) {
     currency: config.vat.currency,
     currencySymbol: config.vat.currencySymbol,
     vatPercent: config.vat.percent,
+    /*
+     * Whether the books survive the next deploy.
+     *
+     * This has been a warning in the server's console since the beginning, and
+     * nobody reads a container's console. It belongs where the person who can
+     * fix it will see it, which is on their screen, every day, until it is
+     * fixed — losing a month of invoices to a deploy is not a thing to find
+     * out afterwards.
+     */
+    storage: config.dbIsEphemeral ? 'ephemeral' : (config.volumePath ? 'volume' : 'local'),
     permissions: {
       seesPrices: auth.seesPrices(user),
       seesMoney: auth.seesMoney(user),
