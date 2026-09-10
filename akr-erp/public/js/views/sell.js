@@ -219,15 +219,44 @@
         });
         const host = modal.querySelector('#clauses');
         // An existing quotation keeps the points it was written with; a new one
-        // starts from the standard list.
+        // starts from the standard list, written out for this client — asked of
+        // the server, because the library is stored with placeholders in it and
+        // "Payment terms are {{payment_terms}}" must never reach a client.
         if (existing && existing.conditions && existing.conditions.length) {
           modal._clauses = CLAUSES.Editor(host, { clauses: existing.conditions });
         } else {
-          const lib = await API.get('/api/masters/terms?doc_type=sales_quotation');
-          modal._clauses = CLAUSES.Editor(host, {
-            clauses: lib.rows.filter((c) => c.is_default)
-              .map((c) => ({ text: c.text, clause_group: c.clause_group })),
-          });
+          const clientEl = modal.querySelector('[name=partner_id]');
+          const termsEl = modal.querySelector('[name=payment_terms_id]');
+          let touched = false;
+          const load = async () => {
+            const res = await API.get('/api/sales/terms/default' + API.qs({
+              partner_id: clientEl ? clientEl.value : '',
+              payment_terms_id: termsEl ? termsEl.value : '',
+              project: modal.querySelector('[name=project]').value,
+            }));
+            if (modal._clauses) modal._clauses.set(res.clauses);
+            else {
+              modal._clauses = CLAUSES.Editor(host, {
+                clauses: res.clauses, onChange: () => { touched = true; },
+              });
+            }
+            touched = false;
+          };
+          // Choosing a different client rewrites the points that name them —
+          // unless somebody has already edited them by hand, which is theirs.
+          const reload = async () => {
+            if (touched) {
+              const keep = await UI.confirm(
+                'The conditions have been edited by hand. Rebuild them for the client and terms now '
+                + 'chosen? Your edits will be lost.',
+                { title: 'Rebuild the conditions?', yes: 'Rebuild them' });
+              if (!keep) return;
+            }
+            await load();
+          };
+          if (clientEl) clientEl.addEventListener('change', reload);
+          if (termsEl) termsEl.addEventListener('change', reload);
+          await load();
         }
       },
       async onAction(act, modal) {

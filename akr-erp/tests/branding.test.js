@@ -143,18 +143,30 @@ test('the screen says how big the artwork is, and when it is too small', async (
   assert.match(await res.text(), /<circle/);
 });
 
-test('the placeholder is type, not somebody else\'s bird', () => {
+test('the bundled artwork is real, safe and says what it is', () => {
   /*
-   * This file used to be a drawing of the company's own mark, which is the one
-   * thing a system must never put on an invoice: an approximation of a logo,
-   * printed as though it were the logo. It is now plainly a stand-in.
+   * The company's mark ships in the source. A logo is not source code, and the
+   * long way round would be an upload — but an upload needs a volume to survive
+   * a deploy, and until there is one the ERP would go back to a blank plate
+   * every release. So the mark is here, drawn, and every file says in its own
+   * comment that it is a rendition to be replaced under Masters -> Logo.
+   *
+   * What must not be here: a placeholder that announces itself on a client's
+   * copy of an invoice, and anything executable in artwork that goes on every
+   * screen and every printed page.
    */
   for (const name of ['logo-icon.svg', 'logo.svg', 'favicon.svg']) {
     const svg = fs.readFileSync(path.join(__dirname, '..', 'public', 'assets', name), 'utf8');
-    assert.match(svg, /LOGO NOT SET/, `${name} says it is a placeholder`);
-    assert.ok(!/plume|feather|beak|bird/i.test(svg), `${name} draws nobody's mark`);
-    assert.ok(!/<path/i.test(svg), `${name} is type and boxes, not artwork`);
+    assert.ok(!/LOGO NOT SET/i.test(svg), `${name} does not announce a missing logo`);
+    assert.match(svg, /<path/i, `${name} is artwork, not an apology`);
+    assert.match(svg, /Masters -> Logo/, `${name} says how to replace it`);
+    assert.ok(!/<script[\s>]/i.test(svg), `${name} carries no script`);
+    assert.ok(!/\son\w+\s*=/i.test(svg), `${name} carries no event handler`);
   }
+
+  // The lock-up carries the wordmark; the mark on its own does not.
+  const full = fs.readFileSync(path.join(__dirname, '..', 'public', 'assets', 'logo.svg'), 'utf8');
+  assert.match(full, /GENERAL TRADING L\.L\.C/);
 });
 
 test('the screen warns when an upload would not survive a deploy', async () => {
@@ -242,16 +254,19 @@ test('a page that declares no logo says so plainly', async () => {
   }
 });
 
-test('a document with no logo is a letterhead, not a complaint', async () => {
+test('every document is printed on a letterhead, uploaded or not', async () => {
   /*
-   * A quotation goes to a client. A box on it announcing that the logo has not
-   * been set is worse than no logo at all — the company's name, address and TRN
-   * are already there in type. So with nothing uploaded, no image is printed
-   * and no watermark is ghosted behind the page.
+   * A quotation goes to a client, so what goes on it has to be the mark or
+   * nothing at all — never a box announcing that the logo has not been set.
+   * With the artwork bundled there is always a mark to print, so the page is
+   * told so whether or not anything has been uploaded; the Logo screen keeps
+   * the separate question of whose file it is.
    */
   for (const slot of ['mark', 'full']) branding.clear(slot);
-  const me = await admin.get('/api/auth/me');
-  assert.equal(me.company.logoSet, false, 'the page is told there is no artwork');
+  const bare = await admin.get('/api/auth/me');
+  assert.equal(bare.company.logoSet, true, 'there is always a mark to print');
+  assert.equal(bare.company.logoUploaded, false, 'and it is the bundled one');
+  assert.match(bare.company.logo, /\/assets\/logo-icon\.svg$/);
 
   const printer = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'print.js'), 'utf8');
   assert.match(printer, /const watermark = \(\) => \(hasLogo\(\)/,
@@ -261,6 +276,7 @@ test('a document with no logo is a letterhead, not a complaint', async () => {
 
   await admin.post('/api/masters/branding/mark',
     { data: PNG.toString('base64'), mime: 'image/png', filename: 'akr.png' });
-  assert.equal((await admin.get('/api/auth/me')).company.logoSet, true,
-    'and it says so the moment there is');
+  const after = await admin.get('/api/auth/me');
+  assert.equal(after.company.logoUploaded, true, 'the company\'s own file takes over');
+  assert.match(after.company.logo, /^\/api\/branding\/mark\?v=/);
 });

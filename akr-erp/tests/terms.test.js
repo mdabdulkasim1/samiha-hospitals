@@ -204,3 +204,38 @@ test('a quotation to a client carries its own conditions', async () => {
   assert.match(full.quotation.terms_text, /property of/);
   assert.ok(!/\{\{\w+\}\}/.test(full.quotation.terms_text), 'placeholders filled in here too');
 });
+
+test('what the quotation form is handed is already written out', async () => {
+  /*
+   * The form used to seed its box straight from the clause library, which is
+   * stored with placeholders in it, and post that back — so a client's copy
+   * could read "Payment terms are {{payment_terms}}". The form asks the server
+   * now, and the server fills the conditions again on the way in, in case the
+   * box has been typed into.
+   */
+  const client = (await admin.get('/api/partners?type=client&limit=1')).rows[0];
+  const seed = await admin.get(`/api/sales/terms/default?partner_id=${client.id}`);
+  assert.ok(seed.clauses.length, 'a new quotation starts with the standard points');
+  for (const c of seed.clauses) {
+    assert.ok(!/\{\{\w+\}\}/.test(c.text), `"${c.text.slice(0, 48)}" is written out`);
+  }
+  assert.ok(seed.clauses.some((c) => /Payment terms are /.test(c.text)
+    && !/\{\{/.test(c.text)), 'and the payment terms are spelled out');
+
+  // Hand-edited conditions carrying a placeholder are filled on the way in.
+  const quote = await admin.post('/api/sales/quotations', {
+    partner_id: client.id,
+    items: [{ item_id: ctx.item.id, qty: 1, unit_price: 100 }],
+    terms_text: 'Goods remain the property of {{company}}.\nPayment terms are {{payment_terms}}.',
+  });
+  const full = await admin.get(`/api/sales/quotations/${quote.id}`);
+  assert.ok(!/\{\{\w+\}\}/.test(full.quotation.terms_text), 'nothing unfilled survives the save');
+  assert.match(full.quotation.terms_text, /AKR/);
+
+  // And on an edit.
+  await admin.patch(`/api/sales/quotations/${quote.id}`,
+    { terms_text: 'This quotation is issued by {{company}} to {{client}}.' });
+  const edited = await admin.get(`/api/sales/quotations/${quote.id}`);
+  assert.ok(!/\{\{\w+\}\}/.test(edited.quotation.terms_text));
+  assert.match(edited.quotation.terms_text, new RegExp(client.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+});

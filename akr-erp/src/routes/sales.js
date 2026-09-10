@@ -101,6 +101,13 @@ router.post('/costing', ratePricer, wrap(async (req, res) => {
   res.json(costing.build(req.body || {}));
 }));
 
+/** A row's name, for filling a clause. */
+const named = (table, id) => {
+  if (!id) return null;
+  const row = db.prepare(`SELECT name FROM ${table} WHERE id = ?`).get(id);
+  return row ? row.name : null;
+};
+
 // ============================================================ our quotations
 const SQ_SELECT = `
   SELECT q.*, p.name AS client_name, p.code AS client_code, p.trn AS client_trn,
@@ -197,6 +204,32 @@ router.get('/quotations/:id', wrap(async (req, res) => {
   });
 }));
 
+/*
+ * The conditions a new quotation starts with, written out.
+ *
+ * The clause library is stored with placeholders — {{client}}, {{company}},
+ * {{payment_terms}} — because one clause has to serve every client. They are
+ * filled in here, before the salesperson ever sees them, for the same reason
+ * the LPO fills them: a quotation that reaches a client reading "Payment terms
+ * are {{payment_terms}}" is worse than one with no terms at all.
+ */
+router.get('/terms/default', seller, wrap(async (req, res) => {
+  const client = req.query.partner_id
+    ? db.prepare('SELECT * FROM partners WHERE id = ?').get(req.query.partner_id) : null;
+  const company = docs.companyFor(req, req.query);
+  const paymentTermsId = req.query.payment_terms_id
+    || (client ? client.payment_terms_id : null);
+  res.json({
+    clauses: clauses.forDocument('sales_quotation', {
+      company: company ? company.name : null,
+      client: client ? client.name : null,
+      project: v.str(req.query.project),
+      payment_terms: terms.describe(paymentTermsId),
+    }),
+    library: clauses.list('sales_quotation'),
+  });
+}));
+
 router.post('/quotations', seller, wrap(async (req, res) => {
   const b = req.body;
   v.required(b, ['partner_id', 'items']);
@@ -213,13 +246,19 @@ router.post('/quotations', seller, wrap(async (req, res) => {
 
     // The same clause library the LPOs draw on, kept under Masters → Terms &
     // conditions, with this client's own details filled in.
-    const termsText = v.str(b.terms_text) || clauses.textFor('sales_quotation', {
+    const context = {
       company: company.name,
       client: client.name,
       doc_no: quoteNo,
       project: v.str(b.project),
       payment_terms: terms.describe(b.payment_terms_id || client.payment_terms_id || null),
-    });
+    };
+    // Filled again on the way in, not only on the way out to the form: the
+    // conditions come back from a box somebody may have typed into, and a
+    // placeholder that survives that box is printed on the client's copy.
+    const termsText = v.str(b.terms_text)
+      ? clauses.fill(v.str(b.terms_text), context)
+      : clauses.textFor('sales_quotation', context);
     const info = db.prepare(`
       INSERT INTO sales_quotations (company_id, quote_no, revision, partner_id, enquiry_id,
         application_id, project, subject, attention, quote_date, valid_until, payment_terms_id,
@@ -296,7 +335,15 @@ router.patch('/quotations/:id', seller, wrap(async (req, res) => {
       delivery_terms: v.str(b.delivery_terms, row.delivery_terms),
       status: v.oneOf(b.status, ['draft', 'sent', 'under_review', 'approved', 'rejected', 'expired'], 'status') || row.status,
       notes: v.str(b.notes, row.notes),
-      terms_text: v.str(b.terms_text, row.terms_text),
+      // Same backstop as on create: no placeholder reaches the client's copy.
+      terms_text: clauses.fill(v.str(b.terms_text, row.terms_text), {
+        company: named('companies', row.company_id),
+        client: named('partners', row.partner_id),
+        doc_no: row.quote_no,
+        project: v.str(b.project, row.project),
+        payment_terms: terms.describe(
+          b.payment_terms_id === undefined ? row.payment_terms_id : (b.payment_terms_id || null)),
+      }),
     });
   })();
 
