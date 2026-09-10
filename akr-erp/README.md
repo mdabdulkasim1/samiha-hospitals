@@ -512,6 +512,20 @@ manufacturer cost us** — what they billed us for material in the period, what 
 their account as an expense, and the two together. Every account is listed, including the ones that
 did nothing this period, and each table folds down to the ones that traded.
 
+### The same heads, quoted and spent
+
+What is costed into a rate at the quote stage is what the money is booked against when it goes out,
+so *"we allowed 1,200 for shipping and it cost 1,460"* is a question anybody can answer:
+
+| Costed at the quote | Booked as it is spent |
+|---|---|
+| Exchange risk · Packing · Shipping · Insurance · Custom clearance · PBG · Retention · **Margin** | the same seven, plus **VMI**, **Delivery charges**, **Collection charges** and **Other expenses — repair** — the ones that only appear once the job is running |
+
+The four extra heads have no place in a quotation, which is why they are on one side only. Both
+lists are editable — the charges on any line of the builder, the heads under **Masters → Expense
+heads** — and a database that predates them has them added on start-up without disturbing whatever
+order it already had.
+
 ### Whose expense is it
 
 Every expense is booked to somebody: a **manufacturer's** account (inspection at their works,
@@ -648,16 +662,23 @@ A rate quoted to a client is not the manufacturer's price. It is that price plus
 land the material, and then the margin. On a quotation line, **build the rate** opens the working:
 
 ```
-  Manufacturer's material rate                        500.00 per unit
-+ Sea cargo             lump sum for the line   1,200.00  →  120.00
-+ Custom duty           % of the material rate         5  →   25.00
-+ Risk charge           % of the running total         2  →   12.90
-+ Bank charge           % of the running total       1.5  →    9.87
-+ Inland transport      amount per unit               12  →   12.00
-= Landed cost, per unit                             679.77
-+ Profit @ 15%                                      101.97
-= Rate to quote                                     781.74      margin 13.04%
+  Manufacturer's material rate                          1,000.00 per unit
++ Exchange risk         % of the running total       1.5  →     15.00
++ Packing               lump sum for the line     500.00  →    100.00
++ Shipping              lump sum for the line   1,200.00  →    240.00
++ Insurance             % of the running total      0.4  →      5.42
++ Custom clearance      lump sum for the line     900.00  →    180.00
++ PBG                   % of the running total        1  →     15.40
++ Retention             % of the running total        2  →     31.11
+= Landed cost, per unit                                       1,586.93
++ Margin @ 12%                                                  190.43
+= Rate to quote                                               1,777.36
 ```
+
+The heads are **the company's own, in its own order**: exchange risk, packing, shipping, insurance,
+custom clearance, PBG, retention — and the margin, which is not a charge but the profit percent
+applied after the lot. Add anything else a job carries with *+ Add a charge*, and change how any of
+them is reckoned on any line.
 
 The four ways a charge can be reckoned are there because they are not reckoned the same way: duty is
 a percentage of the material's value, a bank charge a percentage of the running total, sea freight a

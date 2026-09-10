@@ -87,10 +87,19 @@ test('the desk can work a rate out on the screen', async () => {
   assert.equal(built.landed_cost, 300);
   assert.equal(built.rate, 360);
 
+  // The heads the company costs to, in its own words and its own order.
   const charges = await sales.get('/api/sales/costing/charges');
-  assert.ok(charges.suggested.some((c) => c.label === 'Custom duty'));
-  assert.ok(charges.suggested.some((c) => c.label === 'Sea cargo'));
-  assert.ok(charges.suggested.some((c) => c.label === 'Bank charge'));
+  assert.deepEqual(charges.suggested.map((c) => c.label), [
+    'Exchange risk', 'Packing', 'Shipping', 'Insurance', 'Custom clearance', 'PBG', 'Retention',
+  ]);
+  // Margin is not among them: it is the profit percent, applied after the lot.
+  assert.ok(!charges.suggested.some((c) => /margin/i.test(c.label)));
+
+  // Each is set to the way that charge is actually reckoned.
+  const basis = Object.fromEntries(charges.suggested.map((c) => [c.label, c.basis]));
+  assert.equal(basis['Exchange risk'], 'percent_of_running');
+  assert.equal(basis.Packing, 'lump_sum');
+  assert.equal(basis.Retention, 'percent_of_running');
 });
 
 test('the working is kept on the line, and read back worked out', async () => {

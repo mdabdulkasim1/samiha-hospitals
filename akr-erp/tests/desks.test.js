@@ -379,3 +379,24 @@ test('other income is counted, but not as what the trade made', async () => {
   assert.equal(month.gross_profit, month.trading_margin - month.expenses,
     'while the month\'s profit stays the margin less its expenses');
 });
+
+test('the same heads at the quote stage and when the money goes out', async () => {
+  /*
+   * The company costs a rate to a list of heads and then spends against the
+   * same list, so "we allowed 1,200 for shipping and it cost 1,460" is a
+   * question anybody can answer. These hold both ends of that.
+   */
+  const costing = require('../src/services/costing');
+  const heads = (await admin.get('/api/masters/bootstrap')).expenseCategories
+    .filter((c) => c.kind === 'expense').map((c) => c.name);
+
+  for (const quoted of costing.SUGGESTED.map((c) => c.label)) {
+    const spent = heads.find((h) => h.toLowerCase().startsWith(quoted.toLowerCase().split(' —')[0]));
+    assert.ok(spent, `${quoted} can be booked against as well as quoted for`);
+  }
+
+  // And the heads that only appear once the job is running.
+  for (const later of ['VMI', 'Delivery charges', 'Collection charges', 'Other expenses — repair']) {
+    assert.ok(heads.some((h) => h.startsWith(later.split(' —')[0])), `${later} is a head`);
+  }
+});

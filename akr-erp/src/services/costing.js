@@ -24,14 +24,30 @@
  */
 const BASES = ['percent_of_material', 'percent_of_running', 'per_unit', 'lump_sum'];
 
-/** The charges a trader in this line of business meets on nearly every job. */
+/*
+ * What the company costs into a rate, in its own words and its own order.
+ *
+ * These are the heads it works to at the quote stage. Each is set to the way
+ * that charge is actually reckoned — a percentage of the material, a percentage
+ * of everything so far, an amount a piece, or a lump sum for the shipment —
+ * which the desk can change on any line, along with the figure.
+ *
+ * Margin is not on this list because it is not a charge: it is the profit
+ * percent, applied to the landed cost after all of these, and it has its own
+ * field on the builder.
+ *
+ * The same heads are booked against a job when the money actually goes out
+ * (see the expense heads in src/db/seed.js), so what was allowed for at the
+ * quote and what it really cost can be read side by side.
+ */
 const SUGGESTED = [
-  { label: 'Shipping charge', basis: 'lump_sum' },
-  { label: 'Custom duty', basis: 'percent_of_material' },
-  { label: 'Air freight', basis: 'lump_sum' },
-  { label: 'Sea cargo', basis: 'lump_sum' },
-  { label: 'Risk charge', basis: 'percent_of_running' },
-  { label: 'Bank charge', basis: 'percent_of_running' },
+  { label: 'Exchange risk', basis: 'percent_of_running' },
+  { label: 'Packing', basis: 'lump_sum' },
+  { label: 'Shipping', basis: 'lump_sum' },
+  { label: 'Insurance', basis: 'percent_of_running' },
+  { label: 'Custom clearance', basis: 'lump_sum' },
+  { label: 'PBG', basis: 'percent_of_running' },
+  { label: 'Retention', basis: 'percent_of_running' },
 ];
 
 const round = (n) => Math.round((Number(n) || 0) * 100) / 100;

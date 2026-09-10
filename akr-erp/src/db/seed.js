@@ -121,22 +121,47 @@ const PAYMENT_TERMS = [
     'Irrevocable letter of credit, 90 days from bill of lading', 17],
 ];
 
+/*
+ * What the group spends, filed the way it files it.
+ *
+ * The first block is the company's own costing heads — the same words the rate
+ * builder uses at the quote stage, plus the ones that only appear once the job
+ * is running: the vendor-managed stock, the delivery and collection, the
+ * repair. Booking an expense under the head it was quoted under is what makes
+ * "we allowed 1,200 for shipping and it cost 1,460" a question anybody can
+ * answer.
+ *
+ * The second block is the overheads of running the business, which belong to
+ * the month rather than to a job.
+ */
 const EXPENSE_CATEGORIES = [
-  ['RENT', 'Rent — office & yard', 'expense', 1],
-  ['SAL', 'Salaries & wages', 'expense', 2],
-  ['VISA', 'Visa, labour & medical', 'expense', 3],
-  ['LIC', 'Trade licence & government fees', 'expense', 4],
-  ['FRT', 'Freight & clearing', 'expense', 5],
-  ['TRN', 'Transport & fuel', 'expense', 6],
-  ['UTIL', 'Utilities', 'expense', 7],
-  ['TEL', 'Telephone & internet', 'expense', 8],
-  ['INS', 'Insurance', 'expense', 9],
-  ['BANK', 'Bank charges & interest', 'expense', 10],
-  ['PROF', 'Professional & audit fees', 'expense', 11],
-  ['MKT', 'Marketing & tenders', 'expense', 12],
-  ['REP', 'Repairs & maintenance', 'expense', 13],
-  ['PTY', 'Petty cash & office', 'expense', 14],
-  ['MISC', 'Other expenses', 'expense', 15],
+  ['EXR', 'Exchange risk', 'expense', 1],
+  ['PACK', 'Packing', 'expense', 2],
+  ['SHIP', 'Shipping', 'expense', 3],
+  ['INSC', 'Insurance — consignment', 'expense', 4],
+  ['CUST', 'Custom clearance', 'expense', 5],
+  ['PBG', 'PBG — performance bank guarantee', 'expense', 6],
+  ['RETN', 'Retention', 'expense', 7],
+  ['VMI', 'VMI — vendor managed inventory', 'expense', 8],
+  ['DELC', 'Delivery charges', 'expense', 9],
+  ['COLC', 'Collection charges', 'expense', 10],
+  ['REPR', 'Other expenses — repair', 'expense', 11],
+
+  ['RENT', 'Rent — office & yard', 'expense', 21],
+  ['SAL', 'Salaries & wages', 'expense', 22],
+  ['VISA', 'Visa, labour & medical', 'expense', 23],
+  ['LIC', 'Trade licence & government fees', 'expense', 24],
+  ['FRT', 'Freight & clearing', 'expense', 25],
+  ['TRN', 'Transport & fuel', 'expense', 26],
+  ['UTIL', 'Utilities', 'expense', 27],
+  ['TEL', 'Telephone & internet', 'expense', 28],
+  ['INS', 'Insurance — general', 'expense', 29],
+  ['BANK', 'Bank charges & interest', 'expense', 30],
+  ['PROF', 'Professional & audit fees', 'expense', 31],
+  ['MKT', 'Marketing & tenders', 'expense', 32],
+  ['REP', 'Repairs & maintenance', 'expense', 33],
+  ['PTY', 'Petty cash & office', 'expense', 34],
+  ['MISC', 'Other expenses', 'expense', 35],
   ['FRTI', 'Freight recovered from clients', 'income', 20],
   ['SCRP', 'Scrap & disposal', 'income', 21],
   ['OTHI', 'Other income', 'income', 22],
