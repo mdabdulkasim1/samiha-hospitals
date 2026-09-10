@@ -169,7 +169,7 @@ function checkSvg(buffer) {
   }
 }
 
-function save(slot, { data, mime, filename }) {
+function save(slot, { data, mime, filename }, { fromEnv = false } = {}) {
   if (!SLOTS[slot]) throw badRequest(`There is no "${slot}" logo.`);
   const buffer = Buffer.from(String(data || '').replace(/^data:[^;]+;base64,/, ''), 'base64');
   if (!buffer.length) throw badRequest('That file came through empty.');
@@ -188,6 +188,9 @@ function save(slot, { data, mime, filename }) {
     if (fs.existsSync(old)) fs.unlinkSync(old);
   }
   fs.writeFileSync(path.join(d, `${slot}${type.ext}`), buffer);
+  // An upload by hand is a person's decision, and it stops the deployment's
+  // setting from ever overwriting it.
+  if (!fromEnv) forgetEnvMark();
 
   return { slot, mime: type.mime, size_bytes: buffer.length, url: urlFor(slot),
     filename: path.basename(String(filename || '')) };
@@ -201,6 +204,7 @@ function clear(slot) {
     const file = path.join(d, `${slot}${t.ext}`);
     if (fs.existsSync(file)) { fs.unlinkSync(file); removed = true; }
   }
+  forgetEnvMark();
   return removed;
 }
 
@@ -322,7 +326,7 @@ function logoInPage(html, pageUrl) {
  * matters when a site address was given and the picture came from somewhere
  * inside it.
  */
-async function fromUrl(slot, url) {
+async function fromUrl(slot, url, opts = {}) {
   if (!SLOTS[slot]) throw badRequest('There is no such logo.');
   let got = await download(url);
 
@@ -339,7 +343,8 @@ async function fromUrl(slot, url) {
     got = await download(found);
   }
 
-  const saved = save(slot, { data: got.buf.toString('base64'), filename: path.basename(new URL(got.url).pathname) || `${slot}` });
+  const saved = save(slot, { data: got.buf.toString('base64'),
+    filename: path.basename(new URL(got.url).pathname) || `${slot}` }, opts);
   return { ...saved, taken_from: got.url };
 }
 
@@ -355,21 +360,62 @@ async function fromUrl(slot, url) {
  * It never overwrites artwork somebody uploaded by hand — that is a deliberate
  * act by a person and outranks a setting.
  */
-let envSource = null;
+/*
+ * A note beside the artwork saying the deployment put it there, and from what.
+ *
+ * Without it, the first start writes the logo onto the volume and every later
+ * start finds a file already sitting there and leaves it alone — so changing
+ * the setting does nothing, for ever, with no way to tell why. That is the same
+ * "the logo will not change" this whole exercise began with. The note records a
+ * fingerprint of the setting, so a changed setting is installed and an
+ * unchanged one is left alone.
+ */
+const markFile = () => path.join(dir(), 'from-env.json');
+const fingerprintOf = (source, value) => crypto.createHash('sha1')
+  .update(`${source}:${value}`).digest('hex').slice(0, 16);
 
-/** Where the mark currently comes from: an upload, the deploy, or the source. */
+function envMark() {
+  try {
+    return JSON.parse(fs.readFileSync(markFile(), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function forgetEnvMark() {
+  try { fs.unlinkSync(markFile()); } catch { /* there was none */ }
+}
+
+/** Where the mark currently comes from: the deployment, an upload, or the source. */
 const source = (slot = 'mark') => {
   if (!find(slot) && !find(slot === 'mark' ? 'full' : 'mark')) return 'bundled';
-  return envSource ? 'environment' : 'uploaded';
+  return envMark() ? 'environment' : 'uploaded';
 };
 
 async function installFromEnv() {
   const { logoData, logoUrl } = config.company;
-  if (!logoData && !logoUrl) return null;
+  const setting = logoData
+    ? { name: 'COMPANY_LOGO_DATA', value: logoData }
+    : (logoUrl ? { name: 'COMPANY_LOGO_URL', value: logoUrl } : null);
+  const mark = envMark();
 
-  // A person's upload wins. On a deployment with no volume there will not be
-  // one after a deploy, which is the whole reason this exists.
-  if (find('mark') || find('full')) return { skipped: 'something is already uploaded' };
+  // The setting was there and has been taken away: so should the artwork it
+  // put in, or removing it would have no effect either.
+  if (!setting) {
+    if (mark) { for (const slot of Object.keys(SLOTS)) clear(slot); return { removed: true }; }
+    return null;
+  }
+
+  const want = fingerprintOf(setting.name, setting.value);
+  // Unchanged, and already installed: nothing to do, and nothing to re-fetch on
+  // every restart.
+  if (mark && mark.fingerprint === want && (find('mark') || find('full'))) {
+    return { skipped: 'already installed', source: setting.name };
+  }
+  // Somebody uploaded artwork by hand. That outranks a setting.
+  if (!mark && (find('mark') || find('full'))) {
+    return { skipped: 'something was uploaded by hand', source: setting.name };
+  }
 
   try {
     let saved;
@@ -381,17 +427,16 @@ async function installFromEnv() {
       saved = save('mark', {
         data: looksMarkup ? Buffer.from(logoData, 'utf8').toString('base64') : raw,
         filename: 'logo-from-settings',
-      });
-      envSource = 'COMPANY_LOGO_DATA';
+      }, { fromEnv: true });
     } else {
-      saved = await fromUrl('mark', logoUrl);
-      envSource = 'COMPANY_LOGO_URL';
+      saved = await fromUrl('mark', logoUrl, { fromEnv: true });
     }
-    return { source: envSource, ...saved };
+    fs.writeFileSync(markFile(), JSON.stringify(
+      { source: setting.name, fingerprint: want, at: new Date().toISOString() }, null, 2));
+    return { source: setting.name, ...saved };
   } catch (err) {
-    envSource = null;
     // A logo that will not load must not stop the books opening.
-    return { error: err.message, source: logoData ? 'COMPANY_LOGO_DATA' : 'COMPANY_LOGO_URL' };
+    return { error: err.message, source: setting.name };
   }
 }
 

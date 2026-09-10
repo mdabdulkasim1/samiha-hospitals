@@ -368,3 +368,58 @@ test('the logo can be given to the deployment, so a deploy cannot lose it', asyn
   assert.equal(health.ok, true);
   assert.equal(health.branding.mark, 'bundled');
 });
+
+test('changing the setting changes the logo, and a hand upload still wins', async (t) => {
+  /*
+   * The trap this closes: the first start writes the logo onto the volume, and
+   * every later start finds a file already there and leaves it alone — so
+   * correcting a wrong COMPANY_LOGO_URL does nothing, for ever, with no way to
+   * tell why. A note beside the artwork records which setting put it there.
+   */
+  const config = require('../src/config');
+  const original = { url: config.company.logoUrl, data: config.company.logoData };
+  const svg = (colour) => '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8">'
+    + `<rect width="8" height="8" fill="${colour}"/></svg>`;
+  const served = async () => (await fetch(`${h.base}/api/branding/mark`)).text();
+  t.after(() => {
+    config.company.logoUrl = original.url;
+    config.company.logoData = original.data;
+    for (const slot of ['mark', 'full']) branding.clear(slot);
+  });
+
+  for (const slot of ['mark', 'full']) branding.clear(slot);
+  config.company.logoUrl = '';
+  config.company.logoData = svg('#111111');
+  await branding.installFromEnv();
+  assert.match(await served(), /#111111/);
+  assert.equal(branding.source('mark'), 'environment');
+
+  // A restart with the setting unchanged does not re-fetch or re-write.
+  const again = await branding.installFromEnv();
+  assert.equal(again.skipped, 'already installed');
+  assert.equal(branding.source('mark'), 'environment', 'and it still knows where it came from');
+
+  // The setting is corrected: the new artwork must take over.
+  config.company.logoData = svg('#222222');
+  await branding.installFromEnv();
+  assert.match(await served(), /#222222/, 'a changed setting is installed');
+
+  // Somebody uploads by hand: that is a person's decision and outranks it.
+  await admin.post('/api/masters/branding/mark',
+    { data: Buffer.from(svg('#333333')).toString('base64'), mime: 'image/svg+xml', filename: 'a.svg' });
+  assert.equal(branding.source('mark'), 'uploaded');
+  config.company.logoData = svg('#444444');
+  const held = await branding.installFromEnv();
+  assert.equal(held.skipped, 'something was uploaded by hand');
+  assert.match(await served(), /#333333/, 'the upload stands');
+
+  // The setting is taken away entirely: so is what it put in.
+  for (const slot of ['mark', 'full']) branding.clear(slot);
+  config.company.logoData = svg('#555555');
+  await branding.installFromEnv();
+  assert.match(await served(), /#555555/);
+  config.company.logoData = '';
+  const gone = await branding.installFromEnv();
+  assert.equal(gone.removed, true);
+  assert.equal(branding.source('mark'), 'bundled', 'and the bundled mark comes back');
+});
