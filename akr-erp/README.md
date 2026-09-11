@@ -549,6 +549,16 @@ freight in), a **client's** account (a site visit, testing for their job), or to
 overheads: rent, salaries, the trade licence. The picker on the expense form says so in those words,
 and the expense list can be filtered by the account carrying it.
 
+**Or booked against an LPO, which is usually easier.** Clearing, freight and inspection are spent
+against an order, and whoever is booking them has the LPO number in front of them — not the enquiry
+number, and not the supplier's name as the item master spells it. Choose the LPO and both are filled
+in: the supplier carries the cost on the profit page, and the enquiry puts it on the job, where it
+shows in that job's cost alongside the goods. Either can still be overridden by hand, and a
+hand-chosen one is left alone. The list follows the company on the form — six companies' orders in
+one list is a list nobody can find anything in, and an expense booked to one company against
+another's order is a mistake the books would carry quietly. The expense search matches LPO numbers
+too, so the number on the paper finds the entry.
+
 The general overheads are then **spread across the accounts pro rata**, on what each client was
 invoiced and on what each manufacturer billed us, so a per-account figure means something. The
 tables show it either way: as entered — the pot as its own row — or spread, one link either way.

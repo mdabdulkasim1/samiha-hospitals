@@ -328,3 +328,54 @@ test('an expense books against one of the group companies', async () => {
   assert.equal(row.expenses, 12000);
   assert.equal(pl.group.expenses, 12000);
 });
+
+test('an expense books against an LPO, and lands on that supplier and that job', async () => {
+  /*
+   * Clearing, freight and inspection are spent against an order, and the person
+   * booking them has the LPO number in front of them — not the enquiry number,
+   * and not the supplier's name as the master spells it. So the LPO is enough:
+   * it names the supplier that carries the cost and the job it belongs to.
+   */
+  const quote = await askForPrice(admin, {
+    partner_id: ctx.supplier.id, application_id: ctx.pw.id, project: 'Clearing test',
+    items: [{ item_id: ctx.item.id, qty: 4, unit_price: 250 }],
+  });
+  await admin.post(`/api/purchase/quotations/${quote.id}/approve`);
+  const lpo = await admin.post('/api/purchase/orders', {
+    partner_id: ctx.supplier.id, quotation_id: quote.id,
+    items: [{ item_id: ctx.item.id, qty: 4, unit_price: 250 }],
+  });
+
+  // Only the LPO is given: no supplier, no enquiry.
+  const booked = await admin.post('/api/accounts/expenses', {
+    po_id: lpo.id, description: 'Customs clearance — Jebel Ali', amount: 1850,
+    vat_amount: 92.5, mode: 'bank_transfer',
+  });
+  assert.equal(booked.po_id, lpo.id);
+  assert.equal(booked.lpo_no, lpo.lpo_no, 'the row carries the LPO number');
+  assert.equal(booked.partner_id, ctx.supplier.id, 'the supplier carries the cost');
+  assert.equal(booked.enquiry_id, lpo.enquiry_id, 'and it is on the job');
+
+  // It can be found by the number somebody has in their hand.
+  const found = await admin.get(`/api/accounts/expenses?q=${encodeURIComponent(lpo.lpo_no)}`);
+  assert.ok(found.rows.some((r) => r.id === booked.id), 'searchable by the LPO number');
+  assert.equal(found.summary.spent, 1942.5, 'and the summary still adds up while filtered');
+
+  const only = await admin.get(`/api/accounts/expenses?po_id=${lpo.id}`);
+  assert.equal(only.rows.length, 1);
+
+  // A supplier given by hand is not overruled by the LPO.
+  const other = (await admin.get('/api/partners?type=supplier&limit=5')).rows
+    .find((p) => p.id !== ctx.supplier.id);
+  const byHand = await admin.post('/api/accounts/expenses', {
+    po_id: lpo.id, partner_id: other.id, description: 'Inspection fee', amount: 400,
+  });
+  assert.equal(byHand.partner_id, other.id, 'a hand-set account stands');
+
+  // An LPO that does not exist is refused rather than quietly ignored.
+  await assert.rejects(
+    () => admin.post('/api/accounts/expenses',
+      { po_id: 999999, description: 'Nowhere', amount: 10 }),
+    (err) => err.status === 400 && /No such LPO/.test(err.message),
+  );
+});

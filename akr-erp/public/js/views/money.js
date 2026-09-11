@@ -343,8 +343,10 @@
           { label: 'Head', key: 'category_name' },
           { label: 'Description', render: (r) => `<b>${esc(r.description)}</b>
               <div class="muted small">${esc([r.payee, r.project].filter(Boolean).join(' · '))}</div>` },
-          { label: 'Job', render: (r) => (r.enquiry_no
-            ? `<span class="mono small">${esc(r.enquiry_no)}</span>` : '—') },
+          { label: 'Against', render: (r) => (r.lpo_no || r.enquiry_no
+            ? `${r.lpo_no ? `<span class="mono small">${esc(r.lpo_no)}</span>` : ''}${
+              r.enquiry_no ? `<div class="muted small mono">${esc(r.enquiry_no)}</div>` : ''}`
+            : '—') },
           { label: 'Booked to', render: (r) => (r.partner_name
             ? `${esc(r.partner_name)}<div class="muted small">${
               r.partner_type === 'client' ? 'client' : 'manufacturer'}</div>`
@@ -465,6 +467,11 @@
             ].filter((g) => g.options.length) })}
           ${UI.field({ name: 'project', label: 'Project', value: existing ? existing.project || '' : '' })}
         </div>
+        ${UI.field({ name: 'po_id', label: 'Against our LPO', blank: 'Not against one LPO',
+          value: existing ? existing.po_id || '' : '',
+          hint: 'The order it was spent against — clearing, freight, inspection. Choosing one '
+            + 'books the cost to that supplier and onto that job.',
+          options: [] })}
         ${UI.field({ name: 'enquiry_id', label: 'Against the job', blank: 'Not against one job',
           value: existing ? existing.enquiry_id : '',
           hint: 'The enquiry it belongs to. It then shows as a cost of that job on the order.',
@@ -501,7 +508,47 @@
       footer: `<button class="btn ghost" data-act="__close">Cancel</button>
         ${existing && APP.can(['accounts']) ? '<button class="btn danger" data-act="delete">Delete</button>' : ''}
         <button class="btn" data-act="save">${existing ? 'Save' : 'Book it'}</button>`,
-      onMount(modal) {
+      async onMount(modal) {
+        /*
+         * The LPOs of the company this is being booked to.
+         *
+         * Loaded per company rather than all at once: six companies' orders in
+         * one list is a list nobody can find anything in, and an expense booked
+         * to one company against another company's order is a mistake the books
+         * would carry quietly. Change the company and the list follows.
+         */
+        const companyEl = modal.querySelector('[name=company_id]');
+        const poEl = modal.querySelector('[name=po_id]');
+        const partnerEl = modal.querySelector('[name=partner_id]');
+        const jobEl = modal.querySelector('[name=enquiry_id]');
+        let lpos = [];
+
+        const loadLpos = async () => {
+          const keep = poEl.value;
+          poEl.disabled = true;
+          const res = await API.get('/api/purchase/orders' + API.qs({
+            company_id: companyEl.value, limit: 300,
+          })).catch(() => ({ rows: [] }));
+          lpos = res.rows.filter((o) => o.status !== 'cancelled');
+          poEl.innerHTML = '<option value="">Not against one LPO</option>'
+            + lpos.map((o) => `<option value="${o.id}">${UI.esc(
+              `${o.lpo_no} — ${o.supplier_name}${o.project ? ` · ${o.project}` : ''}`)}</option>`).join('');
+          // Keep what was already chosen, if that LPO is in the new list.
+          if (keep && lpos.some((o) => String(o.id) === String(keep))) poEl.value = keep;
+          poEl.disabled = false;
+        };
+
+        // Choosing an LPO fills in the supplier and the job it belongs to —
+        // unless somebody has already chosen those for themselves.
+        poEl.addEventListener('change', () => {
+          const chosen = lpos.find((o) => String(o.id) === String(poEl.value));
+          if (!chosen) return;
+          if (partnerEl && !partnerEl.value) partnerEl.value = chosen.partner_id || '';
+          if (jobEl && !jobEl.value && chosen.enquiry_id) jobEl.value = chosen.enquiry_id;
+        });
+        companyEl.addEventListener('change', loadLpos);
+        await loadLpos();
+
         // Fill in the standard VAT once an amount is typed, so nobody has to
         // reach for a calculator — it is still editable.
         const amount = modal.querySelector('[name=amount]');

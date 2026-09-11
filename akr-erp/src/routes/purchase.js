@@ -337,6 +337,7 @@ router.get('/orders', wrap(async (req, res) => {
   const params = { limit, offset };
   if (req.query.status) { where.push('o.status = @status'); params.status = req.query.status; }
   if (req.query.partner_id) { where.push('o.partner_id = @partner_id'); params.partner_id = req.query.partner_id; }
+  if (req.query.company_id) { where.push('o.company_id = @company_id'); params.company_id = req.query.company_id; }
   if (req.query.application_id) { where.push('o.application_id = @application_id'); params.application_id = req.query.application_id; }
   if (v.bool(req.query.open)) where.push("o.status IN ('sent','acknowledged','partial')");
   if (req.query.q) {

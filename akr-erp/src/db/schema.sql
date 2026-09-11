@@ -809,6 +809,11 @@ CREATE TABLE IF NOT EXISTS expenses (
   -- inspection for that enquiry. It is what makes "what has this job cost"
   -- answerable.
   enquiry_id    INTEGER REFERENCES enquiries(id),
+  -- The LPO it belongs to. An enquiry is the job; an LPO is the order placed
+  -- under it, and clearing, freight and inspection are spent against the order
+  -- rather than the enquiry. Booking to one names the supplier and the job
+  -- without anybody having to remember either.
+  po_id         INTEGER REFERENCES purchase_orders(id),
   payee         TEXT,
   expense_date  TEXT NOT NULL DEFAULT (date('now')),
   description   TEXT NOT NULL,

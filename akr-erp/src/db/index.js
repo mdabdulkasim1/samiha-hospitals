@@ -45,6 +45,9 @@ function migrate() {
   // Indexed here rather than in the schema: on a database created before the
   // column existed, the schema runs before the column is added.
   db.exec('CREATE INDEX IF NOT EXISTS idx_enquiries_side ON enquiries(side, status)');
+  // What an expense was spent against: the LPO, where it was spent against one.
+  ensureColumn('expenses', 'po_id', 'INTEGER REFERENCES purchase_orders(id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_expenses_po ON expenses(po_id)');
   ensureCostingHeads();
   // The working behind a quoted rate, on the line it belongs to.
   ensureColumn('sales_quotation_items', 'cost_build', 'TEXT');

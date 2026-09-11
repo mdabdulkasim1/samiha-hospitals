@@ -387,12 +387,23 @@ function jobCost({ salesOrderId = null, enquiryId = null, partnerId = null }) {
   if (jobId) { where.push('e.enquiry_id = @jobId'); params.jobId = jobId; }
   const client = partnerId || (order ? order.partner_id : null);
   if (client) { where.push('e.partner_id = @client'); params.client = client; }
+  // And whatever was booked against one of the LPOs raised under this job —
+  // the clearing, the freight, the inspection. They are a cost of the order,
+  // and the order is a cost of the job.
+  if (orders.length) {
+    where.push(`e.po_id IN (${orders.map((o, i) => {
+      params[`po${i}`] = o.id;
+      return `@po${i}`;
+    }).join(',')})`);
+  }
   const expenses = where.length ? db.prepare(`
     SELECT e.id, e.voucher_no, e.expense_date, e.description, e.amount, e.partner_id, e.enquiry_id,
+           e.po_id, o.lpo_no,
            c.name AS category_name, p.name AS partner_name
       FROM expenses e
       LEFT JOIN expense_categories c ON c.id = e.category_id
       LEFT JOIN partners p ON p.id = e.partner_id
+      LEFT JOIN purchase_orders o ON o.id = e.po_id
      WHERE e.kind = 'expense' AND (${where.join(' OR ')})
      ORDER BY e.expense_date`).all(params) : [];
 
