@@ -178,7 +178,8 @@ router.get('/admissions/:id', viewRoles, wrap((req, res) => {
   }
   a.charges = db.prepare('SELECT * FROM ip_charges WHERE admission_id = ? ORDER BY charge_date, id').all(id);
   a.labOrders = db.prepare(
-    `SELECT o.*, (SELECT GROUP_CONCAT(test_name, ', ') FROM lab_order_items WHERE order_id = o.id) AS tests
+    `SELECT o.*, (SELECT GROUP_CONCAT(test_name, ', ') FROM lab_order_items
+                   WHERE order_id = o.id AND parent_item_id IS NULL) AS tests
        FROM lab_orders o WHERE o.admission_id = ? ORDER BY o.id DESC`
   ).all(id);
   a.transfers = db.prepare(

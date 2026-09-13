@@ -751,8 +751,16 @@ test('the lab can record the tests it ran, priced or not', async () => {
 
   // The doctor who ordered them sees the names and no rates at all.
   const asDoctor = (await api('GET', `/api/lab/orders/${order.body.id}`, undefined, 'imran')).body;
-  assert.strictEqual(asDoctor.items.length, 2, 'both were recorded');
+  const ordered = asDoctor.items.filter((i) => !i.parent_item_id);
+  assert.strictEqual(ordered.length, 2, 'both were recorded');
   assert.ok(asDoctor.items.every((i) => i.price === null), 'and no price reaches the prescriber');
+
+  // A blood count is one order line and many parameters; they come down with
+  // the order so the bench has a box for each.
+  const params = asDoctor.items.filter((i) => i.parent_item_id);
+  assert.ok(params.length > 10, `a CBC brings its parameters, got ${params.length}`);
+  assert.ok(params.every((i) => ordered.some((o) => o.id === i.parent_item_id)),
+    'and each one hangs off a test that was actually ordered');
 
   // The cashier, who has to bill them, sees which one still needs a rate.
   const full = (await api('GET', `/api/lab/orders/${order.body.id}`, undefined, 'cashier')).body;

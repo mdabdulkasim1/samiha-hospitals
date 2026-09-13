@@ -176,11 +176,17 @@ router.get('/diagnostics/pending', cashRoles, wrap((_req, res) => {
    * clinic never set and a zero the cashier deliberately typed are different
    * things, and only the second should quietly pass.
    */
+  /*
+   * What was ordered, not what it expands into. A panel's parameters are rows
+   * on the order so the bench can report them one by one, but they carry no
+   * rate and are not the cashier's business: a urine routine is one line to
+   * price, not the twenty-five parameters it will be reported in.
+   */
   const itemsOf = db.prepare(
     `SELECT i.id, i.test_name, i.price, i.status, t.sample_type, t.category, t.bill_group,
             t.price AS suggested_price
        FROM lab_order_items i LEFT JOIN lab_tests t ON t.id = i.test_id
-      WHERE i.order_id = ? ORDER BY i.id`
+      WHERE i.order_id = ? AND i.parent_item_id IS NULL ORDER BY i.id`
   );
   for (const r of rows) {
     r.items = itemsOf.all(r.id);
@@ -198,7 +204,11 @@ router.post('/diagnostics/:orderId/bill', cashRoles, wrap((req, res) => {
   if (order.status === 'cancelled') throw conflict('That order was cancelled.');
   if (order.released_at) throw conflict(`${order.order_no} has already been released to the lab.`);
 
-  const items = db.prepare('SELECT * FROM lab_order_items WHERE order_id = ?').all(orderId);
+  // Again the ordered tests only — pricing a panel's parameters would put
+  // twenty-five extra lines on the patient's bill for one test.
+  const items = db.prepare(
+    'SELECT * FROM lab_order_items WHERE order_id = ? AND parent_item_id IS NULL'
+  ).all(orderId);
   if (!items.length) throw badRequest('That order has no tests on it.');
 
   // Whatever the cashier typed, keyed by line. A line left out keeps the rate

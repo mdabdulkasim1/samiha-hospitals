@@ -350,6 +350,43 @@
   const isImaging = (item) => ['radiology', 'cardiology'].includes(String(item.category || '').toLowerCase());
 
   /*
+   * The measured tests, printed the way a laboratory prints them: a panel as a
+   * heading with its parameters indented below it, so a Complete Blood Count
+   * reads as one investigation of twenty-three lines rather than as
+   * twenty-three unrelated ones. A test ordered on its own keeps its single
+   * row. The panel heading carries no result — the parameters hold those.
+   */
+  function printRows(measured) {
+    const kids = new Map();
+    for (const i of measured) {
+      if (!i.parent_item_id) continue;
+      if (!kids.has(i.parent_item_id)) kids.set(i.parent_item_id, []);
+      kids.get(i.parent_item_id).push(i);
+    }
+
+    const line = (i, indent) => {
+      const flag = String(i.abnormal_flag || '').toLowerCase();
+      const cls = flag === 'high' || flag === 'critical' ? 'lr-high' : (flag === 'low' ? 'lr-low' : '');
+      return `<tr>
+        <td class="lr-test"${indent ? ' style="padding-left:14px;font-weight:400"' : ''}>${UI.esc(i.test_name)}</td>
+        <td class="num lr-val ${cls}">${UI.esc(i.result_value || '—')}</td>
+        <td>${UI.esc(i.unit || '')}</td>
+        <td>${UI.esc(i.ref_range || '')}</td>
+        <td class="num ${cls}" style="font-weight:700">${
+          flag && flag !== 'normal' ? UI.esc(flag.toUpperCase()) : ''}</td>
+      </tr>`;
+    };
+
+    return measured.filter((i) => !i.parent_item_id).map((i) => {
+      const under = kids.get(i.id) || [];
+      if (!under.length) return line(i, false);
+      return `<tr><td class="lr-test" colspan="5"
+          style="padding-top:7px;border-bottom:1px solid #E4EAED">${UI.esc(i.test_name)}</td></tr>`
+        + under.map((k) => line(k, true)).join('');
+    }).join('');
+  }
+
+  /*
    * What to write about this study.
    *
    * A study reported as a paragraph is only as good as the paragraph, and a
@@ -388,19 +425,60 @@
 
     const open = (i) => canEdit && ['in_process', 'sample_collected', 'result_entered'].includes(i.status);
 
-    // A blood test has a value; an X-ray or a scan has findings and an
-    // impression. The same screen has to take both.
-    const rows = o.items.filter((i) => !isImaging(i)).map((i) => `<tr>
-      <td><b>${UI.esc(i.test_name)}</b><div class="muted small">${UI.esc(i.ref_range || '')} ${UI.esc(i.unit || '')}</div></td>
+    /*
+     * A blood test has a value; an X-ray or a scan has findings and an
+     * impression. The same screen has to take both.
+     *
+     * And a panel has neither: it has parameters. A Complete Blood Count is
+     * twenty-three of them, each with its own unit and its own range, so the
+     * bench gets a row per parameter under the panel's heading and works down
+     * the list. The panel's own row carries no box — there is nothing to type
+     * into "Complete Blood Count" itself.
+     */
+    const measured = o.items.filter((i) => !isImaging(i));
+    const childrenOf = new Map();
+    for (const i of measured) {
+      if (!i.parent_item_id) continue;
+      if (!childrenOf.has(i.parent_item_id)) childrenOf.set(i.parent_item_id, []);
+      childrenOf.get(i.parent_item_id).push(i);
+    }
+
+    const flagCell = (i) => i.abnormal_flag
+      ? UI.badge(UI.titleise(i.abnormal_flag),
+        i.abnormal_flag === 'critical' ? 'danger' : i.abnormal_flag === 'normal' ? 'ok' : 'warn')
+      : '—';
+
+    // One parameter: the box, and beside it the unit and the range it is read
+    // against, so nothing has to be remembered or looked up mid-list.
+    const valueRow = (i, indent) => `<tr>
+      <td${indent ? ' style="padding-left:1.6rem"' : ''}>
+        <b>${UI.esc(i.test_name)}</b>
+        ${indent ? '' : `<div class="muted small">${UI.esc(i.ref_range || '')} ${UI.esc(i.unit || '')}</div>`}</td>
       <td>${open(i)
-        ? `<input type="text" data-item="${i.id}" value="${UI.esc(i.result_value || '')}" placeholder="value">`
+        ? `<input type="text" data-item="${i.id}" value="${UI.esc(i.result_value || '')}"
+             placeholder="${UI.esc(i.unit || 'value')}" autocomplete="off">`
         : `<b>${UI.esc(i.result_value || '—')}</b>`}</td>
       <td>${UI.esc(i.unit || '')}</td>
-      <td>${UI.esc(i.ref_range || '—')}</td>
-      <td>${i.abnormal_flag ? UI.badge(UI.titleise(i.abnormal_flag),
-        i.abnormal_flag === 'critical' ? 'danger' : i.abnormal_flag === 'normal' ? 'ok' : 'warn') : '—'}</td>
+      <td class="muted small">${UI.esc(i.ref_range || '—')}</td>
+      <td>${flagCell(i)}</td>
       <td>${UI.statusBadge(i.status)}</td>
-    </tr>`).join('');
+    </tr>`;
+
+    // A panel heading: what was ordered, and how much of it is done.
+    const panelRow = (i, kids) => {
+      const done = kids.filter((k) => k.result_value !== null && k.result_value !== '').length;
+      return `<tr class="panel-head">
+        <td colspan="4"><b>${UI.esc(i.test_name)}</b>
+          <span class="muted small"> · ${kids.length} parameters</span></td>
+        <td colspan="2" class="num muted small">${done} of ${kids.length} entered</td>
+      </tr>`;
+    };
+
+    const rows = measured.filter((i) => !i.parent_item_id).map((i) => {
+      const kids = childrenOf.get(i.id) || [];
+      if (!kids.length) return valueRow(i, false);
+      return panelRow(i, kids) + kids.map((k) => valueRow(k, true)).join('');
+    }).join('');
 
     const imaging = o.items.filter(isImaging).map((i) => `
       <fieldset><legend>${UI.esc(i.test_name)} ${UI.statusBadge(i.status)}</legend>
@@ -642,18 +720,7 @@
         ${measured.length ? `<table>
           <thead><tr><th>Investigation</th><th class="num">Result</th>
             <th>Unit</th><th>Reference range</th><th class="num">Flag</th></tr></thead>
-          <tbody>${measured.map((i) => {
-            const flag = String(i.abnormal_flag || '').toLowerCase();
-            const cls = flag === 'high' || flag === 'critical' ? 'lr-high' : (flag === 'low' ? 'lr-low' : '');
-            return `<tr>
-              <td class="lr-test">${UI.esc(i.test_name)}</td>
-              <td class="num lr-val ${cls}">${UI.esc(i.result_value || '—')}</td>
-              <td>${UI.esc(i.unit || '')}</td>
-              <td>${UI.esc(i.ref_range || '')}</td>
-              <td class="num ${cls}" style="font-weight:700">${
-                flag && flag !== 'normal' ? UI.esc(flag.toUpperCase()) : ''}</td>
-            </tr>`;
-          }).join('')}</tbody>
+          <tbody>${printRows(measured)}</tbody>
         </table>` : ''}
 
         ${scans.map((i) => `<div class="lr-scan">

@@ -73,8 +73,12 @@ router.get('/orders', viewRoles, wrap((req, res) => {
   const rows = db.prepare(
     `SELECT o.*, p.uhid, (p.first_name || ' ' || COALESCE(p.last_name,'')) AS patient_name,
             p.age_years, p.gender, u.name AS doctor_name, dp.doctor_code, v.visit_no, a.ip_no,
-            (SELECT COUNT(*) FROM lab_order_items i WHERE i.order_id = o.id) AS item_count,
-            (SELECT GROUP_CONCAT(test_name, ', ') FROM lab_order_items i WHERE i.order_id = o.id) AS tests,
+            -- What was ordered, not what it expands into: a worklist that named
+            -- all twenty-three parameters of a blood count would be unreadable.
+            (SELECT COUNT(*) FROM lab_order_items i
+              WHERE i.order_id = o.id AND i.parent_item_id IS NULL) AS item_count,
+            (SELECT GROUP_CONCAT(test_name, ', ') FROM lab_order_items i
+              WHERE i.order_id = o.id AND i.parent_item_id IS NULL) AS tests,
             (SELECT COALESCE(SUM(price),0) FROM lab_order_items i WHERE i.order_id = o.id) AS total_price_raw
        FROM lab_orders o
        JOIN patients p ON p.id = o.patient_id
@@ -162,14 +166,36 @@ router.post('/orders', requireRole('doctor', 'lab', 'nurse'), wrap((req, res) =>
           admissionId ? 'In-patient — charged to the running bill and settled at discharge' : null);
     const orderId = info.lastInsertRowid;
 
+    const addItem = db.prepare(
+      `INSERT INTO lab_order_items (order_id, test_id, test_name, price, unit, ref_range,
+                                    parent_item_id, sort_order)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+    const componentsOf = db.prepare(
+      `SELECT * FROM lab_tests
+        WHERE component_of = ? AND active = 1
+        ORDER BY sort_order, id`
+    );
+
     for (const t of tests) {
       const testId = int(t.testId ?? t);
       const test = db.prepare('SELECT * FROM lab_tests WHERE id = ?').get(testId);
       if (!test) continue;
-      db.prepare(
-        `INSERT INTO lab_order_items (order_id, test_id, test_name, price, unit, ref_range)
-         VALUES (?, ?, ?, ?, ?, ?)`
-      ).run(orderId, test.id, test.name, test.price, test.unit, refRangeText(test));
+      const parent = addItem.run(orderId, test.id, test.name, test.price, test.unit,
+        refRangeText(test), null, 0).lastInsertRowid;
+
+      /*
+       * A panel is ordered once and reported parameter by parameter. Expanding
+       * it here rather than on the bench screen means each parameter is a row
+       * of its own from the start: it gets its own value, its own range and its
+       * own flag, it can be charted on the patient's file over the years, and
+       * the technician is never asked to type twenty-three figures into one
+       * box. The parameters carry no price — the panel is the charge, and
+       * pricing them again would bill the patient twice for one test.
+       */
+      componentsOf.all(test.code).forEach((c, i) => {
+        addItem.run(orderId, c.id, c.name, 0, c.unit, refRangeText(c), parent, i + 1);
+      });
     }
     return orderId;
   })();
@@ -231,8 +257,17 @@ router.post('/orders/:id/results', requireRole('lab'), wrap((req, res) => {
           WHERE id = ?`
       ).run(str(r.value), str(r.notes), flag, req.user.id, item.id);
     }
+    /*
+     * A panel's own row is a heading once its parameters are on the order —
+     * the result lives in them — so it is not counted as outstanding. Without
+     * this the order could never complete: nobody is going to type a value
+     * into "Complete Blood Count" itself.
+     */
     const pending = db.prepare(
-      "SELECT COUNT(*) AS c FROM lab_order_items WHERE order_id = ? AND status NOT IN ('result_entered','verified','cancelled')"
+      `SELECT COUNT(*) AS c FROM lab_order_items i
+        WHERE i.order_id = ?
+          AND i.status NOT IN ('result_entered','verified','cancelled')
+          AND NOT EXISTS (SELECT 1 FROM lab_order_items c WHERE c.parent_item_id = i.id)`
     ).get(id).c;
     if (pending === 0) db.prepare("UPDATE lab_orders SET status = 'result_entered' WHERE id = ?").run(id);
   })();
@@ -251,19 +286,26 @@ router.post('/orders/:id/verify', requireRole('lab', 'doctor'), wrap((req, res) 
   if (!order) throw notFound('Order not found');
 
   assertReleased(order);
+  // A panel's own row holds no result — its parameters do — so it is not
+  // counted as missing one. Counting it would make a panel unreleasable.
   const unentered = db.prepare(
-    "SELECT COUNT(*) AS c FROM lab_order_items WHERE order_id = ? AND result_value IS NULL AND status != 'cancelled'"
+    `SELECT COUNT(*) AS c FROM lab_order_items i
+      WHERE i.order_id = ? AND i.result_value IS NULL AND i.status != 'cancelled'
+        AND NOT EXISTS (SELECT 1 FROM lab_order_items c WHERE c.parent_item_id = i.id)`
   ).get(id).c;
   if (unentered > 0) throw conflict(`${unentered} test(s) still have no result. Enter all results before verifying.`);
 
   db.prepare(
-    "UPDATE lab_order_items SET status = 'verified', verified_by = ?, verified_at = datetime('now') WHERE order_id = ? AND status = 'result_entered'"
+    `UPDATE lab_order_items SET status = 'verified', verified_by = ?, verified_at = datetime('now')
+      WHERE order_id = ? AND status != 'cancelled'
+        AND (status = 'result_entered'
+             OR EXISTS (SELECT 1 FROM lab_order_items c WHERE c.parent_item_id = lab_order_items.id))`
   ).run(req.user.id, id);
   db.prepare("UPDATE lab_orders SET status = 'reported', reported_at = datetime('now') WHERE id = ?").run(id);
 
   const patient = db.prepare('SELECT * FROM patients WHERE id = ?').get(order.patient_id);
   const tests = db.prepare(
-    "SELECT GROUP_CONCAT(test_name, ', ') AS t FROM lab_order_items WHERE order_id = ?"
+    "SELECT GROUP_CONCAT(test_name, ', ') AS t FROM lab_order_items\n       WHERE order_id = ? AND parent_item_id IS NULL"
   ).get(id).t;
   const to = patient.whatsapp || patient.phone;
   if (to) {

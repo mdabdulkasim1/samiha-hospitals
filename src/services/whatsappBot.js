@@ -330,7 +330,8 @@ function reportStatus(patient) {
   }
   const rows = db.prepare(
     `SELECT o.order_no, o.status, o.ordered_at,
-            (SELECT GROUP_CONCAT(test_name, ', ') FROM lab_order_items WHERE order_id = o.id) AS tests
+            (SELECT GROUP_CONCAT(test_name, ', ') FROM lab_order_items
+              WHERE order_id = o.id AND parent_item_id IS NULL) AS tests
        FROM lab_orders o WHERE o.patient_id = ? ORDER BY o.id DESC LIMIT 5`
   ).all(patient.id);
   if (!rows.length) return 'You have no diagnostic orders with us yet.\n\nReply *MENU* for other options.';

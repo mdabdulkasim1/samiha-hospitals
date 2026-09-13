@@ -257,6 +257,15 @@ function migrate() {
   }
   ensureColumn('lab_tests', 'component_of', 'TEXT');
   ensureColumn('lab_tests', 'sort_order', 'INTEGER NOT NULL DEFAULT 0');
+  /*
+   * A panel ordered as one line is reported as many. A Complete Blood Count is
+   * twenty-three parameters, each with its own unit and its own range, and the
+   * bench needs a box for each of them rather than one box for the lot. The
+   * panel's own row stays — it is what was ordered and what is charged — and
+   * its parameters hang off it.
+   */
+  ensureColumn('lab_order_items', 'parent_item_id', 'INTEGER REFERENCES lab_order_items(id)');
+  ensureColumn('lab_order_items', 'sort_order', 'INTEGER NOT NULL DEFAULT 0');
   backfillBillGroups();
 
   // Medicaments sit under HSN 3004 unless the formulary says otherwise; a GST

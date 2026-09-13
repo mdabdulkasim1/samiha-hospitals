@@ -767,9 +767,10 @@ const REPORT_DETAILS = Object.assign(Object.create(null), {
     rows: ({ from, to }) => db.prepare(
       `SELECT lo.id, lo.order_no, ${PATIENT_NAME} AS name, p.uhid, u.name AS doctor,
               lo.status, lo.priority, lo.ordered_at AS at, lo.reported_at,
-              (SELECT COUNT(*) FROM lab_order_items li WHERE li.order_id = lo.id) AS test_count,
+              (SELECT COUNT(*) FROM lab_order_items li
+                WHERE li.order_id = lo.id AND li.parent_item_id IS NULL) AS test_count,
               (SELECT GROUP_CONCAT(li.test_name, ', ') FROM lab_order_items li
-                WHERE li.order_id = lo.id) AS tests
+                WHERE li.order_id = lo.id AND li.parent_item_id IS NULL) AS tests
          FROM lab_orders lo
          JOIN patients p ON p.id = lo.patient_id
          LEFT JOIN users u ON u.id = lo.doctor_id
@@ -784,9 +785,10 @@ const REPORT_DETAILS = Object.assign(Object.create(null), {
     rows: ({ from, to, doctorId }) => db.prepare(
       `SELECT lo.id, lo.order_no, ${PATIENT_NAME} AS name, p.uhid, u.name AS doctor,
               lo.status, lo.priority, lo.ordered_at AS at, lo.reported_at,
-              (SELECT COUNT(*) FROM lab_order_items li WHERE li.order_id = lo.id) AS test_count,
+              (SELECT COUNT(*) FROM lab_order_items li
+                WHERE li.order_id = lo.id AND li.parent_item_id IS NULL) AS test_count,
               (SELECT GROUP_CONCAT(li.test_name, ', ') FROM lab_order_items li
-                WHERE li.order_id = lo.id) AS tests
+                WHERE li.order_id = lo.id AND li.parent_item_id IS NULL) AS tests
          FROM lab_orders lo
          JOIN patients p ON p.id = lo.patient_id
          LEFT JOIN users u ON u.id = lo.doctor_id

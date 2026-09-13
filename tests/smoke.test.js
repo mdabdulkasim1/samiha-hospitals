@@ -286,14 +286,32 @@ test('full OPD journey: arrive → check-in → fee → vitals → consult → p
 
     await api('POST', `/api/lab/orders/${orderId}/start`, {}, 'lab');
     const items = (await api('GET', `/api/lab/orders/${orderId}`, undefined, 'lab')).body.items;
+
+    /*
+     * A blood count arrives as its parameters, so the bench fills those in
+     * rather than the panel itself. Addressed by name: the order is one line
+     * for the doctor and twenty-odd for the technician, and a position in the
+     * list means nothing.
+     */
+    const fbs = items.find((i) => /fasting blood sugar|glucose, fasting/i.test(i.test_name));
+    assert.ok(fbs, 'the fasting sugar is on the order');
+    const haemoglobin = items.find((i) => /^haemoglobin/i.test(i.test_name));
+    assert.ok(haemoglobin, 'and the blood count brought its parameters');
+
     const results = await api('POST', `/api/lab/orders/${orderId}/results`, {
       results: [
-        { itemId: items[0].id, value: '13.2' },
-        { itemId: items[1].id, value: '142' },   // FBS ref 70–100 → high
+        { itemId: haemoglobin.id, value: '13.2' },
+        { itemId: fbs.id, value: '142' },   // ref 70–100 → high
       ],
     }, 'lab');
     assert.strictEqual(results.status, 200);
-    assert.strictEqual(results.body.find((i) => i.id === items[1].id).abnormal_flag, 'high');
+    assert.strictEqual(results.body.find((i) => i.id === fbs.id).abnormal_flag, 'high');
+
+    // The rest of the panel, so the order is complete enough to release.
+    const rest = items.filter((i) => i.parent_item_id && i.id !== haemoglobin.id);
+    await api('POST', `/api/lab/orders/${orderId}/results`, {
+      results: rest.map((i) => ({ itemId: i.id, value: '1' })),
+    }, 'lab');
 
     const verify = await api('POST', `/api/lab/orders/${orderId}/verify`, {}, 'lab');
     assert.strictEqual(verify.status, 200, JSON.stringify(verify.body));

@@ -538,7 +538,8 @@ router.get('/:id/results-page', clinicalRoles, wrap((req, res) => {
     vitals: db.prepare('SELECT * FROM vitals WHERE visit_id = ? ORDER BY id DESC LIMIT 1').get(id) || null,
     consultation: consultation ? consultationPayload(consultation.id) : null,
     labOrders: db.prepare(
-      `SELECT o.*, (SELECT GROUP_CONCAT(test_name, ', ') FROM lab_order_items WHERE order_id = o.id) AS tests,
+      `SELECT o.*, (SELECT GROUP_CONCAT(test_name, ', ') FROM lab_order_items
+         WHERE order_id = o.id AND parent_item_id IS NULL) AS tests,
               (SELECT COALESCE(SUM(price),0) FROM lab_order_items WHERE order_id = o.id) AS total_price
          FROM lab_orders o WHERE o.visit_id = ? ORDER BY o.id`
     ).all(id),
@@ -573,7 +574,8 @@ router.get('/:id', clinicalRoles, wrap((req, res) => {
   visit.vitals = db.prepare('SELECT * FROM vitals WHERE visit_id = ? ORDER BY id DESC').all(id);
   visit.consultation = consultation ? consultationPayload(consultation.id) : null;
   visit.labOrders = db.prepare(
-    `SELECT o.*, (SELECT GROUP_CONCAT(test_name, ', ') FROM lab_order_items WHERE order_id = o.id) AS tests
+    `SELECT o.*, (SELECT GROUP_CONCAT(test_name, ', ') FROM lab_order_items
+         WHERE order_id = o.id AND parent_item_id IS NULL) AS tests
        FROM lab_orders o WHERE o.visit_id = ? ORDER BY o.id`
   ).all(id);
   visit.prescriptions = db.prepare('SELECT * FROM prescriptions WHERE visit_id = ? ORDER BY id').all(id);

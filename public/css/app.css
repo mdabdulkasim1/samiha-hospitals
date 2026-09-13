@@ -786,3 +786,7 @@ table.matrix tr.tfoot td:first-child { background: var(--bg); }
    readable, and the badge in the row already says which way it is out. */
 tbody tr.warn-row { background: var(--warn-soft); }
 tbody tr.warn-row td { border-bottom-color: #F0DFC0; }
+
+/* A panel's heading in the bench's result-entry list: the parameters below it
+   are what gets typed into, so the heading reads as a divider, not a row. */
+tbody tr.panel-head td { background: var(--bg); border-top: 2px solid var(--line); }

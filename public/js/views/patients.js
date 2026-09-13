@@ -1172,12 +1172,24 @@
     const measured = items.filter((i) => !isNarrative(i));
     const studies = items.filter(isNarrative);
 
-    const rows = measured.map((i) => {
+    /*
+     * A panel reads as a panel here too: its heading, then its parameters
+     * under it. A file with three blood counts on it would otherwise be
+     * seventy loose rows with no sign of which test each came from.
+     */
+    const kids = new Map();
+    for (const i of measured) {
+      if (!i.parent_item_id) continue;
+      if (!kids.has(i.parent_item_id)) kids.set(i.parent_item_id, []);
+      kids.get(i.parent_item_id).push(i);
+    }
+
+    const valueRow = (i, indent) => {
       const has = i.result_value !== null && i.result_value !== '';
       const flag = String(i.abnormal_flag || '').toLowerCase();
       const off = has && flag && flag !== 'normal';
       return `<tr${off ? ' class="warn-row"' : ''}>
-        <td>${UI.esc(i.test_name)}</td>
+        <td${indent ? ' style="padding-left:1.6rem"' : ''}>${UI.esc(i.test_name)}</td>
         <td class="num"><b>${has ? UI.esc(i.result_value) : '<span class="muted">awaited</span>'}</b></td>
         <td>${UI.esc(i.unit || '')}</td>
         <td class="muted small">${UI.esc(i.ref_range || '—')}</td>
@@ -1185,6 +1197,16 @@
         <td class="muted small">${i.result_at ? UI.esc(UI.date(i.result_at)) : '—'}${
           i.result_by_name ? `<br>${UI.esc(i.result_by_name)}` : ''}</td>
       </tr>`;
+    };
+
+    const rows = measured.filter((i) => !i.parent_item_id).map((i) => {
+      const under = kids.get(i.id) || [];
+      if (!under.length) return valueRow(i, false);
+      const off = under.filter((k) => k.abnormal_flag && k.abnormal_flag !== 'normal').length;
+      return `<tr class="panel-head"><td colspan="4"><b>${UI.esc(i.test_name)}</b>
+          <span class="muted small"> · ${under.length} parameters</span></td>
+        <td colspan="2" class="num muted small">${off ? `${off} outside range` : ''}</td></tr>`
+        + under.map((k) => valueRow(k, true)).join('');
     }).join('');
 
     const reports = studies.map((i) => {

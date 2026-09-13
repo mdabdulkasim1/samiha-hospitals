@@ -361,7 +361,8 @@ router.get('/:id', deskRoles, wrap((req, res) => {
    */
   patient.labOrders = db.prepare(
     `SELECT o.*, u.name AS doctor_name, v.visit_no,
-            (SELECT GROUP_CONCAT(test_name, ', ') FROM lab_order_items WHERE order_id = o.id) AS tests
+            (SELECT GROUP_CONCAT(test_name, ', ') FROM lab_order_items
+              WHERE order_id = o.id AND parent_item_id IS NULL) AS tests
        FROM lab_orders o
        LEFT JOIN users u ON u.id = o.doctor_id
        LEFT JOIN visits v ON v.id = o.visit_id
@@ -379,7 +380,16 @@ router.get('/:id', deskRoles, wrap((req, res) => {
          LEFT JOIN users ver ON ver.id = i.verified_by
          LEFT JOIN lab_tests t ON t.id = i.test_id
         WHERE o.patient_id = ?
-        ORDER BY datetime(COALESCE(i.result_at, o.ordered_at)) DESC, i.id DESC`
+        -- Newest order first, but within an order the tests read downwards in
+        -- the order the laboratory reports them: a blood count starts at
+        -- haemoglobin, not at the last ratio on the sheet.
+        --
+        -- Sorted on the order's date and never on the item's own result time.
+        -- A technician who enters half a blood count before lunch and half
+        -- after would otherwise have the panel split in two on the patient's
+        -- file, which is the same test reported twice.
+        ORDER BY datetime(o.ordered_at) DESC, i.order_id DESC,
+                 COALESCE(i.parent_item_id, i.id), i.sort_order, i.id`
     ).all(id);
 
     // Prices belong to the desks that handle them; a result does not.
@@ -425,8 +435,9 @@ router.get('/:id', deskRoles, wrap((req, res) => {
       });
     }
     patient.labTrends = [...series.values()]
-      // Oldest first: a history reads left to right.
-      .map((t) => ({ ...t, points: t.points.slice().reverse() }))
+      // Oldest first: a history reads left to right. Sorted on the date itself
+      // rather than on the order the rows arrived in.
+      .map((t) => ({ ...t, points: t.points.slice().sort((a, b) => String(a.at).localeCompare(String(b.at))) }))
       .filter((t) => t.points.length > 1)
       .sort((a, b) => b.points.length - a.points.length || a.test_name.localeCompare(b.test_name));
   } else {

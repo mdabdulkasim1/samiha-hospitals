@@ -136,7 +136,8 @@ const LAB = [
     SELECT o.order_no, o.ordered_at, o.status, o.priority, o.billing_status, o.released_at,
            ${PATIENT}, p.uhid, p.age_years, p.gender, v.visit_no, a.ip_no,
            u.name AS referred_by, o.clinical_notes, o.reported_at,
-           (SELECT COUNT(*) FROM lab_order_items WHERE order_id = o.id) AS tests,
+           (SELECT COUNT(*) FROM lab_order_items
+             WHERE order_id = o.id AND parent_item_id IS NULL) AS tests,
            (SELECT COALESCE(SUM(price), 0) FROM lab_order_items WHERE order_id = o.id) AS amount
       FROM lab_orders o JOIN patients p ON p.id = o.patient_id
       LEFT JOIN visits v ON v.id = o.visit_id
@@ -145,11 +146,15 @@ const LAB = [
      ORDER BY o.id DESC`, { prices: ['amount'] }),
   sheet('Results', `
     SELECT o.order_no, o.ordered_at, ${PATIENT}, p.uhid,
+           -- Which panel a parameter came from, so a column of bare
+           -- "Neutrophils" rows can be sorted back into the blood counts.
+           par.test_name AS panel,
            i.test_name, i.result_value, i.unit, i.ref_range, i.abnormal_flag, i.status,
            i.result_at, ru.name AS result_by, vu.name AS verified_by, i.price
       FROM lab_order_items i
       JOIN lab_orders o ON o.id = i.order_id
       JOIN patients p ON p.id = o.patient_id
+      LEFT JOIN lab_order_items par ON par.id = i.parent_item_id
       LEFT JOIN users ru ON ru.id = i.result_by
       LEFT JOIN users vu ON vu.id = i.verified_by
      ORDER BY i.id DESC`, { prices: ['price'] }),

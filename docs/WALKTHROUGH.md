@@ -136,6 +136,32 @@ are flagged on the printed report against the reference range.
 
 Verifying the **last** open order moves the patient on to the cashier by itself.
 
+### A panel is entered parameter by parameter
+
+Most of what the clinic runs is a panel: a Complete Blood Count is one line on
+the order and twenty-three figures on the report. Opening the order gives the
+bench **a box for every parameter**, each with its unit and the reference range
+beside it, under the panel's heading — so the technician works straight down
+the list without looking anything up. The heading counts the progress
+("14 of 23 entered").
+
+Every parameter is flagged on its own range as it is typed, so a haemoglobin of
+9.1 is marked low whatever else is on the sheet.
+
+The panel's own row takes no value — there is nothing to type into "Complete
+Blood Count" itself — and it does not hold the order open. Fill in the
+parameters and the order is ready to verify.
+
+Panels are expanded when the test is **ordered**, not when it reaches the
+bench. That makes each parameter a row of the patient's record in its own
+right: its own value, its own range, its own flag, and its own history, so
+haemoglobin can be followed over years rather than being buried inside a blood
+count. It changes nothing about the money — the panel carries the charge and
+its parameters carry none, so the patient is billed once for one test, and the
+cashier's counter shows the one line that was ordered rather than the
+twenty-three it will be reported in.
+
+
 ## 7 · Cash counter
 
 *cashier@samiha.local · Billing → Today's collections → Collect*
