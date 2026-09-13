@@ -79,7 +79,17 @@ function context(user) {
  * the letterhead, which is public by nature.
  */
 router.get('/look', wrap(async (_req, res) => {
-  res.json({ logoPlate: branding.settings().plate });
+  res.json({
+    logoPlate: branding.settings().plate,
+    /*
+     * The commit running, before anybody has signed in.
+     *
+     * Which version is live turned out to be the hardest question to answer
+     * about this system, and answering it should not require a password on a
+     * phone. It is on the sign-in page, in the corner.
+     */
+    release: config.release,
+  });
 }));
 
 router.post('/login', wrap(async (req, res) => {

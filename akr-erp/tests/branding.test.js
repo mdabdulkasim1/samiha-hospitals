@@ -446,3 +446,19 @@ test('the app says which commit it is running', async () => {
   // Where the platform says nothing, nothing is claimed.
   assert.ok(config.release === null || /^[0-9a-f]{7}$/.test(config.release));
 });
+
+test('the version is readable without signing in', async () => {
+  /*
+   * Which version is live turned out to be the hardest question to answer about
+   * this system: a stale deployment looks exactly like a current one. Answering
+   * it should not need a password, or a laptop — it is in the corner of the
+   * sign-in page, and on the open endpoint that page reads.
+   */
+  const config = require('../src/config');
+  const look = await fetch(`${h.base}/api/auth/look`).then((r) => r.json());
+  assert.ok('release' in look, 'the sign-in page is told');
+  assert.equal(look.release, config.release);
+
+  const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  assert.match(app, /class="build-badge"/, 'and it puts it on the page');
+});

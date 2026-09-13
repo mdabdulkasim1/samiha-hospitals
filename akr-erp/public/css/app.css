@@ -388,7 +388,20 @@ ol.conditions li { margin-bottom: 3px; }
 .unread-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); margin-top: 5px; }
 
 /* ------------------------------------------------------------------- login */
-.login-shell { display: flex; min-height: 100vh; }
+/*
+ * The commit running, in the corner of the sign-in page.
+ *
+ * Which version is live turned out to be the hardest question to answer about
+ * this system — days went into a deployment nobody could tell was stale — and
+ * answering it should not need a password, or a laptop.
+ */
+.build-badge {
+  position: absolute; top: 10px; right: 14px; z-index: 5;
+  font-family: var(--mono, monospace); font-size: 11px; letter-spacing: .4px;
+  color: #7E9BB4; background: rgba(255, 255, 255, .7); border-radius: 5px; padding: 2px 7px;
+}
+
+.login-shell { display: flex; min-height: 100vh; position: relative; }
 .login-hero {
   flex: 1.15; background: linear-gradient(155deg, var(--navy) 0%, var(--navy-dark) 55%, #0B3D2A 100%);
   color: #DCE7F0; padding: 54px 46px; display: flex; flex-direction: column; justify-content: center;

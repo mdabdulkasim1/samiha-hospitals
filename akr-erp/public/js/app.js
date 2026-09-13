@@ -178,12 +178,16 @@
   // ------------------------------------------------------------------ login
   async function renderLogin() {
     if (window.UI && UI.closeAllModals) UI.closeAllModals();
+    let release = null;
     try {
       const look = await API.get('/api/auth/look');
       loginPlate = look.logoPlate !== false;
+      release = look.release || null;
     } catch { /* the placeholder wants its plate */ }
     document.getElementById('root').innerHTML = `
       <div class="login-shell">
+        ${release ? `<div class="build-badge" title="The commit this deployment is running">${
+          UI.esc(release)}</div>` : ''}
         <div class="login-hero">
           <img class="logo-full${loginPlate ? '' : ' plain'}" src="${LOGO_FULL}"
                alt="AKR General Trading L.L.C"
