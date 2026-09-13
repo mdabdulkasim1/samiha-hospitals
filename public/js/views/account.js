@@ -259,12 +259,17 @@ APP_URL=https://your-domain</pre>
     const b = await API.get('/api/admin/backups');
     body.innerHTML = `
       <div class="card">
-        <div class="card-head"><h3>Database backups</h3>
+        <div class="card-head"><h3>Backups</h3>
+          <button class="btn ghost" id="take-workbook">Build the Excel book now</button>
           <button class="btn" id="take-backup">Take a backup now</button></div>
         <div class="card-body">
           <div class="alert info">
-            Snapshots are written to <code>${UI.esc(b.dir)}</code> and the newest
-            <b>${UI.esc(b.retention)}</b> are kept. A notice goes to the recovery mailbox each time.
+            Written to <code>${UI.esc(b.dir)}</code>, newest <b>${UI.esc(b.retention)}</b> kept,
+            with a notice to the recovery mailbox each time.
+            <div class="small mt">Two kinds, and they answer different questions.
+              A <code>.db</code> snapshot is taken nightly and is what the clinic is
+              <b>restored from</b>. An <code>.xlsx</code> workbook is written once a week and is
+              what you can <b>open</b> — every department's data on a laptop with no ERP on it.</div>
             <div class="small mt"><b>Download a copy off this machine regularly</b> — a backup that
               lives only on the same disk as the database is not a backup.</div>
           </div>
@@ -277,7 +282,9 @@ APP_URL=https://your-domain</pre>
       body.querySelector('#bk-list').innerHTML = UI.table([
         { label: 'File', render: (r) => `<code>${UI.esc(r.filename)}</code>` },
         { label: 'Taken', render: (r) => UI.esc(UI.dateTime(r.created_at)) },
-        { label: 'Type', render: (r) => UI.badge(UI.titleise(r.kind), r.kind === 'scheduled' ? 'teal' : '') },
+        { label: 'Kind', render: (r) => (/\.xlsx$/.test(r.filename)
+          ? UI.badge('Excel book', 'ok') : UI.badge('Database', 'teal')) },
+        { label: 'Taken by', render: (r) => UI.badge(UI.titleise(r.kind), r.kind === 'scheduled' ? 'teal' : '') },
         { label: 'Size', num: true, render: (r) => r.status === 'ok' ? `${UI.esc(r.sizeMb)} MB` : '—' },
         { label: 'By', render: (r) => UI.esc(r.created_by_name || 'system') },
         { label: 'Status', render: (r) => r.status === 'ok'
@@ -298,6 +305,22 @@ APP_URL=https://your-domain</pre>
       }));
     };
     draw(b.rows);
+
+    body.querySelector('#take-workbook').addEventListener('click', async (e) => {
+      e.target.disabled = true;
+      const out = body.querySelector('#bk-out');
+      out.innerHTML = '<div class="loading"><span class="spinner"></span></div>';
+      try {
+        const made = await API.post('/api/admin/backups/workbook', {});
+        out.innerHTML = `<div class="alert ok mt">Workbook <code>${UI.esc(made.filename)}</code> —
+          ${UI.esc(made.sheets)} sheet(s), ${UI.esc(made.sizeMb)} MB. Download it below.</div>`;
+        UI.ok('Excel book built.');
+        backupTab(body);
+      } catch (err) {
+        out.innerHTML = `<div class="alert danger mt">${UI.esc(err.message)}</div>`;
+        e.target.disabled = false;
+      }
+    });
 
     body.querySelector('#take-backup').addEventListener('click', async (e) => {
       e.target.disabled = true;

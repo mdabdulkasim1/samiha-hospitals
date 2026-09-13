@@ -8,3 +8,4 @@ data/*.db-shm
 .DS_Store
 coverage/
 tmp/
+data/backups/

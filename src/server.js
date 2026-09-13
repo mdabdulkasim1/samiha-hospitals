@@ -64,6 +64,7 @@ app.use('/api/billing', require('./routes/billing'));
 app.use('/api/ipd', require('./routes/ipd'));
 app.use('/api/insurance', require('./routes/insurance'));
 app.use('/api/reports', require('./routes/reports'));
+app.use('/api/exports', require('./routes/exports'));
 app.use('/api/admin', require('./routes/admin'));
 
 // --------------------------------------------------------------- static + SPA

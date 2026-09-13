@@ -134,6 +134,55 @@ separate alert — a backup that quietly stops working is worse than none.
 
 **To restore:** stop the app, replace `DB_FILE` with the downloaded snapshot, restart.
 
+### The weekly workbook
+
+The `.db` snapshot is what you *restore* from. It is not what you *read* — nobody opens a
+SQLite file to check last quarter's takings. So once a week the clinic also writes a
+spreadsheet of everything, and keeps it beside the snapshots.
+
+| Setting | Meaning |
+|---|---|
+| `BACKUP_WORKBOOK_DAY` | Day of the week for the workbook, 0 = Sunday (default 0). Written on the `BACKUP_HOUR` tick |
+
+It lands in `BACKUP_DIR` as `samiha-full-<stamp>.xlsx` and is listed under
+**Account & System → Backups** with the snapshots. **Build the Excel book now** on the same
+screen takes one on demand.
+
+This book is written as the administrator, so it is the only one that carries the staff list
+and the audit log. Treat it accordingly: it is the whole clinic in one file that opens on any
+laptop, which is its use and also its risk.
+
+## Departments download their own data
+
+Every member of staff has a **⤓** button in the top bar: a workbook of what their department
+holds, as it stands at that moment.
+
+| Department | Sheets |
+|---|---|
+| Front office | Patients, appointments, visits, enquiries |
+| Nurse station | Vitals, today at the clinic |
+| Consultations | Consultations, prescriptions, notes on file |
+| Diagnostics | Orders, results, test catalogue |
+| Pharmacy | Formulary, batches, sales, stock movements, purchases |
+| Billing | Invoices, bill lines, receipts, payment plans, rate card |
+| Financial assistance | Screenings, concessions, assistance cases |
+| In-patient | Admissions, beds, ward charges, rounds, medication chart |
+
+**A download is not a lesser kind of screen.** The rules about who may see money hold in the
+file exactly as they hold in the app, and they are applied on the server: the lab's book has
+no prices in it, a doctor's has no takings, and the withheld column is *dropped* rather than
+blanked, because a spreadsheet of empty money cells invites somebody to fill them in. The
+same sheet downloaded by the cashier still has the column — it is withheld from the role, not
+missing from the query.
+
+Asking for another department's book directly is refused, not merely left off the menu. Every
+download is written to the audit log with its size and row count: a spreadsheet of the
+clinic's patients leaving the building is exactly the kind of event somebody should be able to
+ask about six months later.
+
+Sheets are headed even when they are empty, so a department that downloads on a quiet morning
+gets column names to work with rather than a blank tab.
+
 ## First-hour checklist for a real deployment
 
 1. Attach a persistent volume and point `DB_FILE` and `BACKUP_DIR` at it.

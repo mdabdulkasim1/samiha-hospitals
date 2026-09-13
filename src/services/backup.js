@@ -110,25 +110,88 @@ function fileFor(filename) {
 }
 
 /**
- * Daily snapshot at the configured hour. Checked every 15 minutes rather than
- * scheduled once, so a restart never skips the window.
+ * The weekly workbook.
+ *
+ * The nightly `.db` snapshot is what you restore from; this is what you can
+ * open. They answer different questions — one gets the clinic running again
+ * after a disk dies, the other lets somebody look at a year of takings on a
+ * laptop with no ERP on it — and a clinic wants both.
+ *
+ * Written as the administrator, so it carries everything: the audit log and
+ * the staff list are in this book and in no other.
+ */
+async function createWorkbook({ kind = 'scheduled', userId = null } = {}) {
+  ensureDir();
+  const filename = `samiha-full-${stamp()}.xlsx`;
+  const target = path.join(config.backup.dir, filename);
+
+  try {
+    // Required here rather than at the top: the exports service reads every
+    // table, and loading it with the database module would be a cycle.
+    const sheets = require('./exports').everything({ role: 'admin' });
+    const book = require('../lib/xlsx').build(sheets);
+    fs.writeFileSync(target, book);
+
+    const info = db.prepare(
+      'INSERT INTO backups (filename, size_bytes, kind, status, created_by) VALUES (?, ?, ?, ?, ?)'
+    ).run(filename, book.length, kind, 'ok', userId);
+    return {
+      id: info.lastInsertRowid, filename, sheets: sheets.length,
+      sizeMb: Math.round((book.length / 1048576) * 100) / 100,
+    };
+  } catch (err) {
+    db.prepare(
+      'INSERT INTO backups (filename, size_bytes, kind, status, error, created_by) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(filename, 0, kind, 'failed', err.message, userId);
+    throw err;
+  }
+}
+
+/** The ISO week a date falls in, so "once a week" survives a restart. */
+function weekKey(d) {
+  const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  t.setUTCDate(t.getUTCDate() + 4 - (t.getUTCDay() || 7));
+  const yearStart = new Date(Date.UTC(t.getUTCFullYear(), 0, 1));
+  const week = Math.ceil(((t - yearStart) / 86400000 + 1) / 7);
+  return `${t.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
+}
+
+/**
+ * Daily snapshot at the configured hour, and the workbook once a week on the
+ * same tick. Checked every 15 minutes rather than scheduled once, so a restart
+ * never skips the window — and both are keyed on the day or the week they
+ * belong to rather than on a timer, so a restart never doubles one either.
  */
 function startSchedule() {
   if (config.backup.hour === null || Number.isNaN(config.backup.hour)) return null;
   let lastRunDay = null;
+  let lastRunWeek = null;
+
   const tick = () => {
     const now = new Date();
+    if (now.getHours() !== config.backup.hour) return;
+
     const day = now.toISOString().slice(0, 10);
-    if (day === lastRunDay || now.getHours() !== config.backup.hour) return;
-    lastRunDay = day;
-    create({ kind: 'scheduled' })
-      .then((b) => console.log(`[backup] scheduled snapshot ${b.filename} (${b.sizeMb} MB)`))
-      .catch((err) => console.error('[backup] scheduled snapshot failed:', err.message));
+    if (day !== lastRunDay) {
+      lastRunDay = day;
+      create({ kind: 'scheduled' })
+        .then((b) => console.log(`[backup] scheduled snapshot ${b.filename} (${b.sizeMb} MB)`))
+        .catch((err) => console.error('[backup] scheduled snapshot failed:', err.message));
+    }
+
+    const week = weekKey(now);
+    if (week !== lastRunWeek && now.getDay() === config.backup.workbookDay) {
+      lastRunWeek = week;
+      createWorkbook({ kind: 'scheduled' })
+        .then((b) => console.log(`[backup] weekly workbook ${b.filename} — ${b.sheets} sheets (${b.sizeMb} MB)`))
+        .catch((err) => console.error('[backup] weekly workbook failed:', err.message));
+    }
   };
+
   const timer = setInterval(tick, 15 * 60_000);
   timer.unref();
   tick();
   return timer;
 }
 
-module.exports = { create, prune, list, fileFor, startSchedule, ensureDir };
+module.exports = { create, createWorkbook, prune, list, fileFor, startSchedule, ensureDir, weekKey };

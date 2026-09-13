@@ -117,6 +117,18 @@ router.post('/backups', adminOnly, wrap(async (req, res) => {
   res.status(201).json(b);
 }));
 
+/**
+ * Build the full workbook now rather than waiting for Sunday.
+ *
+ * The weekly one is written automatically; this is for the week the
+ * administrator wants it on a Wednesday because somebody asked a question.
+ */
+router.post('/backups/workbook', adminOnly, wrap(async (req, res) => {
+  const b = await backup.createWorkbook({ kind: 'manual', userId: req.user.id });
+  audit.log(req, 'backup_workbook', 'system', b.id, { filename: b.filename, sheets: b.sheets });
+  res.status(201).json(b);
+}));
+
 router.get('/backups/:filename/download', adminOnly, wrap((req, res) => {
   const file = backup.fileFor(req.params.filename);
   if (!file) throw notFound('That backup is no longer on the server.');

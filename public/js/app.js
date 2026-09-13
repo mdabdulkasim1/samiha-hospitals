@@ -340,6 +340,8 @@
             </div>
             <div class="spacer"></div>
             <div id="page-actions" class="btn-row"></div>
+            <button class="bell" id="downloads" title="Download this department's data"
+                    aria-label="Download data" hidden><span class="ico">⤓</span></button>
             <button class="bell" id="bell" title="Alerts" aria-label="Alerts">
               <span class="ico">🔔</span><span class="dot" id="bell-count" hidden></span>
             </button>
@@ -353,6 +355,7 @@
     document.getElementById('logout').addEventListener('click', APP.logout);
     document.getElementById('my-account').addEventListener('click', () => APP.navigate('account'));
     document.getElementById('bell').addEventListener('click', openAlerts);
+    wireDownloads();
     startAlertPolling();
 
     // On a phone the navigation is a drawer; on a desktop the button is hidden
@@ -526,6 +529,46 @@
     }
   }
   APP.reload = router;
+
+  /**
+   * Downloading the department's own data.
+   *
+   * In the top bar rather than on one screen, because it belongs to the person
+   * rather than to the page they happen to be on — and the pharmacist wanting
+   * their stock in a spreadsheet should not have to work out which of eleven
+   * tabs hides the button. Hidden entirely for anyone with nothing to
+   * download, which is nobody at present but will be the day a role is added.
+   */
+  async function wireDownloads() {
+    const btn = document.getElementById('downloads');
+    if (!btn) return;
+    let menu;
+    try { menu = await API.get('/api/exports'); } catch { return; }
+    if (!menu.departments.length && !menu.full) return;
+    btn.hidden = false;
+
+    btn.addEventListener('click', () => {
+      const book = (href, label, note) => `<a class="btn ghost block mb" href="${href}"
+          style="justify-content:space-between" download>
+          <span><b>${UI.esc(label)}</b><div class="muted small">${UI.esc(note)}</div></span>
+          <span>⤓ Excel</span></a>`;
+
+      UI.modal({
+        title: 'Download data',
+        size: 'narrow',
+        body: `<div class="alert info">A workbook of what this department holds, as it stands now.
+            It opens in Excel; it is not the backup the clinic is restored from.</div>
+          ${menu.departments.map((d) => book(
+            `/api/exports/${d.key}.xlsx`, d.label, `${d.sheets} sheet(s)`)).join('')}
+          ${menu.full ? `<h4 class="mt">Administrator</h4>
+            ${book('/api/exports/full/backup.xlsx', 'The whole clinic',
+              'Every department, plus staff and the audit log')}
+            <div class="muted small">A copy of this is written automatically once a week and kept
+              with the backups under Account &amp; System.</div>` : ''}`,
+        footer: '<button class="btn ghost" data-act="__close">Close</button>',
+      });
+    });
+  }
 
   /** Set the buttons in the top bar for the current view. */
   APP.actions = function (buttons) {

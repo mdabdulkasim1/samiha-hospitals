@@ -104,6 +104,10 @@ module.exports = {
     dir: path.resolve(root, env.BACKUP_DIR || './data/backups'),
     retention: Number(env.BACKUP_RETENTION || 14),
     hour: env.BACKUP_HOUR === '' ? null : Number(env.BACKUP_HOUR ?? 2),
+    // Which day the weekly workbook is written, 0 = Sunday. The clinic's
+    // quietest morning, so a book of every table is built when nobody is
+    // waiting on the database.
+    workbookDay: Number(env.BACKUP_WORKBOOK_DAY ?? 0),
     emailAttach: String(env.BACKUP_EMAIL_ATTACH || 'false').toLowerCase() === 'true',
   },
   whatsapp: {
