@@ -835,44 +835,51 @@ test('a clinic switches off what it does not do, without erasing it', async () =
   await api('PATCH', `/api/masters/lab-tests/${barium.id}`, { active: true }, 'admin');
 });
 
-test('the screening packages are sold as one line, naming what they cover', async () => {
+test('a health-check package is one line to sell and a morning\'s work to run', async () => {
   const { PACKAGES } = require('../src/db/diagnostics');
-  assert.strictEqual(PACKAGES.length, 3);
+  assert.ok(PACKAGES.length >= 9, `the clinic's own packages, got ${PACKAGES.length}`);
 
   /*
-   * The posters priced all three at 500. The September 2026 tariff prices them
-   * separately — two below the poster and one above — so the rate a patient is
-   * charged is the tariff's, not the poster's, and this checks the tariff.
+   * A package is advertised at a fixed price on a poster, so unlike every
+   * other item it carries that figure from the catalogue rather than from the
+   * rate card. What it must never do is charge for its parts as well.
    */
-  const { TARIFF } = require('../src/db/rates');
-  const tariffRate = (code) => (TARIFF.find((r) => r[0] === code) || [])[2];
-
-  for (const [code, title, price, covers] of PACKAGES) {
+  for (const [code, title, price, strapline, members, consults = []] of PACKAGES) {
     const row = db.prepare('SELECT * FROM lab_tests WHERE code = ?').get(code);
     assert.ok(row, `${code} reached the catalogue`);
-    assert.strictEqual(row.price, tariffRate(code), 'at the tariff rate');
-    assert.strictEqual(price, 500, 'and the poster figure it was loaded with is still on record');
+    assert.strictEqual(row.price, price, `${code} is on sale at the advertised price`);
     assert.strictEqual(row.bill_group, 'Health packages', 'in their own group');
-    assert.ok(row.name.startsWith(title));
-    assert.ok(row.name.endsWith(`(${covers})`), 'with the tests in brackets');
-    assert.match(row.ref_text, /^Covers: /);
+    assert.strictEqual(row.name, title);
+    assert.ok(row.ref_text.includes(strapline), 'the poster line is on record');
+
+    // Every member resolves to something the laboratory actually offers.
+    const seeded = db.prepare(
+      'SELECT test_code FROM lab_package_items WHERE package_code = ? ORDER BY sort_order'
+    ).all(code).map((r) => r.test_code);
+    assert.deepStrictEqual(seeded, members, `${code} knows what it contains`);
+    for (const m of members) {
+      assert.ok(db.prepare('SELECT 1 FROM lab_tests WHERE code = ?').get(m),
+        `${code} names ${m}, which is not on the catalogue`);
+      assert.ok(row.ref_text.includes(
+        db.prepare('SELECT name FROM lab_tests WHERE code = ?').get(m).name),
+      `${m} is printed on the package`);
+    }
+    for (const c of consults) assert.ok(row.ref_text.includes(c), `${c} is printed on the package`);
   }
 
   // On the counter's charge board as one pressable item at the package price.
   const board = (await api('GET', '/api/masters/catalogue', undefined, 'cashier')).body;
   const group = board.find((g) => g.group === 'Health packages');
   assert.ok(group, 'the group is on the board');
-  assert.strictEqual(group.items.length, 3);
-  assert.ok(group.items.every((i) => i.price === tariffRate(i.code)));
   assert.ok(group.items.every((i) => i.price > 0), 'every package is pressable at a real rate');
 
   // Health packages come early, where a walk-in asks for one.
   const order = board.map((g) => g.group);
   assert.ok(order.indexOf('Health packages') < order.indexOf('Blood tests'));
 
-  // Billed, it is one line — not the four tests it covers.
+  // Billed, it is one line — not the fourteen tests it covers.
   const patient = db.prepare('SELECT id FROM patients ORDER BY id LIMIT 1').get();
-  const pkg = db.prepare("SELECT * FROM lab_tests WHERE code = 'PKG-MAN'").get();
+  const pkg = db.prepare("SELECT * FROM lab_tests WHERE code = 'PKG-EXEC-M'").get();
   const inv = (await api('POST', '/api/billing/invoices',
     { patientId: patient.id, kind: 'opd' }, 'cashier')).body;
   const added = await api('POST', `/api/billing/invoices/${inv.id}/items`, {
@@ -880,8 +887,41 @@ test('the screening packages are sold as one line, naming what they cover', asyn
   }, 'cashier');
   assert.strictEqual(added.status, 201, JSON.stringify(added.body));
   assert.strictEqual(added.body.items.length, 1);
-  assert.strictEqual(added.body.net, tariffRate('PKG-MAN'),
-    'the package price, not the sum of its tests');
+  assert.strictEqual(added.body.net, pkg.price, 'the package price, not the sum of its tests');
+});
+
+test('ordering a package puts every test on the bench, and charges once', async () => {
+  const patient = db.prepare('SELECT id FROM patients ORDER BY id LIMIT 1').get();
+  const pkg = db.prepare("SELECT * FROM lab_tests WHERE code = 'PKG-EXEC-M'").get();
+
+  const order = await api('POST', '/api/lab/orders',
+    { patientId: patient.id, tests: [{ testId: pkg.id }] }, 'imran');
+  assert.strictEqual(order.status, 201, JSON.stringify(order.body));
+
+  const { items } = (await api('GET', `/api/lab/orders/${order.body.id}`, undefined, 'cashier')).body;
+  const ordered = items.filter((i) => !i.parent_item_id);
+  assert.strictEqual(ordered.length, 1, 'one thing was ordered');
+  assert.strictEqual(ordered[0].test_name, pkg.name);
+
+  // Its member tests hang off it, and their parameters off those.
+  const members = items.filter((i) => i.parent_item_id === ordered[0].id);
+  assert.ok(members.length >= 10, `the package expanded, got ${members.length} tests`);
+  const cbc = members.find((i) => /complete blood count/i.test(i.test_name));
+  assert.ok(cbc, 'the blood count is one of them');
+  assert.ok(items.filter((i) => i.parent_item_id === cbc.id).length > 10,
+    'and it brought its own parameters');
+
+  // The money: the package carries it, nothing underneath does.
+  assert.strictEqual(ordered[0].price, pkg.price);
+  assert.ok(items.filter((i) => i.parent_item_id).every((i) => i.price === 0),
+    'a package must not charge for its parts as well');
+  assert.strictEqual(items.reduce((t, i) => t + Number(i.price || 0), 0), pkg.price);
+
+  // And the counter is given one line to price, not seventy.
+  const pending = await api('GET', '/api/billing/diagnostics/pending', undefined, 'cashier');
+  const mine = pending.body.rows.find((r) => r.id === order.body.id);
+  assert.ok(mine, 'the order is at the counter');
+  assert.strictEqual(mine.items.length, 1);
 });
 
 /* --------------------------------------------------- what the money was for */

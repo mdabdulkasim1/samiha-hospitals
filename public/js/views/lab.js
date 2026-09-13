@@ -522,10 +522,12 @@
 
     // One parameter: the box, and beside it the unit and the range it is read
     // against, so nothing has to be remembered or looked up mid-list.
-    const valueRow = (i, indent) => `<tr>
-      <td${indent ? ' style="padding-left:1.6rem"' : ''}>
+    const indent = (depth) => (depth ? ` style="padding-left:${depth * 1.6}rem"` : '');
+
+    const valueRow = (i, depth) => `<tr>
+      <td${indent(depth)}>
         <b>${UI.esc(i.test_name)}</b>
-        ${indent ? '' : `<div class="muted small">${UI.esc(i.ref_range || '')} ${UI.esc(i.unit || '')}</div>`}</td>
+        ${depth ? '' : `<div class="muted small">${UI.esc(i.ref_range || '')} ${UI.esc(i.unit || '')}</div>`}</td>
       <td>${open(i)
         ? `<input type="text" data-item="${i.id}" value="${UI.esc(i.result_value || '')}"
              placeholder="${UI.esc(i.unit || 'value')}" autocomplete="off">`
@@ -536,21 +538,45 @@
       <td>${UI.statusBadge(i.status)}</td>
     </tr>`;
 
-    // A panel heading: what was ordered, and how much of it is done.
-    const panelRow = (i, kids) => {
-      const done = kids.filter((k) => k.result_value !== null && k.result_value !== '').length;
-      return `<tr class="panel-head">
-        <td colspan="4"><b>${UI.esc(i.test_name)}</b>
-          <span class="muted small"> · ${kids.length} parameters</span></td>
-        <td colspan="2" class="num muted small">${done} of ${kids.length} entered</td>
+    /*
+     * A heading: what was ordered, and how much of it is done. Counted over
+     * everything underneath rather than the row below, so a package reports
+     * its whole morning's progress and not how many tests it contains.
+     */
+    const leavesUnder = (item) => {
+      const kids = childrenOf.get(item.id) || [];
+      if (!kids.length) return [item];
+      return kids.flatMap(leavesUnder);
+    };
+
+    const panelRow = (i, kids, depth) => {
+      const leaves = leavesUnder(i);
+      const done = leaves.filter((k) => k.result_value !== null && k.result_value !== '').length;
+      const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+      const what = depth === 0 && kids.some((k) => (childrenOf.get(k.id) || []).length)
+        ? `${plural(kids.length, 'test')} · ${plural(leaves.length, 'parameter')}`
+        : plural(leaves.length, 'parameter');
+      return `<tr class="panel-head${depth ? ' panel-sub' : ''}">
+        <td colspan="4"${indent(depth)}><b>${UI.esc(i.test_name)}</b>
+          <span class="muted small"> · ${what}</span></td>
+        <td colspan="2" class="num muted small">${done} of ${leaves.length} entered</td>
       </tr>`;
     };
 
-    const rows = measured.filter((i) => !i.parent_item_id).map((i) => {
-      const kids = childrenOf.get(i.id) || [];
-      if (!kids.length) return valueRow(i, false);
-      return panelRow(i, kids) + kids.map((k) => valueRow(k, true)).join('');
-    }).join('');
+    /*
+     * Three levels, because three things nest: a health-check package holds
+     * tests, a panel holds parameters, and a single test holds itself. Written
+     * as a walk rather than as two loops so the depth is the data's business
+     * and not this function's.
+     */
+    const render = (item, depth) => {
+      const kids = childrenOf.get(item.id) || [];
+      if (!kids.length) return valueRow(item, depth);
+      return panelRow(item, kids, depth)
+        + kids.map((k) => render(k, depth + 1)).join('');
+    };
+    const rows = measured.filter((i) => !i.parent_item_id)
+      .map((i) => render(i, 0)).join('');
 
     const imaging = o.items.filter(isImaging).map((i) => `
       <fieldset><legend>${UI.esc(i.test_name)} ${UI.statusBadge(i.status)}</legend>

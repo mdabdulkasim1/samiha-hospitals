@@ -790,3 +790,7 @@ tbody tr.warn-row td { border-bottom-color: #F0DFC0; }
 /* A panel's heading in the bench's result-entry list: the parameters below it
    are what gets typed into, so the heading reads as a divider, not a row. */
 tbody tr.panel-head td { background: var(--bg); border-top: 2px solid var(--line); }
+
+/* A test heading inside a health-check package: subordinate to the package's
+   own heading above it, so three levels still read as a hierarchy. */
+tbody tr.panel-head.panel-sub td { background: transparent; border-top: 1px solid var(--line); }

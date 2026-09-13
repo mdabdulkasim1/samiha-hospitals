@@ -206,25 +206,45 @@ router.post('/orders', requireRole('doctor', 'lab', 'nurse'), wrap((req, res) =>
         ORDER BY sort_order, id`
     );
 
+    const membersOf = db.prepare(
+      `SELECT t.* FROM lab_package_items pi
+         JOIN lab_tests t ON t.code = pi.test_code
+        WHERE pi.package_code = ? ORDER BY pi.sort_order`
+    );
+
+    /*
+     * What was ordered, and everything that has to be done to report it.
+     *
+     * Three things can be ordered and they nest. A health-check package is one
+     * line on the bill and a dozen tests for the bench. A panel is one test and
+     * twenty-three parameters. A single test is itself. Expanding all of it
+     * here, at the moment of ordering, means the bench never gets one box to
+     * write a morning's work into, and every figure ends up a row of the
+     * patient's record with its own range and its own flag.
+     *
+     * Only what was actually ordered carries a rate. Everything underneath is
+     * free, because the thing above it is the charge — pricing the parts as
+     * well would bill the patient twice for the same test.
+     */
+    const expand = (test, parentId, depth) => {
+      const id = addItem.run(orderId, test.id, test.name, parentId ? 0 : test.price,
+        test.unit, refRangeText(test), parentId, 0).lastInsertRowid;
+      // A package holds tests; a test holds parameters. Nothing holds both, and
+      // the depth guard means a catalogue that ever names itself cannot loop.
+      if (depth > 2) return id;
+      const under = membersOf.all(test.code).concat(componentsOf.all(test.code));
+      under.forEach((child, i) => {
+        const kid = expand(child, id, depth + 1);
+        db.prepare('UPDATE lab_order_items SET sort_order = ? WHERE id = ?').run(i + 1, kid);
+      });
+      return id;
+    };
+
     for (const t of tests) {
       const testId = int(t.testId ?? t);
       const test = db.prepare('SELECT * FROM lab_tests WHERE id = ?').get(testId);
       if (!test) continue;
-      const parent = addItem.run(orderId, test.id, test.name, test.price, test.unit,
-        refRangeText(test), null, 0).lastInsertRowid;
-
-      /*
-       * A panel is ordered once and reported parameter by parameter. Expanding
-       * it here rather than on the bench screen means each parameter is a row
-       * of its own from the start: it gets its own value, its own range and its
-       * own flag, it can be charted on the patient's file over the years, and
-       * the technician is never asked to type twenty-three figures into one
-       * box. The parameters carry no price — the panel is the charge, and
-       * pricing them again would bill the patient twice for one test.
-       */
-      componentsOf.all(test.code).forEach((c, i) => {
-        addItem.run(orderId, c.id, c.name, 0, c.unit, refRangeText(c), parent, i + 1);
-      });
+      expand(test, null, 0);
     }
     return orderId;
   })();

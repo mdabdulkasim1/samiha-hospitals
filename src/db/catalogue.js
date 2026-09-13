@@ -64,6 +64,8 @@ function sync({ quiet = false } = {}) {
     ['CONS-2OP', 'Second opinion', 'consultation', 'Consultation', 600, 0],
     ['CONS-TELE', 'Teleconsultation', 'consultation', 'Consultation', 300, 0],
     ['CONS-REV', 'Review within 7 days', 'consultation', 'Consultation', 0, 0],
+    // Named on the health-check packages, and not a doctor's consultation.
+    ['CONS-DIET', 'Dietitian consultation', 'consultation', 'Consultation', 250, 0],
 
     ['PROC-DRESS', 'Wound dressing — small', 'procedure', 'Procedures & treatment', 250, 0],
     ['PROC-DRESSL', 'Wound dressing — large', 'procedure', 'Procedures & treatment', 450, 0],
@@ -217,19 +219,6 @@ function sync({ quiet = false } = {}) {
    * "chest PA and lateral", "left ankle", "PNS". Reported in words, so the ref
    * text says whose opinion the report carries rather than a range.
    */
-  /*
-   * The screening packages. Their name carries the tests they cover, in
-   * brackets, because a package is chosen off a poster and pressed at a counter
-   * — and whoever presses it should not have to remember what is in it.
-   */
-  for (const [code, name, price, covers] of diagnostics.PACKAGES) {
-    upsert('lab_tests', 'code', {
-      code, name: `${name} (${covers})`, category: 'lab', bill_group: 'Health packages',
-      sample_type: 'As per the tests covered', price, tat_hours: 12,
-      ref_text: `Covers: ${covers}. Reported as one package.`,
-    });
-  }
-
   diagnostics.IMAGING.forEach(([code, name, bill_group, category], i) => {
     const id = upsert('lab_tests', 'code', {
       code, name, category, bill_group, price: 0, tat_hours: 24, sort_order: i + 1,
@@ -252,6 +241,64 @@ function sync({ quiet = false } = {}) {
       component_of: panel, sort_order: i + 1,
     });
   });
+  /*
+   * The screening packages.
+   *
+   * Two things are written here. The package itself goes on the catalogue as
+   * one sellable line, priced as advertised — that is what the counter presses
+   * and what the patient is billed. And its membership goes to
+   * `lab_package_items`, which is what turns that one line into the morning's
+   * work when it is ordered: the bench gets the blood count, the lipid profile
+   * and the chest film as separate jobs rather than one box to write
+   * everything into.
+   *
+   * The name carries what the package covers, because a package is chosen off
+   * a poster and pressed at a counter, and whoever presses it should not have
+   * to remember what is in it. Consults are named there too — they are in the
+   * price — but they are never lab work.
+   *
+   * A package's membership is rewritten on every boot, because it is the
+   * clinic's published offer rather than anything the clinic edits here. Its
+   * rate is not: like every other rate, it is set once and then lived with.
+   */
+  const clearMembers = db.prepare('DELETE FROM lab_package_items WHERE package_code = ?');
+  const addMember = db.prepare(
+    'INSERT OR IGNORE INTO lab_package_items (package_code, test_code, sort_order) VALUES (?, ?, ?)'
+  );
+  const missing = [];
+
+  for (const [code, name, price, strapline, members, consults = []] of diagnostics.PACKAGES) {
+    const covers = [...members.map((m) => {
+      const t = db.prepare('SELECT name FROM lab_tests WHERE code = ?').get(m);
+      if (!t) { missing.push(`${code} → ${m}`); return null; }
+      return t.name;
+    }).filter(Boolean), ...consults];
+
+    upsert('lab_tests', 'code', {
+      code, name, category: 'lab', bill_group: 'Health packages',
+      sample_type: 'As per the tests covered', price, tat_hours: 12,
+      ref_text: `${strapline}. Covers: ${covers.join(', ')}. Reported as one package.`,
+    });
+
+    clearMembers.run(code);
+    members.forEach((m, i) => addMember.run(code, m, i + 1));
+  }
+
+  /*
+   * A package naming a test the catalogue does not have is a broken package:
+   * it would be sold, and the bench would never be asked to run that test.
+   * Loud rather than logged, because this can only happen when the two lists
+   * disagree — and it happened once already by seeding the packages before the
+   * radiology they name, which silently dropped the chest film from five of
+   * them and left nothing to notice.
+   */
+  if (missing.length) {
+    throw new Error(
+      `Health-check package names ${missing.length} test(s) the catalogue does not have: `
+      + `${missing.join(', ')}. A package must not be sellable with a test missing from it.`);
+  }
+
+
 
   /*
    * The tariff last, because it prices rows the blocks above may have just

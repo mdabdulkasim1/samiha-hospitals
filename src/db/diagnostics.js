@@ -38,6 +38,22 @@ const SINGLES = [
   ['NA', 'Sodium, serum', 'Blood tests', 'Serum', 'mmol/L', 135, 150, null, 6],
   ['CL', 'Chloride, serum', 'Blood tests', 'Serum', 'mmol/L', 92, 110, null, 6],
   ['TESTO', 'Testosterone, total', 'Blood tests', 'Serum', 'ng/dL', 171, 789, null, 24],
+
+  /*
+   * Named on the clinic's health-check packages and missing from the
+   * catalogue, so the packages below have something real to expand into.
+   * The last three report in words rather than figures, which is why they
+   * carry a reference text and no numeric bounds: nothing is flagged by
+   * comparison on a cytology report.
+   */
+  ['PSA', 'Prostate Specific Antigen (PSA), total', 'Blood tests', 'Serum',
+    'ng/mL', null, 4, '< 4.0 · age-related: 40-49 < 2.5, 50-59 < 3.5, 60-69 < 4.5, 70+ < 6.5', 24],
+  ['VDRL', 'VDRL / RPR (syphilis screening)', 'Blood tests', 'Serum',
+    null, null, null, 'Non-reactive', 24],
+  ['PAP', 'Pap smear (cervical cytology)', 'Blood tests', 'Cervical smear',
+    null, null, null, 'Reported by the Bethesda system', 72],
+  ['SEMEN', 'Semen analysis', 'Blood tests', 'Semen',
+    null, null, null, 'Reported against WHO 2021 lower reference limits', 24],
 ];
 
 /*
@@ -297,13 +313,72 @@ const IMAGING = [
  *
  * Columns: code, name, price, tests covered.
  */
+/*
+ * The clinic's health-check packages, as advertised.
+ *
+ * A package is one thing a patient buys and one line on the bill, and several
+ * tests the laboratory has to run. So each one names its members by catalogue
+ * code, and ordering a package puts every member on the order — the bench gets
+ * the blood count, the lipid profile and the chest film as separate work, each
+ * with its own result, rather than a single box labelled "Executive Health
+ * Checkup". The members carry no rate: the package is the charge.
+ *
+ * `consults` are the parts a doctor does, not the laboratory. They are in the
+ * price and are printed on the package, but they are not tests and never
+ * become lab work — a dietitian's appointment is not something the bench can
+ * report against.
+ *
+ * Columns: code, name, price, strapline, [member test codes], [consults]
+ */
 const PACKAGES = [
-  ['PKG-MAN', 'Common Man Package — Basic Health Screening', 500,
-    'CBC, Blood Sugar, Urine Routine, Uric Acid'],
-  ['PKG-WOMAN', 'Common Woman Package — Basic Health Screening', 500,
-    'CBC, Haemoglobin, Blood Sugar, Urine Routine, Blood Group & Rh'],
-  ['PKG-DIAB', 'Diabetic Package — Diabetes Health Check', 500,
-    'Fasting Blood Sugar, Post-Prandial Blood Sugar, HbA1c, Serum Creatinine'],
+  ['PKG-LIFESTYLE', 'Lifestyle Screening — Annual Wellness Check', 1499,
+    'Know your numbers early',
+    ['CBC', 'FBS', 'UREA', 'CREAT', 'LIPID', 'TSH', 'URINE', 'ECG12'],
+    ['Physician consult']],
+
+  ['PKG-EXEC-M', 'Executive Health Checkup — Male', 3999,
+    'Built for working men',
+    ['CBC', 'ESR', 'BLGRP', 'FBS', 'PPBS', 'HBA1C', 'LIPID', 'LFT', 'RFT', 'TSH',
+      'URINE', 'XR-CHEST', 'USG-ABD', 'ECG12'],
+    ['Physician consult', 'Dietitian consult']],
+
+  ['PKG-EXEC-F', 'Executive Health Checkup — Female', 4499,
+    'Built for working women',
+    ['CBC', 'ESR', 'BLGRP', 'FBS', 'PPBS', 'HBA1C', 'LIPID', 'LFT', 'RFT', 'TSH',
+      'URINE', 'XR-CHEST', 'ECG12', 'USG-ABD', 'USG-BRE'],
+    ['Physician consult', 'Gynaecologist consult', 'Dietitian consult']],
+
+  ['PKG-GERI-M', 'Geriatric Health Checkup — Male (60 and above)', 4799,
+    'Care that respects age',
+    ['CBC', 'ESR', 'BLGRP', 'FBS', 'PPBS', 'HBA1C', 'LIPID', 'LFT', 'RFT', 'TSH',
+      'PSA', 'URINE', 'XR-CHEST', 'ECG12', 'USG-ABD'],
+    ['Physician consult', 'Dietitian consult']],
+
+  ['PKG-GERI-F', 'Geriatric Health Checkup — Female (60 and above)', 4699,
+    'Care that respects age',
+    ['CBC', 'ESR', 'BLGRP', 'FBS', 'PPBS', 'HBA1C', 'LIPID', 'LFT', 'RFT', 'TSH',
+      'URINE', 'XR-CHEST', 'ECG12', 'USG-ABD', 'USG-BRE'],
+    ['Physician consult', 'Dietitian consult']],
+
+  ['PKG-CARD-EXEC', 'Executive Cardiac Check Up', 3699,
+    'A complete look at your heart',
+    ['CBC', 'BLGRP', 'HBA1C', 'LIPID', 'RFT', 'TSH', 'URINE', 'ECG12', 'ECHO'],
+    ['Cardiologist consult']],
+
+  ['PKG-CARD-BASIC', 'Basic Cardiac Check Up', 2199,
+    'Five tests, one clear answer',
+    ['FBS', 'PPBS', 'RFT', 'ECG12', 'ECHO'],
+    ['Cardiologist consult']],
+
+  ['PKG-WELLWOMAN', 'Well Women Check Up', 2899,
+    'Her health comes first',
+    ['CBC', 'ESR', 'RBS', 'UREA', 'CREAT', 'URINE', 'XR-CHEST', 'USG-ABD', 'PAP'],
+    ['Gynaecologist consult']],
+
+  ['PKG-PREMARITAL', 'Premarital Check Up', 2499,
+    'Start married life informed',
+    ['CBC', 'ESR', 'BLGRP', 'RBS', 'HIV', 'HBSAG', 'VDRL', 'URINE', 'SEMEN', 'USG-PELVF'],
+    ['Physician consult', 'Gynaecologist consult']],
 ];
 
 module.exports = { PANELS, SINGLES, COMPONENTS, IMAGING, PACKAGES };

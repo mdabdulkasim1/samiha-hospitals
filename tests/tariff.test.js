@@ -63,7 +63,10 @@ test('seeding leaves nothing in the catalogue unpriced', () => {
   assert.strictEqual(priceOf('CONS-FU'), 100);
   assert.strictEqual(priceOf('CBC'), 110);
   assert.strictEqual(priceOf('XR-CHEST'), 225);
-  assert.strictEqual(priceOf('PKG-MAN'), 299);
+  // A health-check package is advertised at a fixed price and carries it from
+  // the catalogue rather than the card.
+  assert.strictEqual(priceOf('PKG-LIFESTYLE'), 1499);
+  assert.strictEqual(priceOf('PKG-EXEC-F'), 4499);
 });
 
 test('a rate the clinic set by hand survives the tariff being applied again', () => {
@@ -103,7 +106,7 @@ test('a clinic already running receives a catalogue it never seeded', () => {
   // Wind one back to look like an install from before the diagnostics were
   // loaded: the panels and the radiology list simply are not there.
   const gone = db.prepare(
-    "DELETE FROM lab_tests WHERE code IN ('CBC-HB', 'XR-ANKLE', 'PKG-DIAB')"
+    "DELETE FROM lab_tests WHERE code IN ('CBC-HB', 'XR-ANKLE', 'PKG-EXEC-M')"
   ).run().changes;
   assert.strictEqual(gone, 3);
 
@@ -111,7 +114,8 @@ test('a clinic already running receives a catalogue it never seeded', () => {
   assert.strictEqual(report.added.tests, 3, 'the missing tests arrive');
   assert.strictEqual(priceOf('CBC-HB'), 60, 'priced from the card');
   assert.ok(priceOf('XR-ANKLE') > 0);
-  assert.ok(priceOf('PKG-DIAB') > 0);
+  // A package carries its advertised price from the catalogue, not the card.
+  assert.strictEqual(priceOf('PKG-EXEC-M'), 3999);
 
   // And a second boot changes nothing at all.
   const again = catalogue.sync({ quiet: true });

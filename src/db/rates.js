@@ -34,10 +34,29 @@ const TARIFF = [
   ['CONS-2OP',    600,   250],  // Second opinion
   ['CONS-TELE',   300,   100],  // Teleconsultation
 
-  // ---- Health packages (3 items, 1500 -> 1197)
-  ['PKG-MAN',     500,   299],  // Common Man Package - Basic Health Screening
-  ['PKG-WOMAN',   500,   349],  // Common Woman Package - Basic Health Screening
-  ['PKG-DIAB',    500,   549],  // Diabetic Package - Diabetes Health Check
+  /*
+   * The three ₹500 screening packages this list priced at 299/349/549 have
+   * been replaced by the clinic's own nine, which are advertised at a fixed
+   * price and carry it from the catalogue. They are off the card because they
+   * are off the catalogue.
+   */
+
+  /*
+   * Named on the clinic's health-check packages and previously not on the
+   * catalogue at all, so they had no rate. Benchmarked against the assays
+   * already on this list that run on the same bench: PSA and ferritin are the
+   * same immunoassay (550); a Pap smear is cytology and sits with the urine
+   * culture (450); VDRL is a slide agglutination, cheaper than the HBsAg
+   * screen (150); semen analysis is manual microscopy (300).
+   *
+   * They matter beyond their own line: the packages are advertised at a saving
+   * against what the tests cost singly, and a test with no rate makes that
+   * saving look smaller than it is.
+   */
+  ['PSA',           0,   550],  // Prostate Specific Antigen, total
+  ['VDRL',          0,   150],  // VDRL / RPR syphilis screening
+  ['PAP',           0,   450],  // Pap smear - cervical cytology
+  ['SEMEN',         0,   300],  // Semen analysis
 
   // ---- Procedures & treatment (24 items, 20400 -> 15010)
   ['PROC-BP',        50,    30],  // Blood pressure & vitals check

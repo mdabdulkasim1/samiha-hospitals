@@ -266,6 +266,18 @@ function migrate() {
    */
   ensureColumn('lab_order_items', 'parent_item_id', 'INTEGER REFERENCES lab_order_items(id)');
   ensureColumn('lab_order_items', 'sort_order', 'INTEGER NOT NULL DEFAULT 0');
+  /*
+   * What a health-check package contains. A package is one line on the bill
+   * and a morning's work for the laboratory, and this is the list that turns
+   * the first into the second when one is ordered.
+   */
+  db.exec(`CREATE TABLE IF NOT EXISTS lab_package_items (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    package_code TEXT NOT NULL,
+    test_code    TEXT NOT NULL,
+    sort_order   INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (package_code, test_code)
+  )`);
   backfillBillGroups();
 
   // Medicaments sit under HSN 3004 unless the formulary says otherwise; a GST
