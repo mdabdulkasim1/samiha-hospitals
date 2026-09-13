@@ -30,6 +30,7 @@
           <button class="active" data-tab="orders">Orders</button>
           ${APP.can(['lab', 'nurse', 'doctor'])
             ? '<button data-tab="record">Record tests done</button>' : ''}
+          ${APP.can(['lab']) ? '<button data-tab="reports">Reports</button>' : ''}
         </div>
         <div id="l-body">
           <div class="search-row">
@@ -103,12 +104,83 @@
       el.querySelectorAll('#l-tabs button').forEach((b) => b.addEventListener('click', () => {
         el.querySelectorAll('#l-tabs button').forEach((x) => x.classList.toggle('active', x === b));
         if (b.dataset.tab === 'record') return renderRecord(body);
+        if (b.dataset.tab === 'reports') return renderReports(body);
         return showOrders();
       }));
 
       showOrders();
     },
   });
+
+  // ---------------------------------------------------------- every report
+  /**
+   * Every report the laboratory has issued, in one place, with the print
+   * button beside it.
+   *
+   * Until now a report could only be printed from inside the order that
+   * produced it, which is fine on the day and useless a week later — a patient
+   * comes back to the counter for a copy and the technician has to remember
+   * which order it was. So: the whole run of them, newest first, found by the
+   * patient's name, their register number or the order number.
+   *
+   * The bench's, and the administrator's through it. Not the front desk's:
+   * handing a result over is a clinical act, and the person doing it should be
+   * the one who can read it.
+   */
+  async function renderReports(host) {
+    host.innerHTML = `
+      <div class="search-row">
+        <input type="search" id="rp-q" autocomplete="off"
+               placeholder="Patient, register number or order number">
+      </div>
+      <div class="alert info">Reports already verified and released. Printing one issues the
+        patient's copy — it carries every parameter with its reference range, the result as it
+        was entered, and the space for the laboratory's stamp.</div>
+      <div class="card"><div class="card-body tight" id="rp-list">${UI.loading()}</div></div>`;
+
+    const listHost = host.querySelector('#rp-list');
+    const input = host.querySelector('#rp-q');
+
+    const load = async () => {
+      listHost.innerHTML = UI.loading();
+      // Searched in the query, not here: a copy of a report from last year has
+      // to be findable, and it is long out of any recent window.
+      const res = await API.get('/api/lab/orders'
+        + API.qs({ status: 'reported', q: input.value.trim() }));
+      const rows = res.rows || [];
+      const term = input.value.trim();
+
+      listHost.innerHTML = UI.table([
+        { label: 'Order', render: (o) => `<code>${UI.esc(o.order_no)}</code>` },
+        { label: 'Patient', render: (o) => `<b>${UI.esc(o.patient_name)}</b>` +
+          `<div class="muted small">${UI.esc(o.uhid)} · ${UI.esc(o.age_years || '—')}${
+            UI.esc((o.gender || '').charAt(0).toUpperCase())}</div>` },
+        { label: 'Tests', render: (o) => `<div class="small">${UI.esc(o.tests || '')}</div>` },
+        { label: 'Referred by', render: (o) => UI.esc(o.doctor_name || '—') },
+        { label: 'Reported', render: (o) => UI.esc(UI.dateTime(o.reported_at || o.ordered_at)) },
+        { label: '', render: (o) =>
+          `<button class="btn ghost sm" data-print="${o.id}">Print report</button>` },
+      ], rows, { emptyText: term
+        ? 'No released report matches that.'
+        : 'No reports have been released yet.' });
+
+      /*
+       * The click has to open the window itself. A browser only allows a print
+       * window from a real click, and an await in between loses that
+       * permission — so the window is claimed here and handed over.
+       */
+      listHost.querySelectorAll('[data-print]').forEach((b) => b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        APP.printLabReport(Number(b.dataset.print), UI.openPrintWindow());
+      }));
+      // The row itself still opens the order, for anyone wanting the detail.
+      UI.bindRows(listHost, rows, (o) => openOrder(o.id));
+    };
+
+    let t;
+    input.addEventListener('input', () => { clearTimeout(t); t = setTimeout(load, 220); });
+    await load();
+  }
 
   // ------------------------------------------------------ recording the work
   /**
@@ -686,6 +758,20 @@
 
     UI.printSheet(`${UI.sheetStyles()}
       <style>
+        /*
+         * Column widths, because a reference range is often a sentence. A lipid
+         * profile publishes "< 150 normal · 150-199 borderline high · ..." and
+         * left to itself the browser gives that column the narrowest share,
+         * wrapping one range over six lines and making the sheet twice as long
+         * as it needs to be.
+         */
+        .lr-tbl col.c-test { width: 30%; }
+        .lr-tbl col.c-val  { width: 11%; }
+        .lr-tbl col.c-unit { width: 13%; }
+        .lr-tbl col.c-ref  { width: 37%; }
+        .lr-tbl col.c-flag { width: 9%; }
+        .lr-tbl td { font-size: 8.6px; }
+        .lr-tbl td:nth-child(4) { font-size: 7.8px; line-height: 1.35; color: #4A5A62; }
         .lr-test { font-weight: 700; }
         .lr-val { font-weight: 700; }
         .lr-high { color: #B03A2E; }
@@ -717,7 +803,9 @@
             UI.esc(o.doctor_name || o.doctor_code || '—')}</div></div>
         </div>
 
-        ${measured.length ? `<table>
+        ${measured.length ? `<table class="lr-tbl">
+          <colgroup><col class="c-test"><col class="c-val"><col class="c-unit">
+            <col class="c-ref"><col class="c-flag"></colgroup>
           <thead><tr><th>Investigation</th><th class="num">Result</th>
             <th>Unit</th><th>Reference range</th><th class="num">Flag</th></tr></thead>
           <tbody>${printRows(measured)}</tbody>
@@ -741,7 +829,16 @@
 
         <div class="stamp-row">
           <div class="stamp"><div class="box"></div>
-            <div class="cap">Lab in-charge · stamp &amp; signature</div></div>
+            <div class="cap">
+              ${o.performed_by ? `<b>${UI.esc(o.performed_by.name)}</b><br>Performed by` : 'Performed by'}
+            </div></div>
+          <div class="stamp"><div class="box"></div>
+            <div class="cap">
+              ${o.verified_by
+                ? `<b>${UI.esc(o.verified_by.name)}</b><br>Verified &amp; released${
+                    o.reported_at ? ` · ${UI.esc(UI.dateTime(o.reported_at))}` : ''}`
+                : 'Lab in-charge · stamp &amp; signature'}
+            </div></div>
         </div>
 
         <div class="note">

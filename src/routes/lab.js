@@ -48,14 +48,28 @@ function refRangeText(test) {
   return null;
 }
 
+/**
+ * How far outside its range a result is.
+ *
+ * "Critical" is a long way out — well under the floor or well over the
+ * ceiling — and the margin is taken as a proportion of the bound itself,
+ * which works for every range that is a measurement.
+ *
+ * It does not work where the bound is zero. "None expected" is written as
+ * 0 – 0 for the things a urine should not contain at all, and a proportion of
+ * zero is zero, so a single hyaline cast — common, and not news — came out
+ * critical. Where the bound is zero the result is simply outside the range:
+ * present when it should be absent, which the bench reads as abnormal and
+ * grades itself.
+ */
 function flagFor(test, value) {
   const n = Number(value);
   if (Number.isNaN(n)) return null;
   if (test.ref_low !== null && test.ref_low !== undefined && n < test.ref_low) {
-    return n < test.ref_low * 0.6 ? 'critical' : 'low';
+    return test.ref_low !== 0 && n < test.ref_low * 0.6 ? 'critical' : 'low';
   }
   if (test.ref_high !== null && test.ref_high !== undefined && n > test.ref_high) {
-    return n > test.ref_high * 1.6 ? 'critical' : 'high';
+    return test.ref_high !== 0 && n > test.ref_high * 1.6 ? 'critical' : 'high';
   }
   return 'normal';
 }
@@ -70,6 +84,18 @@ router.get('/orders', viewRoles, wrap((req, res) => {
    * cash desk. Left off, the caller gets both and reads the flag per row.
    */
   const gate = str(req.query.gate, '');
+  /*
+   * Searching the whole history rather than the window.
+   *
+   * The list is capped, which is right for a worklist — the bench wants what
+   * is in front of it. But the reports list is the other case: somebody comes
+   * back to the counter for a copy of a report from last year, and filtering
+   * the most recent three hundred orders in the browser would never find it.
+   * So the search runs in the query, across the patient, their register number
+   * and the order number.
+   */
+  const q = str(req.query.q, '');
+  const like = `%${q}%`;
   const rows = db.prepare(
     `SELECT o.*, p.uhid, (p.first_name || ' ' || COALESCE(p.last_name,'')) AS patient_name,
             p.age_years, p.gender, u.name AS doctor_name, dp.doctor_code, v.visit_no, a.ip_no,
@@ -89,9 +115,12 @@ router.get('/orders', viewRoles, wrap((req, res) => {
       WHERE (? IS NULL OR o.status = ?) AND (? IS NULL OR o.visit_id = ?) AND (? IS NULL OR o.patient_id = ?)
         AND (? = '' OR (? = 'released' AND o.released_at IS NOT NULL)
                     OR (? = 'awaiting' AND o.released_at IS NULL AND o.status != 'cancelled'))
+        AND (? = '' OR o.order_no LIKE ? OR p.uhid LIKE ?
+             OR (p.first_name || ' ' || COALESCE(p.last_name,'')) LIKE ?)
       ORDER BY CASE o.priority WHEN 'stat' THEN 0 WHEN 'urgent' THEN 1 ELSE 2 END, o.id DESC
       LIMIT 300`
-  ).all(status, status, visitId, visitId, patientId, patientId, gate, gate, gate);
+  ).all(status, status, visitId, visitId, patientId, patientId, gate, gate, gate,
+        q, like, like, like);
 
   // What an order comes to is the counter's business. The bench reads this
   // list to know what to run and who for.
@@ -390,10 +419,34 @@ router.get('/orders/:id/report', viewRoles, wrap((req, res) => {
   // An X-ray or a scan is a narrative, not a number, and the printed report has
   // to know which it is holding.
   order.items = db.prepare(
-    `SELECT i.*, t.category, t.sample_type
-       FROM lab_order_items i LEFT JOIN lab_tests t ON t.id = i.test_id
-      WHERE i.order_id = ? ORDER BY i.id`
+    `SELECT i.*, t.category, t.sample_type,
+            ru.name AS result_by_name, vu.name AS verified_by_name
+       FROM lab_order_items i
+       LEFT JOIN lab_tests t ON t.id = i.test_id
+       LEFT JOIN users ru ON ru.id = i.result_by
+       LEFT JOIN users vu ON vu.id = i.verified_by
+      -- A panel keeps its parameters directly beneath it on the printed sheet.
+      WHERE i.order_id = ?
+      ORDER BY COALESCE(i.parent_item_id, i.id), i.sort_order, i.id`
   ).all(id);
+
+  /*
+   * Who is answerable for this sheet.
+   *
+   * A report leaving the building with an unattributed blank box beside the
+   * word "signature" is a report nobody has put their name to. The box stays —
+   * the clinic's stamp goes in it by hand — but the names are printed beside
+   * it, so a reader elsewhere knows who ran the sample and who released it
+   * without having to decipher a signature.
+   */
+  const signer = (col) => db.prepare(
+    `SELECT u.name, u.role FROM lab_order_items i JOIN users u ON u.id = i.${col}
+      WHERE i.order_id = ? AND i.${col} IS NOT NULL
+      ORDER BY i.${col === 'verified_by' ? 'verified_at' : 'result_at'} DESC LIMIT 1`
+  ).get(id) || null;
+  order.performed_by = signer('result_by');
+  order.verified_by = signer('verified_by');
+
   res.json(order);
 }));
 

@@ -381,8 +381,10 @@ router.get('/catalogue', wrap((req, res) => {
          FROM services ${all ? '' : 'WHERE active = 1'}`
     ).all(),
     ...db.prepare(
+      // The range travels with the test: the rate card is where the clinic
+      // reviews and corrects it.
       `SELECT id, code, name, bill_group, price, 0 AS tax_pct, 'test' AS kind, category,
-              component_of, active
+              component_of, active, unit, ref_low, ref_high, ref_text
          FROM lab_tests ${all ? '' : `WHERE active = 1 AND ${SELLABLE}`}`
     ).all(),
   ];
@@ -427,16 +429,54 @@ router.patch('/services/:id', adminOnly, wrap((req, res) => {
   res.json(db.prepare('SELECT * FROM services WHERE id = ?').get(id));
 }));
 
+/**
+ * Editing a test on the catalogue.
+ *
+ * The reference range is editable here, which it needs to be. NABH asks a
+ * laboratory to establish or verify its own intervals for its own analysers,
+ * methods and population and to have the pathologist authorise them, and
+ * ranges move with the kit — so the figures shipped with this system are a
+ * starting point that the clinic must be able to correct. A range the clinic
+ * sets is never overwritten by an update.
+ *
+ * A field left out of the request is left alone; sending null clears it,
+ * which is how a numeric bound is removed from a test that should not be
+ * flagged by comparison at all.
+ */
 router.patch('/lab-tests/:id', requireRole('admin', 'lab'), wrap((req, res) => {
   const id = int(req.params.id);
   const row = db.prepare('SELECT * FROM lab_tests WHERE id = ?').get(id);
   if (!row) throw notFound('Test not found');
   const price = req.body.price === undefined ? row.price : num(req.body.price);
   if (price < 0) throw badRequest('A rate cannot be negative.');
-  db.prepare('UPDATE lab_tests SET name = ?, price = ?, bill_group = ?, active = ? WHERE id = ?')
-    .run(str(req.body.name, row.name), price, str(req.body.billGroup, row.bill_group),
-         req.body.active === undefined ? row.active : (req.body.active ? 1 : 0), id);
-  audit.log(req, 'update', 'lab_test', id, { from: row.price, to: price });
+
+  const bound = (key, current) => {
+    if (req.body[key] === undefined) return current;
+    if (req.body[key] === null || req.body[key] === '') return null;
+    return num(req.body[key]);
+  };
+  const refLow = bound('refLow', row.ref_low);
+  const refHigh = bound('refHigh', row.ref_high);
+  // A floor at or above its ceiling would flag every result the bench enters.
+  if (refLow !== null && refHigh !== null && refLow > refHigh) {
+    throw badRequest('The low end of the range cannot be above the high end.');
+  }
+
+  db.prepare(
+    `UPDATE lab_tests
+        SET name = ?, price = ?, bill_group = ?, active = ?,
+            unit = ?, ref_low = ?, ref_high = ?, ref_text = ?
+      WHERE id = ?`
+  ).run(str(req.body.name, row.name), price, str(req.body.billGroup, row.bill_group),
+        req.body.active === undefined ? row.active : (req.body.active ? 1 : 0),
+        req.body.unit === undefined ? row.unit : (str(req.body.unit) || null),
+        refLow, refHigh,
+        req.body.refText === undefined ? row.ref_text : (str(req.body.refText) || null), id);
+
+  audit.log(req, 'update', 'lab_test', id, {
+    from: { price: row.price, refLow: row.ref_low, refHigh: row.ref_high, refText: row.ref_text },
+    to: { price, refLow, refHigh, refText: req.body.refText === undefined ? row.ref_text : req.body.refText },
+  });
   res.json(db.prepare('SELECT * FROM lab_tests WHERE id = ?').get(id));
 }));
 

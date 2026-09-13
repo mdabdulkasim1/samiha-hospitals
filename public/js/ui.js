@@ -529,7 +529,9 @@
         .sheet .num { text-align: right; white-space: nowrap; }
 
         /* Left blank on purpose: the doctor stamps and signs after printing. */
-        .sheet .stamp-row { margin-top: 16px; display: flex; justify-content: flex-end; }
+        .sheet .stamp-row {
+          margin-top: 16px; display: flex; justify-content: flex-end; gap: 10mm;
+        }
         .sheet .stamp { text-align: center; width: 58mm; }
         .sheet .stamp .box {
           height: 21mm; border: 1px dashed #B9C6CC; border-radius: 3px;
@@ -542,6 +544,12 @@
         .sheet .stamp .cap {
           margin-top: 4px; font-size: 7.5px; color: #8B9AA2;
           letter-spacing: .9px; text-transform: uppercase; font-weight: 600;
+          line-height: 1.5;
+        }
+        /* The signer's name reads as a name: it is a person, not a caption. */
+        .sheet .stamp .cap b {
+          display: block; font-size: 9px; color: #16232B;
+          letter-spacing: 0; text-transform: none; font-weight: 700;
         }
         /* The word after a BMI — "normal", "overweight" — reads as a note on
            the figure, not as part of it. */

@@ -89,11 +89,22 @@
                 ? `<input type="checkbox" class="offer-input" title="Does the clinic do this?"
                      data-kind="${i.kind}" data-id="${i.id}"${i.active ? ' checked' : ''}>`
                 : (i.active ? UI.badge('Yes', 'ok') : UI.badge('No', 'warn'))) },
+              /*
+               * The reference range, which is the laboratory's to set. NABH
+               * asks a lab to verify its own intervals against its own
+               * analysers and have the pathologist authorise them, and a range
+               * moves with the kit — so what ships here is a starting point
+               * and the clinic has to be able to correct it.
+               */
+              { label: 'Reference range', render: (i) => (i.kind !== 'test' ? '' : (mayEdit
+                ? `<button class="btn ghost sm" data-range="${i.id}">${
+                    rangeLabel(i)}</button>`
+                : UI.esc(rangeLabel(i)))) },
             ], g.items)}</div>
           </div>`).join('')
           : UI.empty('Nothing matches that.', '🔍');
 
-        if (mayEdit) { wireRates(host, groups); wireOffered(host, groups); }
+        if (mayEdit) { wireRates(host, groups); wireOffered(host, groups); wireRanges(host, groups); }
       };
 
       el.querySelector('#rt-q').addEventListener('input', (e) => draw(e.target.value));
@@ -169,6 +180,80 @@
         go.disabled = false;
       }
     });
+  }
+
+  /** The range as it reads on a report, or an invitation to set one. */
+  function rangeLabel(i) {
+    if (i.ref_text) return i.ref_text.length > 38 ? `${i.ref_text.slice(0, 36)}…` : i.ref_text;
+    if (i.ref_low != null && i.ref_high != null) return `${i.ref_low} – ${i.ref_high} ${i.unit || ''}`.trim();
+    if (i.ref_low != null) return `> ${i.ref_low} ${i.unit || ''}`.trim();
+    if (i.ref_high != null) return `< ${i.ref_high} ${i.unit || ''}`.trim();
+    return 'not set';
+  }
+
+  /**
+   * Setting a test's reference range.
+   *
+   * Two things go in, and they do different jobs. The printed range is what
+   * appears on the patient's report and may be a sentence, because that is how
+   * some guidelines state it. The low and high are what a result is flagged
+   * against, and they have to be numbers. A test can have both — a lipid
+   * profile prints its bands and is flagged on the first of them.
+   */
+  function wireRanges(host, groups) {
+    host.querySelectorAll('[data-range]').forEach((btn) => btn.addEventListener('click', () => {
+      const id = btn.dataset.range;
+      let item = null;
+      for (const g of groups) {
+        const hit = g.items.find((i) => i.kind === 'test' && String(i.id) === id);
+        if (hit) { item = hit; break; }
+      }
+      if (!item) return;
+
+      UI.modal({
+        title: item.name,
+        size: 'narrow',
+        body: `
+          <div class="alert info">The figures shipped with this system are the ordinary adult
+            intervals. Your laboratory verifies them against its own analysers and methods, and
+            the pathologist in charge authorises them — a range you set here is never overwritten
+            by an update.</div>
+          ${UI.field({ name: 'unit', label: 'Unit', value: item.unit || '',
+            placeholder: 'g/dL, mg/dL, %…' })}
+          <div class="grid c2">
+            ${UI.field({ name: 'refLow', label: 'Low', type: 'number', step: 'any',
+              value: item.ref_low != null ? item.ref_low : '', placeholder: 'no lower limit' })}
+            ${UI.field({ name: 'refHigh', label: 'High', type: 'number', step: 'any',
+              value: item.ref_high != null ? item.ref_high : '', placeholder: 'no upper limit' })}
+          </div>
+          <div class="muted small mb">A result is flagged low or high against these. Leave a box
+            empty where the test has no limit that side.</div>
+          ${UI.field({ name: 'refText', label: 'Printed on the report', rows: 2,
+            value: item.ref_text || '',
+            placeholder: 'e.g. < 150 normal · 150–199 borderline high' })}
+          <div class="muted small">Left empty, the report prints the low and high above.</div>`,
+        footer: `<button class="btn ghost" data-act="__close">Cancel</button>
+          <button class="btn" data-act="save">Save the range</button>`,
+        async onAction(act, modal) {
+          if (act !== 'save') return;
+          const v = UI.formValues(modal);
+          const low = v.refLow === '' ? null : Number(v.refLow);
+          const high = v.refHigh === '' ? null : Number(v.refHigh);
+          if (low !== null && high !== null && low > high) {
+            UI.err('The low end cannot be above the high end.');
+            return 'keep';
+          }
+          try {
+            const saved = await API.patch(`/api/masters/lab-tests/${id}`, {
+              unit: v.unit, refLow: low, refHigh: high, refText: v.refText,
+            });
+            Object.assign(item, saved);
+            btn.textContent = rangeLabel(item);
+            UI.ok(`${saved.name} — range saved.`);
+          } catch (err) { UI.err(err.message); return 'keep'; }
+        },
+      });
+    }));
   }
 
   /** The panel an analyte belongs to, by name rather than by code. */

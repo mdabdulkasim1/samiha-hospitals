@@ -136,6 +136,44 @@ are flagged on the printed report against the reference range.
 
 Verifying the **last** open order moves the patient on to the cashier by itself.
 
+### Issuing the report
+
+**Diagnostics → Reports** is every report the laboratory has released, newest
+first, with **Print report** beside each one. Find a report by the patient's
+name, their register number or the order number — the search runs over the
+whole history, so a patient coming back months later for a copy is one search
+away. The bench's screen, and the administrator's; not the front desk's,
+because handing a result over is a clinical act.
+
+The printed sheet carries, for every test and every parameter of a panel: the
+result as the technician entered it, the unit, the reference range it is read
+against, and the flag. Anything outside its range is listed again in its own
+block so it cannot be missed. At the foot are two boxes for the laboratory's
+stamp, each with a name printed under it — who performed the test and who
+verified and released it — so a report travelling to another hospital says who
+is answerable for it without anybody having to decipher a signature.
+
+### About the reference ranges
+
+The ranges in the catalogue are the ordinary adult intervals, and where a
+guideline publishes bands rather than a pair of numbers the sheet prints the
+bands — a lipid profile reads "< 150 normal · 150–199 borderline high" the way
+the guideline states it.
+
+**These are a starting point, not a certification.** NABH requires the
+laboratory to establish or verify its own reference intervals for its own
+analysers, methods and population, and to have them authorised by the
+pathologist in charge. Ranges vary by method and by kit. Before the clinic
+issues reports to patients, the pathologist should review the catalogue and
+correct anything that does not match the kits in use.
+
+Every range is editable on **Services & Rates**: search for the test and click
+the range beside it. The unit, the low and high a result is flagged against,
+and the line that prints on the report are all set there, and a range the
+clinic sets is never overwritten by a catalogue update. A floor above its
+ceiling is refused, since it would flag every result the bench entered.
+
+
 ### A panel is entered parameter by parameter
 
 Most of what the clinic runs is a panel: a Complete Blood Count is one line on

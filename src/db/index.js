@@ -283,6 +283,56 @@ function migrate() {
  * "radiology" covers both the X-ray room and the ultrasound room and a cashier
  * looking for one does not want to wade through the other.
  */
+/*
+ * Reference bounds for the tests whose range is written out rather than
+ * numbered.
+ *
+ * A good part of the catalogue publishes the clinical cut-off — "< 150 normal
+ * · 150-199 borderline high" for triglycerides, "> 90" for eGFR — because that
+ * is how the guideline states it and how the report should print it. It stayed
+ * as text and no low or high was ever set, and the flagging compares numbers.
+ * So every one of those results came back normal: an LDL of 250 printed with a
+ * green "Normal" against it, which is worse than printing no flag at all.
+ *
+ * The text is left exactly as it is, since it is what the report prints and it
+ * says more than a pair of numbers can. Only the bounds are filled in, and
+ * only where they were empty, so anything the clinic has set stands. Run once
+ * and remembered, so a bound a pathologist later clears stays cleared.
+ *
+ * Called at the end of the catalogue sync rather than alongside the other
+ * migrations: on a fresh database those run before anything has been seeded,
+ * so there would be no tests to read and the "already done" mark would be
+ * written against an empty table — the bounds would never be filled at all.
+ */
+function deriveReferenceBounds() {
+  const KEY = 'lab.ref_bounds_derived';
+  if (db.prepare('SELECT 1 FROM settings WHERE key = ?').get(KEY)) return;
+
+  const { parse } = require('../lib/refrange');
+  const rows = db.prepare(
+    `SELECT id, code, ref_text FROM lab_tests
+      WHERE ref_low IS NULL AND ref_high IS NULL AND ref_text IS NOT NULL AND ref_text <> ''`
+  ).all();
+
+  const set = db.prepare('UPDATE lab_tests SET ref_low = ?, ref_high = ? WHERE id = ?');
+  let filled = 0;
+  for (const t of rows) {
+    const { low, high } = parse(t.ref_text);
+    if (low === null && high === null) continue;
+    // A floor at or above the ceiling is a range read wrongly; leave it alone
+    // rather than flag every result against nonsense.
+    if (low !== null && high !== null && low >= high) continue;
+    set.run(low, high, t.id);
+    filled += 1;
+  }
+
+  db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)')
+    .run(KEY, new Date().toISOString());
+  if (filled) {
+    console.log(`[migrate] ${filled} test(s) can now flag a result — bounds read from the range already published against them.`);
+  }
+}
+
 function backfillBillGroups() {
   const set = (table, group, where, params = []) =>
     db.prepare(`UPDATE ${table} SET bill_group = ? WHERE (bill_group IS NULL OR bill_group = '') AND ${where}`)
@@ -311,4 +361,7 @@ function tx(fn) {
 // idempotent and removes any module-ordering hazard around prepared statements.
 migrate();
 
-module.exports = { db, migrate, tx, ensureColumn, backfillDoctorCodes, backfillBillGroups };
+module.exports = {
+  db, migrate, tx, ensureColumn, backfillDoctorCodes, backfillBillGroups,
+  deriveReferenceBounds,
+};

@@ -267,6 +267,14 @@ function sync({ quiet = false } = {}) {
   const tariff = rates.apply(db, { revalue: !published });
 
   /*
+   * Now that every test and every panel parameter is on the catalogue, give
+   * the ones whose range is written out a pair of numbers to be flagged
+   * against. Here rather than with the migrations, which run before any of
+   * this exists.
+   */
+  require('./index').deriveReferenceBounds();
+
+  /*
    * A doctor's own consultation fee is quoted at the front desk all day, and
    * it sat outside the rate card entirely — every profile still carrying the
    * figure it was set up with. Bills now take the fee from the card, so the
