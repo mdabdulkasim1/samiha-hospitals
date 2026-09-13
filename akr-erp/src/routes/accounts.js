@@ -437,9 +437,16 @@ router.patch('/expenses/:id', bookkeeper, wrap(async (req, res) => {
     partner_id: req.body.partner_id === undefined
       ? (order ? (row.partner_id || order.partner_id) : row.partner_id)
       : (req.body.partner_id || null),
-    enquiry_id: req.body.enquiry_id === undefined
-      ? (order ? (row.enquiry_id || order.enquiry_id) : row.enquiry_id)
-      : (req.body.enquiry_id || null),
+    /*
+     * The job. One selector on the screen sends both the order and the job, so
+     * an LPO chosen there arrives with an empty enquiry beside it — and the
+     * job must follow the LPO rather than be cleared by that blank.
+     */
+    enquiry_id: (() => {
+      const sent = req.body.enquiry_id === undefined ? undefined : (req.body.enquiry_id || null);
+      if (touchedOrder) return sent || (order ? order.enquiry_id : null);
+      return sent === undefined ? row.enquiry_id : sent;
+    })(),
     po_id: touchedOrder ? (order ? order.po_id : null) : row.po_id,
     so_id: touchedOrder ? (order ? order.so_id : null) : row.so_id,
     payee: v.str(req.body.payee, row.payee),

@@ -372,6 +372,23 @@ test('an expense books against an LPO, and lands on that supplier and that job',
   });
   assert.equal(byHand.partner_id, other.id, 'a hand-set account stands');
 
+  /*
+   * The form is one selector now, so it sends the order and an empty job
+   * together. The job has to follow the LPO rather than be cleared by that
+   * blank — on the way in and on an edit alike.
+   */
+  const oneBox = await admin.post('/api/accounts/expenses', {
+    po_id: lpo.id, enquiry_id: '', so_id: '',
+    description: 'Freight — one-box form', amount: 300,
+  });
+  assert.equal(oneBox.enquiry_id, lpo.enquiry_id, 'the job follows the LPO, not the blank');
+  await admin.patch(`/api/accounts/expenses/${oneBox.id}`,
+    { po_id: lpo.id, enquiry_id: '', so_id: '', amount: 350 });
+  const edited = await admin.get(`/api/accounts/expenses?po_id=${lpo.id}`);
+  const still = edited.rows.find((r) => r.id === oneBox.id);
+  assert.equal(still.enquiry_id, lpo.enquiry_id, 'and it survives an edit through the same box');
+  assert.equal(still.amount, 350);
+
   // An LPO that does not exist is refused rather than quietly ignored.
   await assert.rejects(
     () => admin.post('/api/accounts/expenses',

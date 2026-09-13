@@ -549,12 +549,14 @@ freight in), a **client's** account (a site visit, testing for their job), or to
 overheads: rent, salaries, the trade licence. The picker on the expense form says so in those words,
 and the expense list can be filtered by the account carrying it.
 
-**Or booked against an LPO, which is usually easier** — and **every LPO is there, both ways**:
+**The job is chosen by its LPO number**, in one box, because that is the number on the paper in
+somebody's hand:
 
 ```
-Against the LPO
-  Our LPOs — out to the manufacturers      AKR-FD26-001 — Al Manar Steel Fabrication L.L.C
-  Clients' LPOs — in to us                 ASC/LPO/2026/0912 — Al Sahra Contracting L.L.C
+Against the job — LPO no.
+  Our LPOs — out to the manufacturers    AKR · AKR-FD26-001 — Al Manar Steel Fabrication L.L.C
+  Clients' LPOs — in to us               AKR · ASC/LPO/2026/0912 — Al Sahra Contracting L.L.C
+  Jobs with no LPO on them yet           AKR · AKR-RFQ-092026-004 — Gulf Valve Manufacturing
 ```
 
 Money is spent against both — clearing, freight and inspection on our order to a maker; a site
