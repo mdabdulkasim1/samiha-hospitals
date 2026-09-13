@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="30 30 342 312" role="img"
+     aria-label="AKR General Trading">
+  <!--
+    The AKR mark, drawn here in the source so the ERP is branded on the first
+    run with nothing uploaded and no volume mounted.
+
+    It is a rendition of the company's emblem, not the artwork file. To put the
+    real one in: upload it under Masters -> Logo, or - on a deployment with no
+    volume, where an upload cannot survive a deploy - set COMPANY_LOGO_URL or
+    COMPANY_LOGO_DATA on the service. Any of the three overrides this file
+    everywhere at once.
+  -->
+  <defs>
+    <linearGradient id="akrDisc" x1="0.55" y1="0" x2="0.2" y2="1">
+      <stop offset="0" stop-color="#2F72AC"/>
+      <stop offset="0.3" stop-color="#2A9C8B"/>
+      <stop offset="0.58" stop-color="#4FB44D"/>
+      <stop offset="1" stop-color="#EBC53A"/>
+    </linearGradient>
+    <linearGradient id="akrBand" x1="0.2" y1="0" x2="0.6" y2="1">
+      <stop offset="0" stop-color="#6FC07A"/>
+      <stop offset="0.55" stop-color="#8FCB57"/>
+      <stop offset="1" stop-color="#D9C63F"/>
+    </linearGradient>
+    <linearGradient id="akrHead" x1="0.35" y1="0" x2="0.55" y2="1">
+      <stop offset="0" stop-color="#0B3E2D"/>
+      <stop offset="0.5" stop-color="#12563C"/>
+      <stop offset="1" stop-color="#237A4E"/>
+    </linearGradient>
+    <linearGradient id="akrBill" x1="0" y1="0" x2="0.8" y2="0.85">
+      <stop offset="0" stop-color="#F8D247"/>
+      <stop offset="1" stop-color="#DC9E17"/>
+    </linearGradient>
+  </defs>
+
+  <circle cx="185" cy="185" r="150" fill="url(#akrDisc)"/>
+  <g fill="#0B3E2D" opacity="0.13">
+    <path d="M38 206 C98 184 162 188 216 218 C160 200 100 202 42 220 Z"/>
+    <path d="M44 142 C108 110 174 110 228 144 C170 122 106 124 50 152 Z"/>
+  </g>
+
+  <path fill="url(#akrBand)" d="M277.4 66.8 A150 150 0 0 1 246 322
+    L230.5 287.3 A112 112 0 0 0 254 96.7 Z"/>
+
+  <path fill="url(#akrHead)" d="M246 146
+    L206 96
+    C190 80 150 72 118 92
+    C84 114 72 158 80 200
+    C90 250 124 284 168 290
+    C206 294 234 268 243 226
+    L242 194 L246 146 Z"/>
+  <path fill="#FFFFFF" opacity="0.09" d="M206 96 C190 80 150 72 118 92
+    C84 114 72 158 80 200 C84 152 108 112 148 96 C172 86 192 88 206 96 Z"/>
+
+  <path fill="#08231B" d="M152 116 L248 150 L242 176 L162 148 Z"/>
+
+  <circle cx="212" cy="172" r="13" fill="#0B2A20"/>
+  <circle cx="212" cy="172" r="9.2" fill="#D81E28"/>
+  <circle cx="208.4" cy="168.4" r="2.9" fill="#FFFFFF"/>
+
+  <path fill="url(#akrBill)" d="M242 142
+    C288 146 326 160 352 182
+    C364 192 366 206 356 218
+    L340 244
+    C340 226 334 214 320 206
+    C296 194 268 190 240 190 Z"/>
+</svg>
