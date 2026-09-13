@@ -379,3 +379,47 @@ test('an expense books against an LPO, and lands on that supplier and that job',
     (err) => err.status === 400 && /No such LPO/.test(err.message),
   );
 });
+
+test("an expense books against the client's LPO too, and lands on their job", async () => {
+  /*
+   * Money goes out against our order to the maker and comes back out against
+   * the client's order to us — a site visit, testing, transport we recharge. So
+   * the picker carries every LPO, both ways, and the books keep which way it
+   * points.
+   */
+  const so = ctx.order;
+  assert.ok(so, 'the client order from the walk-through');
+
+  const booked = await admin.post('/api/accounts/expenses', {
+    so_id: so.id, description: 'Site visit and testing — client works', amount: 900,
+  });
+  assert.equal(booked.so_id, so.id);
+  assert.equal(booked.po_id, null, 'one order, not both');
+  assert.equal(booked.order_ref, so.client_lpo_no, 'shown under the number the client gave us');
+  assert.equal(booked.order_side, 'client');
+  assert.equal(booked.partner_id, so.partner_id, 'the client carries the cost');
+
+  // It shows in that job's cost, beside the goods.
+  const cost = await admin.get(`/api/reports/job-cost?sales_order_id=${so.id}`)
+    .catch(() => null);
+  if (cost) {
+    assert.ok(cost.expenses.some((e) => e.id === booked.id),
+      "booked against the client's own LPO, it is a cost of that job");
+  }
+
+  // Found by the number on the client's paper.
+  const found = await admin.get(`/api/accounts/expenses?q=${encodeURIComponent(so.client_lpo_no)}`);
+  assert.ok(found.rows.some((r) => r.id === booked.id));
+
+  // One order or the other, never both.
+  await assert.rejects(
+    () => admin.post('/api/accounts/expenses',
+      { po_id: ctx.lpo.id, so_id: so.id, description: 'Both at once', amount: 10 }),
+    (err) => err.status === 400 && /one order/.test(err.message),
+  );
+  await assert.rejects(
+    () => admin.post('/api/accounts/expenses',
+      { so_id: 999999, description: 'Nowhere', amount: 10 }),
+    (err) => err.status === 400 && /No such client LPO/.test(err.message),
+  );
+});

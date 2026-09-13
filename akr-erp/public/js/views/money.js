@@ -343,8 +343,9 @@
           { label: 'Head', key: 'category_name' },
           { label: 'Description', render: (r) => `<b>${esc(r.description)}</b>
               <div class="muted small">${esc([r.payee, r.project].filter(Boolean).join(' · '))}</div>` },
-          { label: 'Against', render: (r) => (r.lpo_no || r.enquiry_no
-            ? `${r.lpo_no ? `<span class="mono small">${esc(r.lpo_no)}</span>` : ''}${
+          { label: 'Against', render: (r) => (r.order_ref || r.enquiry_no
+            ? `${r.order_ref ? `<span class="mono small">${esc(r.order_ref)}</span>
+                 <div class="muted small">${r.order_side === 'client' ? "client's LPO" : 'our LPO'}</div>` : ''}${
               r.enquiry_no ? `<div class="muted small mono">${esc(r.enquiry_no)}</div>` : ''}`
             : '—') },
           { label: 'Booked to', render: (r) => (r.partner_name
@@ -467,10 +468,11 @@
             ].filter((g) => g.options.length) })}
           ${UI.field({ name: 'project', label: 'Project', value: existing ? existing.project || '' : '' })}
         </div>
-        ${UI.field({ name: 'po_id', label: 'Against our LPO', blank: 'Not against one LPO',
-          value: existing ? existing.po_id || '' : '',
-          hint: 'The order it was spent against — clearing, freight, inspection. Choosing one '
-            + 'books the cost to that supplier and onto that job.',
+        ${UI.field({ name: 'order_ref', label: 'Against the LPO', blank: 'Not against one LPO',
+          value: existing ? (existing.po_id ? `po:${existing.po_id}`
+            : (existing.so_id ? `so:${existing.so_id}` : '')) : '',
+          hint: 'Every LPO, both ways — ours to the manufacturers and the clients\' to us. '
+            + 'Choosing one books the cost to that account and onto that job.',
           options: [] })}
         ${UI.field({ name: 'enquiry_id', label: 'Against the job', blank: 'Not against one job',
           value: existing ? existing.enquiry_id : '',
@@ -518,7 +520,7 @@
          * would carry quietly. Change the company and the list follows.
          */
         const companyEl = modal.querySelector('[name=company_id]');
-        const poEl = modal.querySelector('[name=po_id]');
+        const poEl = modal.querySelector('[name=order_ref]');
         const partnerEl = modal.querySelector('[name=partner_id]');
         const jobEl = modal.querySelector('[name=enquiry_id]');
         let lpos = [];
@@ -526,22 +528,45 @@
         const loadLpos = async () => {
           const keep = poEl.value;
           poEl.disabled = true;
-          const res = await API.get('/api/purchase/orders' + API.qs({
-            company_id: companyEl.value, limit: 300,
-          })).catch(() => ({ rows: [] }));
-          lpos = res.rows.filter((o) => o.status !== 'cancelled');
+          const qs = API.qs({ company_id: companyEl.value, limit: 300 });
+          // Both directions, asked for together: the money goes out against
+          // ours and comes back against theirs, and whoever is booking has one
+          // number in front of them without caring which way it points.
+          const [ours, theirs] = await Promise.all([
+            API.get(`/api/purchase/orders${qs}`).catch(() => ({ rows: [] })),
+            API.get(`/api/sales/orders${qs}`).catch(() => ({ rows: [] })),
+          ]);
+          lpos = [
+            ...ours.rows.filter((o) => o.status !== 'cancelled').map((o) => ({
+              key: `po:${o.id}`, ref: o.lpo_no, party: o.supplier_name,
+              project: o.project, partner_id: o.partner_id, enquiry_id: o.enquiry_id,
+              side: 'ours',
+            })),
+            ...theirs.rows.filter((o) => o.status !== 'cancelled').map((o) => ({
+              key: `so:${o.id}`, ref: o.client_lpo_no || o.so_no, party: o.client_name,
+              project: o.project, partner_id: o.partner_id, enquiry_id: o.enquiry_id,
+              side: 'client',
+            })),
+          ];
+          const group = (label, side) => {
+            const rows = lpos.filter((o) => o.side === side);
+            if (!rows.length) return '';
+            return `<optgroup label="${label}">${rows.map((o) => `<option value="${o.key}">${
+              UI.esc(`${o.ref} — ${o.party || ''}${o.project ? ` · ${o.project}` : ''}`.trim())
+            }</option>`).join('')}</optgroup>`;
+          };
           poEl.innerHTML = '<option value="">Not against one LPO</option>'
-            + lpos.map((o) => `<option value="${o.id}">${UI.esc(
-              `${o.lpo_no} — ${o.supplier_name}${o.project ? ` · ${o.project}` : ''}`)}</option>`).join('');
+            + group('Our LPOs — out to the manufacturers', 'ours')
+            + group("Clients' LPOs — in to us", 'client');
           // Keep what was already chosen, if that LPO is in the new list.
-          if (keep && lpos.some((o) => String(o.id) === String(keep))) poEl.value = keep;
+          if (keep && lpos.some((o) => o.key === keep)) poEl.value = keep;
           poEl.disabled = false;
         };
 
-        // Choosing an LPO fills in the supplier and the job it belongs to —
+        // Choosing an LPO fills in the account and the job it belongs to —
         // unless somebody has already chosen those for themselves.
         poEl.addEventListener('change', () => {
-          const chosen = lpos.find((o) => String(o.id) === String(poEl.value));
+          const chosen = lpos.find((o) => o.key === poEl.value);
           if (!chosen) return;
           if (partnerEl && !partnerEl.value) partnerEl.value = chosen.partner_id || '';
           if (jobEl && !jobEl.value && chosen.enquiry_id) jobEl.value = chosen.enquiry_id;
@@ -572,6 +597,12 @@
         const form = modal.querySelector('#x-form');
         if (!form.reportValidity()) return 'keep';
         const values = UI.formValues(form);
+        // One picker on the screen, two columns in the book: an expense belongs
+        // to our order or to the client's, and the server is told which.
+        const picked = String(values.order_ref || '');
+        delete values.order_ref;
+        values.po_id = picked.startsWith('po:') ? picked.slice(3) : '';
+        values.so_id = picked.startsWith('so:') ? picked.slice(3) : '';
         const box = form.querySelector('[name=recoverable_vat]');
         if (box) values.recoverable_vat = box.checked;
         if (existing) await API.patch(`/api/accounts/expenses/${existing.id}`, values);

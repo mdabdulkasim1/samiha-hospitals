@@ -811,9 +811,14 @@ CREATE TABLE IF NOT EXISTS expenses (
   enquiry_id    INTEGER REFERENCES enquiries(id),
   -- The LPO it belongs to. An enquiry is the job; an LPO is the order placed
   -- under it, and clearing, freight and inspection are spent against the order
-  -- rather than the enquiry. Booking to one names the supplier and the job
+  -- rather than the enquiry. Booking to one names the account and the job
   -- without anybody having to remember either.
+  --
+  -- Both directions, because money is spent against both: ours to a
+  -- manufacturer (po_id), and the client's to us (so_id). One or the other,
+  -- never both — an expense belongs to one order.
   po_id         INTEGER REFERENCES purchase_orders(id),
+  so_id         INTEGER REFERENCES sales_orders(id),
   payee         TEXT,
   expense_date  TEXT NOT NULL DEFAULT (date('now')),
   description   TEXT NOT NULL,

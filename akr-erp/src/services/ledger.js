@@ -396,14 +396,17 @@ function jobCost({ salesOrderId = null, enquiryId = null, partnerId = null }) {
       return `@po${i}`;
     }).join(',')})`);
   }
+  // And what was booked against the client's own LPO for this job.
+  if (order) { where.push('e.so_id = @thisSo'); params.thisSo = order.id; }
   const expenses = where.length ? db.prepare(`
     SELECT e.id, e.voucher_no, e.expense_date, e.description, e.amount, e.partner_id, e.enquiry_id,
-           e.po_id, o.lpo_no,
+           e.po_id, e.so_id, COALESCE(o.lpo_no, so.client_lpo_no) AS order_ref,
            c.name AS category_name, p.name AS partner_name
       FROM expenses e
       LEFT JOIN expense_categories c ON c.id = e.category_id
       LEFT JOIN partners p ON p.id = e.partner_id
       LEFT JOIN purchase_orders o ON o.id = e.po_id
+      LEFT JOIN sales_orders so ON so.id = e.so_id
      WHERE e.kind = 'expense' AND (${where.join(' OR ')})
      ORDER BY e.expense_date`).all(params) : [];
 

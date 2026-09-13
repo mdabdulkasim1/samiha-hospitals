@@ -280,7 +280,13 @@ const EXP_SELECT = `
   SELECT e.*, c.code AS company_code, c.name AS company_name, ec.name AS category_name,
          ec.kind AS category_kind, p.name AS partner_name, p.type AS partner_type,
          e2.enquiry_no, e2.subject AS enquiry_subject, u.name AS created_by_name,
-         o.lpo_no, o.lpo_date, o.project AS lpo_project, sp.name AS lpo_supplier_name
+         o.lpo_no, o.lpo_date, o.project AS lpo_project, sp.name AS lpo_supplier_name,
+         so.client_lpo_no, so.so_no, so.order_date AS client_lpo_date,
+         cp.name AS client_lpo_partner_name,
+         -- What to show in one column, whichever side the order is on.
+         COALESCE(o.lpo_no, so.client_lpo_no) AS order_ref,
+         CASE WHEN o.id IS NOT NULL THEN 'ours'
+              WHEN so.id IS NOT NULL THEN 'client' END AS order_side
     FROM expenses e
     LEFT JOIN companies c ON c.id = e.company_id
     LEFT JOIN expense_categories ec ON ec.id = e.category_id
@@ -288,6 +294,8 @@ const EXP_SELECT = `
     LEFT JOIN enquiries e2 ON e2.id = e.enquiry_id
     LEFT JOIN purchase_orders o ON o.id = e.po_id
     LEFT JOIN partners sp ON sp.id = o.partner_id
+    LEFT JOIN sales_orders so ON so.id = e.so_id
+    LEFT JOIN partners cp ON cp.id = so.partner_id
     LEFT JOIN users u ON u.id = e.created_by`;
 
 router.get('/expenses', expenseReader, wrap(async (req, res) => {
@@ -302,11 +310,12 @@ router.get('/expenses', expenseReader, wrap(async (req, res) => {
   else if (v.bool(req.query.overhead)) where.push('e.partner_id IS NULL');
   if (req.query.enquiry_id) { where.push('e.enquiry_id = @enquiry_id'); params.enquiry_id = req.query.enquiry_id; }
   if (req.query.po_id) { where.push('e.po_id = @po_id'); params.po_id = req.query.po_id; }
+  if (req.query.so_id) { where.push('e.so_id = @so_id'); params.so_id = req.query.so_id; }
   if (req.query.from) { where.push('e.expense_date >= @from'); params.from = v.date(req.query.from); }
   if (req.query.to) { where.push('e.expense_date <= @to'); params.to = v.date(req.query.to); }
   if (req.query.q) {
     where.push('(e.voucher_no LIKE @q OR e.description LIKE @q OR e.payee LIKE @q'
-      + ' OR e.project LIKE @q OR o.lpo_no LIKE @q)');
+      + ' OR e.project LIKE @q OR o.lpo_no LIKE @q OR so.client_lpo_no LIKE @q OR so.so_no LIKE @q)');
     params.q = `%${String(req.query.q).trim()}%`;
   }
   const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
@@ -317,9 +326,41 @@ router.get('/expenses', expenseReader, wrap(async (req, res) => {
            COALESCE(SUM(CASE WHEN e.kind = 'income'  THEN e.total END), 0) AS earned,
            COALESCE(SUM(CASE WHEN e.kind = 'expense' THEN e.vat_amount END), 0) AS input_vat
       FROM expenses e
-      LEFT JOIN purchase_orders o ON o.id = e.po_id ${clause}`).get(params);
+      LEFT JOIN purchase_orders o ON o.id = e.po_id
+      LEFT JOIN sales_orders so ON so.id = e.so_id ${clause}`).get(params);
   res.json({ rows, summary, total: rows.length, page, limit });
 }));
+
+/*
+ * The order an expense was spent against — either direction.
+ *
+ * Money is spent against both: our LPO to a manufacturer (clearing, freight,
+ * inspection) and the client's LPO to us (a site visit, testing, transport we
+ * recharge). Whoever is booking it has the LPO number in front of them, not the
+ * enquiry number and not the account name as the master spells it. So the order
+ * fills both in: the account carries the cost on the profit page, and the
+ * enquiry puts it on the job.
+ *
+ * One or the other, never both — an expense belongs to one order.
+ */
+function orderFor(b) {
+  if (b.po_id && b.so_id) {
+    throw badRequest('An expense belongs to one order: ours to the maker, or the client\'s to us.');
+  }
+  if (b.po_id) {
+    const row = db.prepare(`SELECT id, partner_id, enquiry_id, lpo_no AS ref
+       FROM purchase_orders WHERE id = ?`).get(b.po_id);
+    if (!row) throw badRequest('No such LPO.');
+    return { ...row, side: 'ours', po_id: row.id, so_id: null };
+  }
+  if (b.so_id) {
+    const row = db.prepare(`SELECT id, partner_id, enquiry_id, client_lpo_no AS ref
+       FROM sales_orders WHERE id = ?`).get(b.so_id);
+    if (!row) throw badRequest("No such client LPO.");
+    return { ...row, side: 'client', po_id: null, so_id: row.id };
+  }
+  return null;
+}
 
 /**
  * Anything the group spends or takes in that is not a trade invoice — rent,
@@ -340,35 +381,24 @@ router.post('/expenses', bookkeeper, wrap(async (req, res) => {
     ? v.money(b.vat_amount, 0)
     : (v.bool(b.taxable) ? pricing.round(amount * (require('../config').vat.percent / 100)) : 0);
 
-  /*
-   * Booked against an LPO.
-   *
-   * Clearing, freight and inspection are spent against an order, and whoever
-   * is booking them has the LPO number in front of them — not the enquiry
-   * number, and not necessarily the supplier's name as the master spells it.
-   * So the LPO fills both in: the supplier carries the cost on the profit page,
-   * and the enquiry puts it on the job. Either can still be set by hand, and a
-   * hand-set one is left alone.
-   */
-  const order = b.po_id ? db.prepare(
-    'SELECT id, partner_id, enquiry_id, lpo_no FROM purchase_orders WHERE id = ?').get(b.po_id) : null;
-  if (b.po_id && !order) throw badRequest('No such LPO.');
+  const order = orderFor(b);
 
   const voucherNo = ids.docNo(kind === 'income' ? 'income' : 'expense', company.code);
   const info = db.prepare(`
     INSERT INTO expenses (company_id, voucher_no, kind, category_id, partner_id, enquiry_id, po_id,
-      payee, expense_date, description, project, amount, vat_amount, total, recoverable_vat, mode,
-      reference, attachment_ref, created_by)
+      so_id, payee, expense_date, description, project, amount, vat_amount, total, recoverable_vat,
+      mode, reference, attachment_ref, created_by)
     VALUES (@company_id, @voucher_no, @kind, @category_id, @partner_id, @enquiry_id, @po_id,
-      @payee, @expense_date, @description, @project, @amount, @vat_amount, @total, @recoverable_vat,
-      @mode, @reference, @attachment_ref, @created_by)`).run({
+      @so_id, @payee, @expense_date, @description, @project, @amount, @vat_amount, @total,
+      @recoverable_vat, @mode, @reference, @attachment_ref, @created_by)`).run({
     company_id: company.id,
     voucher_no: voucherNo,
     kind,
     category_id: b.category_id || null,
     partner_id: b.partner_id || (order ? order.partner_id : null),
     enquiry_id: b.enquiry_id || (order ? order.enquiry_id : null),
-    po_id: order ? order.id : null,
+    po_id: order ? order.po_id : null,
+    so_id: order ? order.so_id : null,
     payee: v.str(b.payee),
     expense_date: v.date(b.expense_date) || v.today(),
     description: v.str(b.description),
@@ -384,7 +414,7 @@ router.post('/expenses', bookkeeper, wrap(async (req, res) => {
   });
 
   audit.log(req, `${kind}.created`, 'expense', info.lastInsertRowid,
-    { voucherNo, amount, lpo: order ? order.lpo_no : null });
+    { voucherNo, amount, lpo: order ? order.ref : null });
   res.status(201).json(db.prepare(`${EXP_SELECT} WHERE e.id = ?`).get(info.lastInsertRowid));
 }));
 
@@ -393,14 +423,12 @@ router.patch('/expenses/:id', bookkeeper, wrap(async (req, res) => {
   if (!row) throw notFound('No such entry.');
   const amount = v.money(req.body.amount, row.amount);
   const vatAmount = v.money(req.body.vat_amount, row.vat_amount);
-  const order = req.body.po_id === undefined
-    ? null
-    : (req.body.po_id ? db.prepare(
-      'SELECT id, partner_id, enquiry_id FROM purchase_orders WHERE id = ?').get(req.body.po_id) : null);
-  if (req.body.po_id && !order) throw badRequest('No such LPO.');
+  // Untouched fields keep what the row already has; a field sent empty clears it.
+  const touchedOrder = req.body.po_id !== undefined || req.body.so_id !== undefined;
+  const order = touchedOrder ? orderFor(req.body) : null;
 
   db.prepare(`UPDATE expenses SET category_id = @category_id, partner_id = @partner_id,
-      enquiry_id = @enquiry_id, po_id = @po_id, payee = @payee,
+      enquiry_id = @enquiry_id, po_id = @po_id, so_id = @so_id, payee = @payee,
       expense_date = @expense_date, description = @description, project = @project, amount = @amount,
       vat_amount = @vat_amount, total = @total, recoverable_vat = @recoverable_vat, mode = @mode,
       reference = @reference, attachment_ref = @attachment_ref WHERE id = @id`).run({
@@ -412,7 +440,8 @@ router.patch('/expenses/:id', bookkeeper, wrap(async (req, res) => {
     enquiry_id: req.body.enquiry_id === undefined
       ? (order ? (row.enquiry_id || order.enquiry_id) : row.enquiry_id)
       : (req.body.enquiry_id || null),
-    po_id: req.body.po_id === undefined ? row.po_id : (order ? order.id : null),
+    po_id: touchedOrder ? (order ? order.po_id : null) : row.po_id,
+    so_id: touchedOrder ? (order ? order.so_id : null) : row.so_id,
     payee: v.str(req.body.payee, row.payee),
     expense_date: v.date(req.body.expense_date) || row.expense_date,
     description: v.str(req.body.description, row.description),
