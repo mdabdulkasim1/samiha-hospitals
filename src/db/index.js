@@ -238,6 +238,23 @@ function migrate() {
     if (grandfathered) console.log(`[migrate] ${grandfathered} existing diagnostic order(s) let through the new counter gate.`);
   }
   ensureColumn('drugs', 'unit_rate', 'REAL NOT NULL DEFAULT 0');
+
+  /*
+   * Visits left standing in the screening lane, which no longer exists.
+   *
+   * It was entered on arrival whenever a patient was uninsured, and it is gone
+   * — anybody still in it is waiting at a door that has been taken off its
+   * hinges. They move to `checked_in`, which with the consultation fee still
+   * uncollected is exactly where the new flow puts a patient the front desk
+   * has finished with: at the cashier. Only open visits; a closed one is
+   * history and keeps the lane it actually went through.
+   */
+  const stranded = db.prepare(
+    "UPDATE visits SET status = 'checked_in' WHERE status = 'financial_screening'"
+  ).run().changes;
+  if (stranded) {
+    console.log(`[migrate] ${stranded} visit(s) moved out of the retired screening lane to the cashier.`);
+  }
   ensureColumn('lab_tests', 'component_of', 'TEXT');
   ensureColumn('lab_tests', 'sort_order', 'INTEGER NOT NULL DEFAULT 0');
   backfillBillGroups();

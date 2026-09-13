@@ -285,10 +285,19 @@ router.post('/orders/:id/verify', requireRole('lab', 'doctor'), wrap((req, res) 
         WHERE visit_id = ? AND status NOT IN ('reported','cancelled')`
     ).get(order.visit_id).c;
     if (!stillOpen) {
+      /*
+       * The last report is out, so the bench is finished with this patient.
+       * The diagnostics were paid for before any of it started, so there is
+       * nothing to settle here: they go to the pharmacy if the doctor wrote
+       * anything, and otherwise to the desk to be closed.
+       */
+      const rxPending = db.prepare(
+        "SELECT COUNT(*) AS c FROM prescriptions WHERE visit_id = ? AND status = 'pending'"
+      ).get(order.visit_id).c;
       db.prepare(
-        `UPDATE visits SET status = 'billing_pending'
+        `UPDATE visits SET status = ?
           WHERE id = ? AND status = 'labs_pending'`
-      ).run(order.visit_id);
+      ).run(rxPending ? 'pharmacy_pending' : 'billing_pending', order.visit_id);
     }
   }
   const critical = db.prepare(

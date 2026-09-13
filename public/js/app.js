@@ -14,7 +14,6 @@
       { id: 'vitals',      label: 'Nurse Station',   icon: '♥', roles: ['admin','nurse','doctor'] },
       { id: 'myclinic',    label: 'My Clinic',        icon: '⌚', roles: ['admin','doctor'] },
       { id: 'consult',     label: 'Consultation',     icon: '✚', roles: ['admin','doctor'] },
-      { id: 'financial',   label: 'Financial Screening', icon: '⚖', roles: ['admin','counselor','reception','cashier'] },
       { id: 'lab',         label: 'Diagnostics',      icon: '⚗', roles: ['admin','lab','doctor','nurse','reception','cashier'] },
       // Not a doctor's screen. What is on the shelf they can see while
       // prescribing; the counter, its bills and its till are the pharmacist's.
@@ -31,6 +30,13 @@
       // What the clinic charges for what. Management's to set, everyone
       // else's to bill against, so it is read-only unless you are an admin.
       { id: 'rates',       label: 'Services & Rates',   icon: '₨', roles: ['admin','cashier','reception'] },
+      /*
+       * Means-testing is not a lane a patient is walked down any more. It is
+       * a conversation the clinic decides to have — about a bill it is
+       * looking at, or a family it knows — so it sits with the rest of what
+       * management decides rather than between the front desk and the nurse.
+       */
+      { id: 'financial',   label: 'Financial Assistance', icon: '⚖', roles: ['admin','counselor'] },
     ]},
     { group: 'Channels & insight', items: [
       { id: 'whatsapp',    label: 'WhatsApp',         icon: '✆', roles: '*' },
@@ -120,10 +126,10 @@
           <img class="logo-full" src="/assets/logo.svg" alt="Samiha Healthcare">
           <h1>Polyclinic &amp; Diagnostics ERP</h1>
           <p>One system from the first enquiry to the patient walking out — appointments, registration,
-             financial screening, vitals, consultation, diagnostics, pharmacy, billing and in-patient care.</p>
+             vitals, consultation, diagnostics, pharmacy, billing and in-patient care.</p>
           <ul>
             <li>✆ <span><b>WhatsApp booking</b> — patients book, confirm and cancel appointments in chat.</span></li>
-            <li>⚖ <span><b>Financial screening</b> — sliding-scale bands and assistance programmes built in.</span></li>
+            <li>⚖ <span><b>Financial assistance</b> — sliding-scale bands and assistance programmes built in.</span></li>
             <li>⌸ <span><b>In-patient records</b> — beds, rounds, medication charts and discharge summaries.</span></li>
           </ul>
         </div>

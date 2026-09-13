@@ -84,6 +84,27 @@ test('a patient walks the lanes in order: doctor orders, cashier collects, lab r
   const arrived = (await api('POST', '/api/visits/arrive',
     { patientId: p.id, doctorId: ids.imran, visitType: 'opd', reasonForVisit: 'Fever' })).body;
   ids.visit = arrived.id || arrived.visit.id;
+  assert.strictEqual(arrived.nextStep, 'check_in', 'nobody is diverted to a screening desk on the way in');
+
+  const checkedIn = await api('POST', `/api/visits/${ids.visit}/check-in`,
+    { reasonForVisit: 'Fever' }, 'reception');
+  assert.strictEqual(checkedIn.status, 200, JSON.stringify(checkedIn.body));
+  assert.strictEqual(checkedIn.body.nextStep, 'consultation_fee', 'the cashier, not the nurse');
+
+  /*
+   * The counter comes before the nurse station. A patient who has not paid for
+   * the consultation is not somebody the nurse can start on, and that is a
+   * rule rather than a missing button.
+   */
+  const early = await api('POST', `/api/visits/${ids.visit}/vitals`, { pulse: 80 }, 'nurse');
+  assert.strictEqual(early.status, 409, JSON.stringify(early.body));
+  assert.match(early.body.error, /consultation fee has not been collected/i);
+
+  const fee = await api('POST', `/api/visits/${ids.visit}/consultation-fee`, { mode: 'cash' }, 'cashier');
+  assert.strictEqual(fee.status, 201, JSON.stringify(fee.body));
+  assert.ok(fee.body.receiptNo, 'the patient carries a receipt to the nurse');
+  assert.strictEqual(fee.body.invoice.balance, 0, 'and it was taken in full');
+  assert.strictEqual(await stage(ids.visit), 'checked_in');
 
   // Nurse.
   const vit = await api('POST', `/api/visits/${ids.visit}/vitals`,
@@ -111,9 +132,10 @@ test('a patient walks the lanes in order: doctor orders, cashier collects, lab r
   assert.strictEqual(rx.status, 201, JSON.stringify(rx.body));
   ids.sheet = rx.body.id;
 
-  await api('POST', `/api/visits/${ids.visit}/consultation/sign`, {}, 'imran');
-  assert.strictEqual(await stage(ids.visit), 'labs_pending',
-    'diagnostics were ordered, so the lab is next — not the pharmacy');
+  const signed = await api('POST', `/api/visits/${ids.visit}/consultation/sign`, {}, 'imran');
+  assert.strictEqual(signed.body.nextStep, 'billing');
+  assert.strictEqual(await stage(ids.visit), 'billing_pending',
+    'tests were ordered, so the cashier is next — the bench is not reached unpaid');
 
   /*
    * The counter comes before the bench. The doctor has ordered a test and said
@@ -132,6 +154,8 @@ test('a patient walks the lanes in order: doctor orders, cashier collects, lab r
   assert.strictEqual(dxBill.status, 200, JSON.stringify(dxBill.body));
   await api('POST', `/api/billing/invoices/${dxBill.body.invoice.id}/payments`,
     { amount: dxBill.body.invoice.balance, mode: 'cash' }, 'cashier');
+  assert.strictEqual(await stage(ids.visit), 'labs_pending',
+    'paying for them is what walks the patient from the counter to the bench');
 
   // Lab: the last report hands the patient to the cashier for the rest.
   const collect = await api('POST', `/api/lab/orders/${ids.order}/collect`, { sampleType: 'blood' }, 'lab');
@@ -140,8 +164,8 @@ test('a patient walks the lanes in order: doctor orders, cashier collects, lab r
   await api('POST', `/api/lab/orders/${ids.order}/results`,
     { results: full.items.map((i) => ({ itemId: i.id, value: '12' })) }, 'lab');
   await api('POST', `/api/lab/orders/${ids.order}/verify`, {}, 'lab');
-  assert.strictEqual(await stage(ids.visit), 'billing_pending',
-    'with the report out, the cashier is next');
+  assert.strictEqual(await stage(ids.visit), 'pharmacy_pending',
+    'the tests were paid for on the way in, so the report sends them to the medicines');
 });
 
 test('the cashier bills the hospital, never the medicines', async () => {

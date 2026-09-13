@@ -2,57 +2,86 @@
 (function () {
   'use strict';
 
+  /*
+   * The clinic is paid as the patient goes, and the map is drawn that way: the
+   * counter appears twice on purpose, once on the way in for the consultation
+   * and once after the doctor for anything they ordered. Everything a patient
+   * cannot proceed without is marked as a gate, because those are the steps
+   * the system actually refuses to let anyone skip.
+   */
   const LANES = [
     {
-      key: 'checkin', title: 'Check In', colour: 'var(--teal)',
+      key: 'checkin', title: '1 · Front desk', colour: 'var(--teal)',
       steps: [
-        { n: 'Patient walk-in / M.A. calls patient', where: 'Queue → + Patient arrived', route: 'queue' },
-        { n: 'New patient?', decision: true, note: 'Yes → demographic & medical-history paperwork. No → next check.' },
+        { n: 'Patient walks in, or arrives for an appointment', where: 'Queue → + Patient arrived', route: 'queue' },
+        { n: 'New patient?', decision: true, note: 'Yes → demographic & medical-history paperwork first.' },
         { n: 'Demographic, med. history paperwork', where: 'Patients → Register patient', route: 'patients' },
-        { n: 'Financial situation changed?', decision: true, note: 'Yes → financial screening lane.' },
-        { n: 'Time for yearly screening?', decision: true, note: 'Flagged automatically if the last screening was over a year ago.' },
-        { n: 'Uninsured / needs financial assistance?', decision: true, note: 'Yes → financial screening. No → check in.' },
         { n: 'Check in · ask reason for visit', where: 'Queue → visit card → Check in', route: 'queue' },
+        { n: 'Uninsured or circumstances changed?', decision: true,
+          note: 'Flagged for the counsellor — it does not hold the patient up.' },
       ],
     },
     {
-      key: 'finance', title: 'Financial Screening', colour: 'var(--orange)',
+      key: 'fee', title: '2 · Cashier — consultation fee', colour: 'var(--orange)',
       steps: [
-        { n: 'Financial screening paperwork', where: 'Financial Screening → Start screening', route: 'financial' },
-        { n: 'Counselor available?', decision: true, note: 'No → the case queues and the patient waits. Yes → counselor calls the patient.' },
-        { n: 'Counselor calls patient', where: 'Financial Screening → Claim & call patient', route: 'financial' },
-        { n: 'Has pay stub or valid proof of income?', decision: true, note: 'No → held at “documents pending”; no band can be assigned.' },
-        { n: 'Run eligible programmes web form', where: 'Screening worksheet → Determine position', route: 'financial' },
-        { n: 'Determine "sliding scale" position', where: 'Income vs poverty line → band A–F', route: 'financial' },
-        { n: 'Present financial assistance options', where: 'Screening worksheet → programme list', route: 'financial' },
-        { n: 'Patient decides to continue?', decision: true, note: 'Yes → back to the waiting room. No → straight to exit.' },
+        { n: 'Collect the consultation fee', where: 'Queue → visit card → Collect consultation fee', route: 'queue' },
+        { n: 'Charged at the rate on the card', where: 'Services & Rates → CONS-NEW / CONS-FU', route: 'rates' },
+        { n: 'A band or programme comes off here', where: 'Applied before the money is taken, never refunded after', route: 'financial' },
+        { n: 'Receipt printed, patient sent to the nurse', where: 'Receipt shows what the bill covers', route: 'billing' },
+        { n: 'GATE · no fee, no nurse station', gate: true,
+          note: 'The nurse station refuses a visit the counter has not taken the fee for.' },
       ],
     },
     {
-      key: 'exam', title: 'Examination', colour: 'var(--crimson)',
+      key: 'exam', title: '3 · Nurse & doctor', colour: 'var(--crimson)',
       steps: [
-        { n: 'Waiting room · M.A. calls patient', where: 'Queue board lane', route: 'queue' },
-        { n: 'Take patient to the nurse station · check vitals', where: 'Nurse Station', route: 'vitals' },
-        { n: 'M.A. logs into the record system', where: 'Nurse signs in — every action is audited', route: 'vitals' },
-        { n: 'Update patient pharmacy information', where: 'Nurse Station → pharmacy panel', route: 'vitals' },
-        { n: 'M.A. prints medication list', where: 'Queue → visit card → Results page', route: 'queue' },
-        { n: 'Patient to exam room · provider paged', where: 'Consultation queue', route: 'consult' },
-        { n: 'Provider gives clinical care', where: 'Consultation → SOAP note, diagnoses, prescription', route: 'consult' },
-        { n: 'Place lab orders listed on results page', where: 'Consultation → Order tests', route: 'consult' },
-        { n: 'Provider gives results page to patient', where: 'Consultation → Sign, then print results page', route: 'consult' },
+        { n: 'Nurse station · check vitals', where: 'Nurse Station', route: 'vitals' },
+        { n: 'Patient to the doctor', where: 'Consultation → My patients today', route: 'consult' },
+        { n: 'Why they came, on the record', where: 'Consultation → patient summary', route: 'consult' },
+        { n: 'Clinical care · SOAP note, diagnoses, prescription', where: 'Consultation', route: 'consult' },
+        { n: 'Order any tests', where: 'Consultation → Order tests (no rates on the form)', route: 'consult' },
+        { n: 'Any tests ordered?', decision: true,
+          note: 'Yes → back to the cashier (lane 4). No → straight to the pharmacy (lane 6).' },
       ],
     },
     {
-      key: 'checkout', title: 'Check Out', colour: 'var(--ok)',
+      key: 'dxpay', title: '4 · Cashier — the tests', colour: 'var(--orange)',
       steps: [
-        { n: 'Patient gives results page to check-out desk', where: 'Billing → Assemble bill', route: 'billing' },
-        { n: 'Patient able to pay for labs and visit?', decision: true, note: 'Four branches, all supported below.' },
-        { n: 'Accept payment', where: 'Bill → Accept payment (cash, UPI, card…)', route: 'billing' },
-        { n: 'Payment plan agreement form', where: 'Bill → Payment plan agreement', route: 'billing' },
-        { n: 'Document payment exception', where: 'Bill → Document exception', route: 'billing' },
-        { n: 'No cost, covered by assistance programme', where: 'Bill → Cover by assistance programme', route: 'billing' },
-        { n: 'Schedule future appointments', where: 'Check-out → follow-up picker', route: 'billing' },
+        { n: 'The order arrives with names and no prices', where: 'Billing → Tests to price', route: 'billing' },
+        { n: 'Cashier sets a rate against each line', where: 'Prefilled from the tariff, typed where there is none', route: 'billing' },
+        { n: 'Posted to the bill and paid in full', where: 'Billing → Accept payment', route: 'billing' },
+        { n: 'GATE · no receipt, no test', gate: true,
+          note: 'Collect, start, result and verify all refuse an order that has not been paid for. An in-patient\'s tests go on the stay instead; the cashier can wave an emergency through, recorded as a waiver.' },
+      ],
+    },
+    {
+      key: 'lab', title: '5 · Diagnostics', colour: 'var(--teal)',
+      steps: [
+        { n: 'Paid orders appear on the bench worklist', where: 'Diagnostics → Orders', route: 'lab' },
+        { n: 'Unpaid ones sit below, greyed and unopenable', where: 'Diagnostics → At the cash counter', route: 'lab' },
+        { n: 'Sample collected and labelled', where: 'Diagnostics → Collect sample', route: 'lab' },
+        { n: 'Results entered, abnormals flagged automatically', where: 'Diagnostics → Enter results', route: 'lab' },
+        { n: 'Verified and reported', where: 'Report signed by the lab in-charge, referring doctor named', route: 'lab' },
+      ],
+    },
+    {
+      key: 'pharmacy', title: '6 · Pharmacy, and out', colour: 'var(--ok)',
+      steps: [
+        { n: 'Prescription waiting at the counter', where: 'Pharmacy → Dispensing queue', route: 'pharmacy' },
+        { n: 'Medicines dispensed and paid for here', where: 'At the MRP on the pack that was handed over', route: 'pharmacy' },
+        { n: 'Follow-up booked', where: 'Check-out → follow-up picker', route: 'billing' },
         { n: 'Patient leaves', where: 'Check-out issues an exit pass and messages a visit summary', route: 'billing' },
+      ],
+    },
+    {
+      key: 'finance', title: 'Alongside · Financial assistance', colour: 'var(--ink-3)',
+      steps: [
+        { n: 'Not a lane anybody is walked down', note: 'Offered when the clinic decides to, at any point in the visit.', decision: true },
+        { n: 'Start a screening', where: 'Financial Assistance → Start screening', route: 'financial' },
+        { n: 'Proof of income on file?', decision: true, note: 'No → held at “documents pending”; no band can be assigned.' },
+        { n: 'Income against the poverty line → band A–F', where: 'Screening worksheet', route: 'financial' },
+        { n: 'Assistance programmes the patient qualifies for', where: 'Screening worksheet → programme list', route: 'financial' },
+        { n: 'The band applies to bills from then on', where: 'Taken off at the counter, not refunded afterwards', route: 'financial' },
       ],
     },
   ];
@@ -74,7 +103,10 @@
     async render(el) {
       el.innerHTML = `
         <div class="alert info mb">
-          This mirrors the visit workflow chart lane by lane. Click any step to jump to the screen that handles it.
+          The walk through the building, lane by lane. The clinic is paid as the patient goes, so the
+          cashier appears twice — once on the way in for the consultation, once after the doctor for
+          anything ordered. A <b style="color:var(--danger)">⛔ gate</b> is a step the system refuses to
+          let anyone past. Click any step to jump to the screen that handles it.
         </div>
 
         <div class="grid c4" style="align-items:start">
@@ -87,7 +119,8 @@
                 <ul class="timeline">
                   ${lane.steps.map((s) => `
                     <li${s.route ? ` style="cursor:pointer" data-route="${UI.esc(s.route)}"` : ''}>
-                      <b>${s.decision ? '◆ ' : ''}${UI.esc(s.n)}</b>
+                      <b${s.gate ? ' style="color:var(--danger)"' : ''}>${
+                        s.gate ? '⛔ ' : (s.decision ? '◆ ' : '')}${UI.esc(s.n)}</b>
                       ${s.where ? `<div class="muted small">→ ${UI.esc(s.where)}</div>` : ''}
                       ${s.note ? `<div class="muted small"><i>${UI.esc(s.note)}</i></div>` : ''}
                     </li>`).join('')}

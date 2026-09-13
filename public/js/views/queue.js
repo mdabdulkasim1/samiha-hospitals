@@ -3,16 +3,28 @@
   'use strict';
 
   // Lanes mirror the swimlanes of the clinic workflow chart.
+  /*
+   * The lanes, left to right, as the patient actually walks them.
+   *
+   * `checked_in` is drawn as two lanes rather than one. The patient the front
+   * desk has finished with and the patient the cashier has taken the fee from
+   * are at the same point of the visit but standing in different queues, and
+   * saying which queue somebody is in is the whole job of this board. Which of
+   * the two is a question about the money, so the row carries the answer.
+   */
   const LANES = [
-    { key: 'waiting_room',        label: 'Waiting room',      lane: 'lane-checkin' },
-    { key: 'financial_screening', label: 'Financial screening', lane: 'lane-finance' },
-    { key: 'checked_in',          label: 'Checked in',        lane: 'lane-checkin' },
-    { key: 'vitals_done',         label: 'Vitals done',       lane: 'lane-exam' },
-    { key: 'with_provider',       label: 'With provider',     lane: 'lane-exam' },
-    { key: 'labs_pending',        label: 'Diagnostics',       lane: 'lane-exam' },
-    { key: 'pharmacy_pending',    label: 'Pharmacy',          lane: 'lane-exam' },
-    { key: 'billing_pending',     label: 'Check-out desk',    lane: 'lane-checkout' },
-    { key: 'checked_out',         label: 'Left the clinic',   lane: 'lane-checkout' },
+    { key: 'waiting_room',     label: 'Waiting room',     lane: 'lane-checkin' },
+    { key: 'checked_in',       label: 'Consultation fee', lane: 'lane-checkout',
+      match: (r) => !r.consultation_paid, foot: 'At the cashier' },
+    { key: 'checked_in',       label: 'For the nurse',    lane: 'lane-checkin',
+      match: (r) => r.consultation_paid, foot: 'Fee paid' },
+    { key: 'vitals_done',      label: 'Vitals done',      lane: 'lane-exam' },
+    { key: 'with_provider',    label: 'With provider',    lane: 'lane-exam' },
+    { key: 'billing_pending',  label: 'Cashier',          lane: 'lane-checkout',
+      foot: 'Tests to pay for, or done' },
+    { key: 'labs_pending',     label: 'Diagnostics',      lane: 'lane-exam' },
+    { key: 'pharmacy_pending', label: 'Pharmacy',         lane: 'lane-exam' },
+    { key: 'checked_out',      label: 'Left the clinic',  lane: 'lane-checkout' },
   ];
 
   let timer = null;
@@ -54,9 +66,11 @@
       </div>
       <div class="board" id="board">
         ${LANES.map((lane) => {
-          const rows = board.rows.filter((r) => r.status === lane.key);
+          const rows = board.rows.filter((r) =>
+            r.status === lane.key && (!lane.match || lane.match(r)));
           return `<div class="board-col ${lane.lane}">
             <header>${UI.esc(lane.label)}<span class="n">${rows.length}</span></header>
+            ${lane.foot ? `<div class="muted small" style="padding:0 8px 4px">${UI.esc(lane.foot)}</div>` : ''}
             <div class="items">${rows.map(card).join('') || '<div class="muted small" style="padding:8px">—</div>'}</div>
           </div>`;
         }).join('')}
@@ -175,8 +189,9 @@
         const res = await API.post('/api/visits/arrive', { patientId: patient.id, ...values });
         UI.closeModal();
         UI.ok(`${patient.first_name} added to the queue — token #${res.visit.token_no}.`);
-        if (res.nextStep === 'financial_screening') {
-          UI.warn('Uninsured or changed circumstances — send the patient to financial screening.');
+        if (res.flags && res.flags.mayNeedFinancialHelp) {
+          // A note, not a diversion — they carry on to the counter either way.
+          UI.warn('Uninsured or changed circumstances — worth offering financial assistance.');
         }
         APP.reload();
       } catch (err) {
@@ -288,13 +303,19 @@
     const out = [];
     const go = (route, params) => () => { UI.closeAllModals(); APP.navigate(route, params); };
 
-    if (visit.status === 'financial_screening' && APP.can(['counselor', 'reception', 'cashier'])) {
-      out.push({ id: 'fs', label: 'Financial screening', kind: '', run: go('financial', { visitId: visit.id, patientId: visit.patient_id }) });
-    }
     if (['waiting_room', 'financial_screening'].includes(visit.status) && APP.can(['reception'])) {
       out.push({ id: 'ci', label: 'Check in', kind: 'teal', run: () => checkIn(visit) });
     }
-    if (['checked_in'].includes(visit.status) && APP.can(['nurse', 'doctor'])) {
+    /*
+     * The counter between the front desk and the nurse. The fee is offered
+     * only while it is actually owed, and the nurse is not offered a patient
+     * who has not been through it — the server refuses that anyway, and a
+     * button that leads to a refusal is worse than no button.
+     */
+    if (visit.status === 'checked_in' && !visit.consultation_paid && APP.can(['cashier'])) {
+      out.push({ id: 'cf', label: 'Collect consultation fee', kind: 'teal', run: () => collectFee(visit) });
+    }
+    if (visit.status === 'checked_in' && visit.consultation_paid && APP.can(['nurse', 'doctor'])) {
       out.push({ id: 'vi', label: 'Record vitals', kind: 'teal', run: go('vitals', { visitId: visit.id }) });
     }
     if (['vitals_done', 'with_provider'].includes(visit.status) && APP.can(['doctor'])) {
@@ -313,11 +334,50 @@
     return out;
   }
 
+  /**
+   * Take the consultation fee.
+   *
+   * Deliberately short: the amount is the rate card's and the mode is the only
+   * question, because the queue at a clinic counter is not the place for a
+   * form. The receipt prints straight away — the patient carries it to the
+   * nurse, and it is what the next desk goes on.
+   */
+  function collectFee(visit) {
+    UI.modal({
+      title: 'Consultation fee — ' + visit.patient_name,
+      size: 'narrow',
+      body: `<div class="alert info">The fee is taken before the nurse station. It goes on this visit's
+          bill at the rate on the card, and the patient goes on to vitals.</div>
+        <form id="cf-form">
+          ${UI.field({ name: 'mode', label: 'Mode', required: true,
+            options: ['cash', 'upi', 'card', 'netbanking'].map((m) => ({ value: m, label: UI.titleise(m) })) })}
+          ${UI.field({ name: 'reference', label: 'Reference / transaction ID' })}
+        </form>
+        <div id="cf-out"></div>`,
+      footer: `<button class="btn ghost" data-act="__close">Cancel</button>
+        <button class="btn" data-act="take">Collect &amp; send to the nurse</button>`,
+      async onAction(act, modal) {
+        if (act !== 'take') return;
+        try {
+          const res = await API.post(`/api/visits/${visit.id}/consultation-fee`,
+            UI.formValues(modal.querySelector('#cf-form')));
+          UI.ok(`${UI.money(res.fee)} collected — receipt ${res.receiptNo}. Send them to the nurse.`);
+          if (APP.printReceipt) APP.printReceipt(res.receiptNo);
+          UI.closeAllModals();
+          APP.reload();
+        } catch (err) {
+          modal.querySelector('#cf-out').innerHTML = `<div class="alert danger mt">${UI.esc(err.message)}</div>`;
+          return 'keep';
+        }
+      },
+    });
+  }
+
   async function checkIn(visit) {
     UI.modal({
       title: 'Check in — ' + visit.patient_name,
       size: 'narrow',
-      body: `<div class="alert info">Confirm the reason for the visit before sending the patient to the nurse station.</div>
+      body: `<div class="alert info">Confirm the reason for the visit. The patient then goes to the cashier for the consultation fee, and on to the nurse station.</div>
         <form id="ci-form">
           ${UI.field({ name: 'reasonForVisit', label: 'Reason for visit', required: true, value: visit.reason_for_visit || '' })}
         </form>`,

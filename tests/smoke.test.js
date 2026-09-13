@@ -1,7 +1,7 @@
 'use strict';
 /**
  * End-to-end walk of the clinic workflow, in the order of the flowchart:
- *   WhatsApp booking → arrival → financial screening → check-in → vitals
+ *   WhatsApp booking → arrival → check-in → consultation fee → vitals
  *   → consultation → lab → pharmacy → billing → check-out
  * plus a full IPD admission-to-discharge cycle.
  */
@@ -140,7 +140,7 @@ test('WhatsApp bot books an appointment end to end', async () => {
   assert.match(cancel.reply, /has been cancelled/);
 });
 
-test('full OPD journey: arrive → screen → check-in → vitals → consult → lab → pharmacy → bill → exit',
+test('full OPD journey: arrive → check-in → fee → vitals → consult → pay → lab → pharmacy → exit',
   async () => {
     // ---- registration --------------------------------------------------
     const reg = await api('POST', '/api/patients', {
@@ -153,16 +153,25 @@ test('full OPD journey: arrive → screen → check-in → vitals → consult �
     const patientId = reg.body.id;
     assert.match(reg.body.uhid, /^SPD/);
 
-    // ---- arrival: new patient + uninsured → financial screening lane ----
+    /*
+     * ---- arrival -------------------------------------------------------
+     * Being uninsured is flagged for the counsellor but diverts nobody. The
+     * patient goes to the front desk and then to the counter like anyone else.
+     */
     const arrive = await api('POST', '/api/visits/arrive', {
       patientId, reasonForVisit: 'Burning epigastric pain', doctorId: ids.drImran,
     }, 'reception');
     assert.strictEqual(arrive.status, 201, JSON.stringify(arrive.body));
     const visitId = arrive.body.visit.id;
     assert.strictEqual(arrive.body.flags.isNewPatient, true);
-    assert.strictEqual(arrive.body.nextStep, 'financial_screening');
+    assert.strictEqual(arrive.body.nextStep, 'check_in');
+    assert.strictEqual(arrive.body.flags.mayNeedFinancialHelp, true, 'flagged, not diverted');
 
-    // ---- financial screening -------------------------------------------
+    /*
+     * ---- financial assistance, offered alongside ------------------------
+     * Management's process rather than a turnstile: it can be run at any
+     * point and the band it sets applies to the bills from then on.
+     */
     const screen = await api('POST', '/api/financial/screenings', { patientId, visitId }, 'counselor');
     assert.strictEqual(screen.status, 201, JSON.stringify(screen.body));
     const screeningId = screen.body.screening.id;
@@ -181,13 +190,21 @@ test('full OPD journey: arrive → screen → check-in → vitals → consult �
       decision: 'continue',
     }, 'counselor');
     assert.strictEqual(decide.status, 200, JSON.stringify(decide.body));
-    assert.strictEqual(decide.body.nextStep, 'waiting_room');
 
     // ---- check-in -------------------------------------------------------
     const checkIn = await api('POST', `/api/visits/${visitId}/check-in`, {
       reasonForVisit: 'Burning epigastric pain', doctorId: ids.drImran,
     }, 'reception');
     assert.strictEqual(checkIn.status, 200, JSON.stringify(checkIn.body));
+    assert.strictEqual(checkIn.body.nextStep, 'consultation_fee');
+
+    // ---- the counter, before the nurse station --------------------------
+    const tooEarly = await api('POST', `/api/visits/${visitId}/vitals`, { pulse: 88 }, 'nurse');
+    assert.strictEqual(tooEarly.status, 409, 'the nurse cannot start on an unpaid consultation');
+
+    const fee = await api('POST', `/api/visits/${visitId}/consultation-fee`, { mode: 'cash' }, 'cashier');
+    assert.strictEqual(fee.status, 201, JSON.stringify(fee.body));
+    assert.ok(fee.body.fee > 0, 'charged at the rate on the card');
 
     // ---- vitals ---------------------------------------------------------
     const vitals = await api('POST', `/api/visits/${visitId}/vitals`, {
@@ -225,7 +242,8 @@ test('full OPD journey: arrive → screen → check-in → vitals → consult �
     const sign = await api('POST', `/api/visits/${visitId}/consultation/sign`, {}, 'doctor');
     assert.strictEqual(sign.status, 200);
     assert.strictEqual(sign.body.labsOpen, 1);
-    assert.strictEqual(sign.body.nextStep, 'lab');
+    assert.strictEqual(sign.body.nextStep, 'billing',
+      'tests ordered, so back to the counter — the bench is not reached unpaid');
 
     // ---- results page the patient carries to check-out -------------------
     const resultsPage = await api('GET', `/api/visits/${visitId}/results-page`, undefined, 'reception');
@@ -304,14 +322,26 @@ test('full OPD journey: arrive → screen → check-in → vitals → consult �
     assert.ok(bill.body.sliding_discount > 0, 'band B discount should be applied');
     console.log(`      billing: gross ${bill.body.gross}, sliding-scale discount ${bill.body.sliding_discount}, net ${bill.body.net}`);
 
-    // ---- check-out is blocked while a balance stands ---------------------
+    /*
+     * ---- check-out is blocked while a balance stands ---------------------
+     * The clinic is now paid as the patient goes, so by this point most of
+     * the bill is already settled. A charge added at the desk — a dressing on
+     * the way out — is what leaves something standing, and it is that the
+     * guard is being tested on.
+     */
+    await api('POST', `/api/billing/invoices/${invoiceId}/items`,
+      { refType: 'service', description: 'Wound dressing — small', qty: 1, unitPrice: 150 }, 'cashier');
+
     const blocked = await api('POST', `/api/visits/${visitId}/check-out`, {}, 'cashier');
-    assert.strictEqual(blocked.status, 409);
+    assert.strictEqual(blocked.status, 409, JSON.stringify(blocked.body));
     assert.match(blocked.body.error, /Outstanding balance/);
+
+    const owing = (await api('GET', `/api/billing/invoices/${invoiceId}`, undefined, 'cashier')).body;
+    assert.ok(owing.balance > 0.009, 'something is genuinely outstanding');
 
     // ---- overpayment is refused ------------------------------------------
     const over = await api('POST', `/api/billing/invoices/${invoiceId}/payments`, {
-      amount: bill.body.balance + 500, mode: 'cash',
+      amount: owing.balance + 500, mode: 'cash',
     }, 'cashier');
     assert.strictEqual(over.status, 400);
 
@@ -322,7 +352,7 @@ test('full OPD journey: arrive → screen → check-in → vitals → consult �
      * instalment agreement below — not a smaller number typed into the box
      * with no account of why.
      */
-    const half = Math.round(bill.body.balance / 2);
+    const half = Math.round(owing.balance / 2);
     const short = await api('POST', `/api/billing/invoices/${invoiceId}/payments`, {
       amount: half, mode: 'upi', reference: 'UPI-TEST-1',
     }, 'cashier');

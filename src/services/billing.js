@@ -68,11 +68,24 @@ function recalc(invoiceId) {
    * stuck at a counter with nothing left to pay.
    */
   if (status === 'paid') {
-    db.prepare(
+    const released = db.prepare(
       `UPDATE lab_orders
           SET released_at = datetime('now'), billing_status = 'paid'
         WHERE invoice_id = ? AND released_at IS NULL AND status != 'cancelled'`
-    ).run(invoiceId);
+    ).run(invoiceId).changes;
+
+    /*
+     * And the patient walks from the counter to the bench. Only forward, and
+     * only from the two lanes that sit before the lab — settling a bill weeks
+     * later must not drag a finished visit back onto the board.
+     */
+    if (released) {
+      db.prepare(
+        `UPDATE visits SET status = 'labs_pending'
+          WHERE id = (SELECT visit_id FROM invoices WHERE id = ?)
+            AND status IN ('with_provider', 'billing_pending')`
+      ).run(invoiceId);
+    }
   }
 
   return db.prepare('SELECT * FROM invoices WHERE id = ?').get(invoiceId);

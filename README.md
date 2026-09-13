@@ -60,6 +60,34 @@ npm run db:reset  # wipe and start over
 npm run dev       # auto-restart on file changes
 ```
 
+## The walk through the building
+
+The clinic is **paid as the patient goes** rather than reckoned up on the way out,
+and that decides the order of everything:
+
+```
+front desk  ->  cashier (consultation fee)  ->  nurse  ->  doctor
+                                                            |
+        nothing further ordered  ->  pharmacy  ->  pay there  ->  out
+        tests ordered  ->  cashier (pay for them)  ->  lab  ->  pharmacy  ->  out
+```
+
+Two of those arrows are gates the system refuses to let anyone past, not merely
+steps the screens suggest:
+
+- **No fee, no nurse station.** The vitals route refuses a visit whose consultation
+  fee the counter has not taken.
+- **No receipt, no test.** Collect, start, result and verify all refuse a diagnostic
+  order that has not been paid for.
+
+A patient on a sliding-scale band has it taken off **at the counter**, before the
+money is handed over — paying in full and being owed a refund afterwards would mean
+the clinic holding money belonging to exactly the people the scale exists for.
+
+**Financial assistance is no longer a lane.** Arriving uninsured is flagged for the
+counsellor and diverts nobody; the screening is a conversation the clinic has when it
+decides to, at any point, and the band it sets applies to the bills from then on.
+
 ## The workflow, as implemented
 
 The four lanes below are the four lanes of the source chart. **Workflow Map** inside the app

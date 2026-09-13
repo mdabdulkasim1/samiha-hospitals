@@ -10,6 +10,11 @@ const whatsapp = require('../services/whatsapp');
 const audit = require('../lib/audit');
 
 const router = express.Router();
+/*
+ * Who may open a screening. It is management's process rather than a step in
+ * the patient's walk, but the desks that notice somebody struggling to pay are
+ * the ones who start it, so they keep it.
+ */
 const screeningRoles = requireRole('counselor', 'reception', 'cashier');
 
 /**
@@ -177,16 +182,15 @@ router.post('/screenings/:id/decide', screeningRoles, wrap((req, res) => {
       WHERE id = ?`
   ).run(decision, programId, status, str(req.body.notes), id);
 
+  /*
+   * Screening no longer holds a visit up, so deciding one no longer releases
+   * it. A patient is not parked at this desk on the way in — the band and the
+   * programme are recorded against them and apply to the bills from here on,
+   * wherever in the building they happen to be standing.
+   */
   if (decision === 'continue') {
     db.prepare('UPDATE patients SET sliding_scale_band = ?, assistance_program_id = ? WHERE id = ?')
       .run(s.sliding_scale_band, programId, s.patient_id);
-    if (s.visit_id) {
-      db.prepare("UPDATE visits SET status = 'checked_in' WHERE id = ? AND status = 'financial_screening'").run(s.visit_id);
-    }
-  } else if (s.visit_id) {
-    // Patient chose not to proceed — the workflow sends them to the exit.
-    db.prepare("UPDATE visits SET status = 'checked_out', checked_out_at = datetime('now') WHERE id = ? AND status = 'financial_screening'")
-      .run(s.visit_id);
   }
 
   if (s.visit_id) {

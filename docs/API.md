@@ -83,6 +83,7 @@ status: `400` invalid input · `401` not signed in · `403` wrong role · `404` 
 | POST | `/visits/:id/consultation` | doctor | Clinical care — SOAP note, diagnoses, prescriptions |
 | POST | `/visits/:id/consultation/sign` | doctor | Sign and route onward |
 | GET | `/visits/:id/results-page` | clinical desks | The results page the patient carries |
+| POST | `/visits/:id/consultation-fee` | cashier — **the counter before the nurse station**; charges the fee off the rate card, applies the patient's band and takes it in full |
 | POST | `/visits/:id/prepare-bill` | cashier, reception | Assemble charges at the check-out desk |
 | POST | `/visits/:id/check-out` | cashier, reception | Patient leaves — books the follow-up, issues the exit pass |
 

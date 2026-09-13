@@ -3,8 +3,8 @@
   'use strict';
 
   APP.register('financial', {
-    title: 'Financial Screening',
-    subtitle: 'Sliding scale and assistance programmes',
+    title: 'Financial Assistance',
+    subtitle: 'Sliding scale and assistance programmes — offered, not required',
 
     async render(el, params) {
       APP.actions([{ id: 'new', label: '+ Start screening', kind: '', onClick: () => openStart(params) },

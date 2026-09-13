@@ -17,20 +17,52 @@ const clinicalRoles = requireRole('reception', 'nurse', 'doctor', 'counselor', '
 
 // The workflow stages, in the order a patient moves through them.
 /*
- * The lanes a patient passes through, in the order the clinic works them:
+ * The lanes a patient passes through, in the order the clinic works them.
  *
- *   front desk -> vitals (nurse) -> doctor -> lab, if anything was ordered
- *              -> cashier -> pharmacy -> out
+ *   front desk -> cashier (consultation fee) -> nurse -> doctor
+ *      -> nothing further:  pharmacy -> pay there -> out
+ *      -> tests ordered:    cashier (pay for them) -> lab -> pharmacy -> out
  *
- * The pharmacy is last and takes its own money. That is why it sits after the
- * cashier rather than before: the cashier settles the consultation, the bed
- * and the diagnostics, and the patient then collects their medicines and pays
- * for those at the counter that hands them over. A visit is not finished until
- * the pharmacy has dispensed, which is what keeps a prescription from being
- * left behind on a desk.
+ * The clinic is paid as the patient goes rather than reckoned up at the end,
+ * and that is the whole shape of this list. The consultation is paid for on
+ * the way in, which is why `fee_pending` sits before the nurse station: a
+ * patient reaches the nurse only once the counter has taken it. Diagnostics
+ * are paid for before the bench will touch them, which is why the cashier now
+ * sits ahead of the lab rather than after it. Medicines are paid for at the
+ * counter that hands them over, which is why the pharmacy is last and takes
+ * its own money.
+ *
+ * `financial_screening` used to be a lane of its own, entered on the way in
+ * whenever a patient was uninsured. It is no longer part of anybody's walk
+ * through the building: means-testing is a conversation the clinic has when
+ * it decides to, not a turnstile every uninsured patient is put through, so
+ * it lives on the management side now. The status is still accepted so that
+ * visits recorded under it still read.
  */
-const STAGES = ['waiting_room', 'financial_screening', 'checked_in', 'vitals_done', 'with_provider',
-  'labs_pending', 'billing_pending', 'pharmacy_pending', 'checked_out'];
+const STAGES = ['waiting_room', 'checked_in', 'vitals_done', 'with_provider',
+  'billing_pending', 'labs_pending', 'pharmacy_pending', 'checked_out'];
+
+/**
+ * Has the consultation been paid for?
+ *
+ * Answered from the visit's own trail rather than by arithmetic on the bill,
+ * and both halves of that matter.
+ *
+ * Arithmetic would have to compare what the consultation line was billed at
+ * against what has been paid — and a patient on a sliding-scale band pays less
+ * than the line says by design, so they would never satisfy it and would be
+ * turned away at the nurse station for having a concession. Then diagnostics
+ * land on the same invoice later in the morning, the balance goes positive
+ * again, and a visit that was through the counter hours ago would look unpaid.
+ *
+ * The counter taking the fee is an event, so it is recorded as one, and the
+ * question is simply whether it happened.
+ */
+function consultationPaid(visitId) {
+  return Boolean(db.prepare(
+    "SELECT 1 FROM visit_events WHERE visit_id = ? AND stage = 'consultation_fee_paid' LIMIT 1"
+  ).get(visitId));
+}
 
 function recordEvent(visitId, stage, detail, actorId) {
   db.prepare('INSERT INTO visit_events (visit_id, stage, detail, actor_id) VALUES (?, ?, ?, ?)')
@@ -66,7 +98,11 @@ router.get('/board', clinicalRoles, wrap((req, res) => {
             (SELECT COUNT(*) FROM prescriptions rx WHERE rx.visit_id = v.id AND rx.status = 'pending') AS rx_pending,
             (SELECT i.id FROM invoices i WHERE i.visit_id = v.id ORDER BY i.id DESC LIMIT 1) AS invoice_id,
             (SELECT i.balance FROM invoices i WHERE i.visit_id = v.id ORDER BY i.id DESC LIMIT 1) AS invoice_balance,
-            (SELECT fs.status FROM financial_screenings fs WHERE fs.visit_id = v.id ORDER BY fs.id DESC LIMIT 1) AS screening_status
+            (SELECT fs.status FROM financial_screenings fs WHERE fs.visit_id = v.id ORDER BY fs.id DESC LIMIT 1) AS screening_status,
+            -- Which side of the first counter they are on: the board shows the
+            -- patient waiting to pay apart from the one waiting for the nurse.
+            EXISTS (SELECT 1 FROM visit_events ve
+                     WHERE ve.visit_id = v.id AND ve.stage = 'consultation_fee_paid') AS consultation_paid
        FROM visits v
        JOIN patients p ON p.id = v.patient_id
        LEFT JOIN users u ON u.id = v.doctor_id
@@ -76,6 +112,7 @@ router.get('/board', clinicalRoles, wrap((req, res) => {
       ORDER BY CASE v.status WHEN 'checked_out' THEN 1 ELSE 0 END, v.token_no, v.id`
   ).all(date);
 
+  for (const r of rows) r.consultation_paid = Boolean(r.consultation_paid);
   // The "₹ due" flag on a card belongs to the desks that would collect it.
   if (!seesMoney(req.user)) for (const r of rows) r.invoice_balance = null;
 
@@ -154,20 +191,27 @@ router.post('/arrive', requireRole('reception'), wrap((req, res) => {
   if (appointmentId) db.prepare("UPDATE appointments SET status = 'checked_in' WHERE id = ?").run(appointmentId);
   recordEvent(visitId, 'arrived', isNew ? 'New patient — demographic & medical history paperwork required' : 'Returning patient', req.user.id);
 
-  // Decision: uninsured or financial situation changed → financial screening lane.
-  const needsScreening = bool(req.body.needsFinancialAssistance,
+  /*
+   * Being uninsured no longer diverts anybody. It is still worth knowing and
+   * is still flagged, so the counsellor can pick the patient up if the clinic
+   * wants to — but somebody who has come in with a fever is not held at a
+   * means-testing desk on the way past.
+   */
+  const mayNeedHelp = bool(req.body.needsFinancialAssistance,
     Boolean(patient.is_uninsured) || financialChanged);
-  if (needsScreening) {
-    db.prepare("UPDATE visits SET status = 'financial_screening' WHERE id = ?").run(visitId);
-    recordEvent(visitId, 'financial_screening_required',
+  if (mayNeedHelp) {
+    recordEvent(visitId, 'assistance_flagged',
       patient.is_uninsured ? 'Patient is uninsured' : 'Financial situation changed', req.user.id);
   }
 
-  audit.log(req, 'arrive', 'visit', visitId, { visitNo, isNew, needsScreening });
+  audit.log(req, 'arrive', 'visit', visitId, { visitNo, isNew });
   res.status(201).json({
     visit: db.prepare('SELECT * FROM visits WHERE id = ?').get(visitId),
-    nextStep: needsScreening ? 'financial_screening' : 'check_in',
-    flags: { isNewPatient: isNew, needsPaperwork: isNew, screeningDue: dueScreening, needsFinancialScreening: needsScreening },
+    nextStep: 'check_in',
+    flags: {
+      isNewPatient: isNew, needsPaperwork: isNew, screeningDue: dueScreening,
+      mayNeedFinancialHelp: mayNeedHelp,
+    },
   });
 }));
 
@@ -203,7 +247,99 @@ router.post('/:id/check-in', requireRole('reception'), wrap((req, res) => {
     });
   }
   audit.log(req, 'check_in', 'visit', id);
-  res.json({ visit: updated, nextStep: 'vitals' });
+  // The cashier, not the nurse: the consultation is paid for on the way in.
+  res.json({ visit: updated, nextStep: 'consultation_fee' });
+}));
+
+/**
+ * The consultation fee, taken on the way in.
+ *
+ * This is the cashier's step between the front desk and the nurse station. It
+ * bills the fee off the published rate card — not the doctor's own profile,
+ * which is a figure nobody agreed — and takes it in full, because the counter
+ * does not take part of a bill.
+ *
+ * Everything the patient owes for this visit goes on the one invoice, so a
+ * diagnostic priced later in the morning lands beside the consultation rather
+ * than on a second bill the patient has to be found again for.
+ */
+router.post('/:id/consultation-fee', requireRole('cashier'), wrap((req, res) => {
+  const id = int(req.params.id);
+  const visit = db.prepare('SELECT * FROM visits WHERE id = ?').get(id);
+  if (!visit) throw notFound('Visit not found');
+  if (visit.status === 'checked_out') throw conflict('This visit is already closed.');
+  if (consultationPaid(id)) throw conflict('The consultation fee has already been collected for this visit.');
+
+  const card = db.prepare('SELECT price FROM services WHERE code = ? AND active = 1')
+    .get(visit.is_new_patient ? 'CONS-NEW' : 'CONS-FU');
+  const profile = visit.doctor_id
+    ? db.prepare('SELECT * FROM doctor_profiles WHERE user_id = ?').get(visit.doctor_id) : null;
+  const fee = card && card.price > 0
+    ? card.price
+    : (visit.is_new_patient
+      ? (profile ? profile.consult_fee : 0)
+      : (profile ? (profile.follow_up_fee || profile.consult_fee) : 0));
+  if (!(fee > 0)) {
+    throw badRequest('No consultation rate is set. Price CONS-NEW and CONS-FU under Services & Rates first.');
+  }
+
+  let invoice = db.prepare(
+    `SELECT * FROM invoices
+      WHERE visit_id = ? AND status NOT IN ('cancelled') AND kind != 'pharmacy'
+      ORDER BY id DESC LIMIT 1`
+  ).get(id);
+  if (!invoice) {
+    invoice = billing.createInvoice({
+      patientId: visit.patient_id, visitId: id, kind: 'opd', createdBy: req.user.id,
+    });
+  }
+
+  const doctor = visit.doctor_id
+    ? db.prepare('SELECT name FROM users WHERE id = ?').get(visit.doctor_id) : null;
+  const consultation = db.prepare('SELECT id FROM consultations WHERE visit_id = ?').get(id);
+  if (!billing.hasItem(invoice.id, 'consultation', consultation ? consultation.id : id)) {
+    billing.addItem(invoice.id, {
+      refType: 'consultation', refId: consultation ? consultation.id : id,
+      description: `Consultation — ${doctor ? doctor.name : 'Doctor'}`
+        + (visit.is_new_patient ? ' (new patient)' : ' (follow-up)'),
+      qty: 1, unitPrice: fee,
+    });
+  }
+
+  /*
+   * The patient's concession, applied before the money is taken rather than
+   * after it.
+   *
+   * The bill used to be reckoned up on the way out, so the band could be
+   * applied at the end and still reach the right figure. Now that the fee is
+   * collected on the way in, a band applied later would mean a patient who
+   * had already handed over the full amount was owed some of it back — the
+   * clinic quietly holding money belonging to exactly the people the sliding
+   * scale exists for. So it is applied here, and they pay the discounted fee.
+   */
+  const screening = db.prepare(
+    "SELECT * FROM financial_screenings WHERE patient_id = ? AND status = 'completed' ORDER BY id DESC LIMIT 1"
+  ).get(visit.patient_id);
+  if (screening && screening.discount_pct > 0) {
+    billing.applySlidingScale(invoice.id, screening.discount_pct);
+  }
+
+  const fresh = db.prepare('SELECT * FROM invoices WHERE id = ?').get(invoice.id);
+  const { receiptNo } = billing.addPayment(invoice.id, {
+    patientId: visit.patient_id, amount: fresh.balance,
+    mode: str(req.body.mode, 'cash'), reference: str(req.body.reference),
+    receivedBy: req.user.id,
+  });
+
+  advance(id, 'checked_in');
+  recordEvent(id, 'consultation_fee_paid',
+    `${fresh.balance.toFixed(2)} collected of ${fee.toFixed(2)} — receipt ${receiptNo}`, req.user.id);
+  audit.log(req, 'consultation_fee', 'visit', id, { invoiceId: invoice.id, fee, receiptNo });
+
+  res.status(201).json({
+    receiptNo, fee, collected: fresh.balance,
+    invoice: billing.fullInvoice(invoice.id), nextStep: 'vitals',
+  });
 }));
 
 // ---------------------------------------------------------------- 3. vitals
@@ -212,6 +348,19 @@ router.post('/:id/vitals', requireRole('nurse', 'doctor'), wrap((req, res) => {
   const id = int(req.params.id);
   const visit = db.prepare('SELECT * FROM visits WHERE id = ?').get(id);
   if (!visit) throw notFound('Visit not found');
+
+  /*
+   * The consultation is paid for before the nurse station, so this is where
+   * that is actually enforced — a rule in the browser is not a rule. A ward
+   * patient's observations are not part of an out-patient walk and are taken
+   * on the IPD chart, so they never come through here.
+   */
+  if (!consultationPaid(id)) {
+    throw conflict(
+      'The consultation fee has not been collected yet. '
+      + 'Send the patient to the cashier — the nurse station is after the counter.'
+    );
+  }
 
   const height = num(req.body.heightCm, 0);
   const weight = num(req.body.weightKg, 0);
@@ -344,13 +493,27 @@ router.post('/:id/consultation/sign', requireRole('doctor'), wrap((req, res) => 
   ).get(id).c;
   const rxPending = db.prepare("SELECT COUNT(*) AS c FROM prescriptions WHERE visit_id = ? AND status = 'pending'").get(id).c;
 
-  // Diagnostics first if any were ordered, then the cashier. The pharmacy
-  // comes after the money desk, not before it.
-  advance(id, labsOpen ? 'labs_pending' : 'billing_pending');
+  /*
+   * Where the patient goes when the doctor is done, which is the fork the
+   * whole flow turns on.
+   *
+   * Tests ordered — back to the cashier. Nothing reaches the bench until it
+   * has been paid for, so sending them to the lab first would only be sending
+   * them to a counter that has to turn them away.
+   *
+   * Nothing ordered — the pharmacy, where the medicines are handed over and
+   * paid for at the same counter, and the visit ends. With no prescription
+   * either there is nothing left to do but close it at the desk.
+   */
+  const next = labsOpen ? 'billing_pending' : (rxPending ? 'pharmacy_pending' : 'billing_pending');
+  advance(id, next);
   recordEvent(id, 'consultation_signed', `Labs open: ${labsOpen}, prescriptions pending: ${rxPending}`, req.user.id);
   audit.log(req, 'sign', 'consultation', c.id);
 
-  res.json({ ok: true, labsOpen, rxPending, nextStep: labsOpen ? 'lab' : 'billing' });
+  res.json({
+    ok: true, labsOpen, rxPending,
+    nextStep: labsOpen ? 'billing' : (rxPending ? 'pharmacy' : 'checkout'),
+  });
 }));
 
 // ---------------------------------------------------------- 5. results page
