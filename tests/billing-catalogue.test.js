@@ -387,10 +387,20 @@ test('discharge posts the bed and does not bill a charge twice', async () => {
 test('the collections list walks the day, and only the bills are money', async () => {
   const today = new Date().toISOString().slice(0, 10);
   const doctorId = ids.imran;
-  const avail = (await api('GET',
-    `/api/appointments/availability?doctorId=${doctorId}&date=${today}`, undefined, 'reception')).body;
-  const free = (avail.slots || []).map((x) => `${today} ${x.time}:00`);
-  assert.ok(free.length >= 2, 'the doctor needs free slots today for this test');
+
+  /*
+   * Two appointments today, at fixed times rather than at whatever the
+   * availability endpoint still has free.
+   *
+   * Asking for free slots made this test depend on the clock: it only passed
+   * while the doctor's last session of the day was still open, so it failed
+   * every evening and all Sunday afternoon, when the one Sunday session ends
+   * at noon. The list under test is the day's collections, and an appointment
+   * at nine is on it at four o'clock whether it was kept or not — which is the
+   * more useful case anyway, since a booking nobody turned up for is exactly
+   * what the desk is chasing.
+   */
+  const free = [`${today} 08:05:00`, `${today} 08:10:00`];
 
   // Booked, has not walked in.
   const booked = await newPatient('Booked');
