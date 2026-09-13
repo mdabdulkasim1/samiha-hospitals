@@ -565,10 +565,11 @@ where it shows in that job's cost alongside the goods. Either can still be overr
 hand-chosen one is left alone. An expense belongs to one order, never both, and the server refuses
 the pair.
 
-The list follows the company on the form — six companies' orders in one list is a list nobody can
-find anything in, and an expense booked to one company against another's order is a mistake the
-books would carry quietly. The expense search matches LPO numbers on both sides, so the number on
-the paper in front of you finds the entry.
+**Every LPO the ERP has issued or taken in is in that list**, all six companies, nothing filtered
+away — the money does not respect the boundary, and one company clears a shipment for an order
+another raised. Each line carries the company it belongs to, and the company being booked to is
+listed first because that is the common case. The expense search matches LPO numbers on both sides,
+so the number on the paper in front of you finds the entry.
 
 The general overheads are then **spread across the accounts pro rata**, on what each client was
 invoiced and on what each manufacturer billed us, so a per-account figure means something. The

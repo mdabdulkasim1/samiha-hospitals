@@ -525,13 +525,40 @@
         const jobEl = modal.querySelector('[name=enquiry_id]');
         let lpos = [];
 
-        const loadLpos = async () => {
+        /*
+         * Every LPO the ERP has issued or taken in — both directions, all six
+         * companies, nothing filtered away.
+         *
+         * The money does not respect the boundary: one company clears a
+         * shipment for an order another company raised, and the person booking
+         * it has one number in front of them. So the whole book is offered and
+         * each line carries the company it belongs to. The company being booked
+         * to is simply listed first, because that is the common case.
+         */
+        const render = () => {
           const keep = poEl.value;
+          const here = String(companyEl.value || '');
+          const order = (a, b) => {
+            const mine = (o) => (String(o.company_id) === here ? 0 : 1);
+            return mine(a) - mine(b) || String(b.ref).localeCompare(String(a.ref));
+          };
+          const group = (label, side) => {
+            const rows = lpos.filter((o) => o.side === side).sort(order);
+            if (!rows.length) return '';
+            return `<optgroup label="${label}">${rows.map((o) => `<option value="${o.key}">${
+              UI.esc(`${o.company_code ? `${o.company_code} · ` : ''}${o.ref} — ${o.party || ''}${
+                o.project ? ` · ${o.project}` : ''}`.trim())
+            }</option>`).join('')}</optgroup>`;
+          };
+          poEl.innerHTML = '<option value="">Not against one LPO</option>'
+            + group('Our LPOs — out to the manufacturers', 'ours')
+            + group("Clients' LPOs — in to us", 'client');
+          if (keep && lpos.some((o) => o.key === keep)) poEl.value = keep;
+        };
+
+        const loadLpos = async () => {
           poEl.disabled = true;
-          const qs = API.qs({ company_id: companyEl.value, limit: 300 });
-          // Both directions, asked for together: the money goes out against
-          // ours and comes back against theirs, and whoever is booking has one
-          // number in front of them without caring which way it points.
+          const qs = API.qs({ limit: 500 });
           const [ours, theirs] = await Promise.all([
             API.get(`/api/purchase/orders${qs}`).catch(() => ({ rows: [] })),
             API.get(`/api/sales/orders${qs}`).catch(() => ({ rows: [] })),
@@ -540,26 +567,15 @@
             ...ours.rows.filter((o) => o.status !== 'cancelled').map((o) => ({
               key: `po:${o.id}`, ref: o.lpo_no, party: o.supplier_name,
               project: o.project, partner_id: o.partner_id, enquiry_id: o.enquiry_id,
-              side: 'ours',
+              company_id: o.company_id, company_code: o.company_code, side: 'ours',
             })),
             ...theirs.rows.filter((o) => o.status !== 'cancelled').map((o) => ({
               key: `so:${o.id}`, ref: o.client_lpo_no || o.so_no, party: o.client_name,
               project: o.project, partner_id: o.partner_id, enquiry_id: o.enquiry_id,
-              side: 'client',
+              company_id: o.company_id, company_code: o.company_code, side: 'client',
             })),
           ];
-          const group = (label, side) => {
-            const rows = lpos.filter((o) => o.side === side);
-            if (!rows.length) return '';
-            return `<optgroup label="${label}">${rows.map((o) => `<option value="${o.key}">${
-              UI.esc(`${o.ref} — ${o.party || ''}${o.project ? ` · ${o.project}` : ''}`.trim())
-            }</option>`).join('')}</optgroup>`;
-          };
-          poEl.innerHTML = '<option value="">Not against one LPO</option>'
-            + group('Our LPOs — out to the manufacturers', 'ours')
-            + group("Clients' LPOs — in to us", 'client');
-          // Keep what was already chosen, if that LPO is in the new list.
-          if (keep && lpos.some((o) => o.key === keep)) poEl.value = keep;
+          render();
           poEl.disabled = false;
         };
 
@@ -571,7 +587,8 @@
           if (partnerEl && !partnerEl.value) partnerEl.value = chosen.partner_id || '';
           if (jobEl && !jobEl.value && chosen.enquiry_id) jobEl.value = chosen.enquiry_id;
         });
-        companyEl.addEventListener('change', loadLpos);
+        // The whole book is already loaded; changing the company only reorders it.
+        companyEl.addEventListener('change', render);
         await loadLpos();
 
         // Fill in the standard VAT once an amount is typed, so nobody has to

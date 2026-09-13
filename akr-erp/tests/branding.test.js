@@ -423,3 +423,26 @@ test('changing the setting changes the logo, and a hand upload still wins', asyn
   assert.equal(gone.removed, true);
   assert.equal(branding.source('mark'), 'bundled', 'and the bundled mark comes back');
 });
+
+test('the app says which commit it is running', async () => {
+  /*
+   * Days were spent on a deployment that had not picked up any of the work
+   * pushed for it, with nobody able to tell from the outside: the screens
+   * looked the same, so the code was assumed to be the same. The platform
+   * hands the container the commit it built, so the application says so —
+   * under the person's name in the sidebar, and on the health check.
+   */
+  const config = require('../src/config');
+  const health = await fetch(`${h.base}/api/health`).then((r) => r.json());
+  assert.ok('release' in health, 'the health check reports the commit');
+  assert.equal(health.release, config.release);
+
+  const me = await admin.get('/api/auth/me');
+  assert.equal(me.release, config.release, 'and every signed-in screen is told');
+
+  const shell = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  assert.match(shell, /APP\.release/, 'and the sidebar shows it');
+
+  // Where the platform says nothing, nothing is claimed.
+  assert.ok(config.release === null || /^[0-9a-f]{7}$/.test(config.release));
+});

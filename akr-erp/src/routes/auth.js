@@ -60,6 +60,8 @@ function context(user) {
      * out afterwards.
      */
     storage: config.dbIsEphemeral ? 'ephemeral' : (config.volumePath ? 'volume' : 'local'),
+    // The commit running, shown in the sidebar — see config.js for why.
+    release: config.release,
     permissions: {
       seesPrices: auth.seesPrices(user),
       seesMoney: auth.seesMoney(user),

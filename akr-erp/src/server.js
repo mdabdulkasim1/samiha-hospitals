@@ -67,6 +67,10 @@ app.get('/api/health', (_req, res) => {
      * on an endpoint anybody can open, without a sign-in.
      */
     build: shell.buildStamp(publicDir),
+    // The commit the platform built, where it tells us. This is the one that
+    // settles "is the running code current".
+    release: config.release,
+    branch: config.releaseBranch,
     branding: {
       mark: branding.source('mark'),
       markUrl: branding.urlFor('mark'),

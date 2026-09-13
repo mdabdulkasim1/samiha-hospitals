@@ -42,8 +42,22 @@ const volumePath = env.RAILWAY_VOLUME_MOUNT_PATH || env.DATA_DIR || null;
 const defaultDbFile = volumePath ? path.join(volumePath, 'akr.db') : './data/akr.db';
 const dbFile = path.resolve(root, env.DB_FILE || defaultDbFile);
 
+/*
+ * Which commit is actually running.
+ *
+ * Three days were lost to a deployment that had not picked up any of the work
+ * pushed for it, with nobody able to tell from the outside — the screens looked
+ * the same, so the code was assumed to be the same. Railway hands the container
+ * the commit it built, so the application can simply say. It goes in the
+ * sidebar, under the person's name, and on the health check.
+ */
+const release = (env.RAILWAY_GIT_COMMIT_SHA || env.GIT_COMMIT_SHA || env.SOURCE_COMMIT || '')
+  .trim().slice(0, 7) || null;
+
 module.exports = {
   root,
+  release,
+  releaseBranch: (env.RAILWAY_GIT_BRANCH || '').trim() || null,
   port: Number(env.PORT || 4000),
   nodeEnv: env.NODE_ENV || 'development',
   isProd: env.NODE_ENV === 'production',

@@ -271,7 +271,9 @@
           <nav class="nav" id="nav"></nav>
           <div class="sidebar-foot">
             <div class="who">${UI.esc(APP.user.name)}</div>
-            <div class="role">${UI.esc(roleLabel(APP.user.role))}</div>
+            <div class="role">${UI.esc(roleLabel(APP.user.role))}${APP.release
+              ? ` · <span class="rel" title="The commit this deployment is running">${
+                UI.esc(APP.release)}</span>` : ''}</div>
             <div class="btn-row" style="margin-top:9px">
               <button id="my-account" style="flex:1">My account</button>
               <button id="logout" style="flex:1">Sign out</button>
