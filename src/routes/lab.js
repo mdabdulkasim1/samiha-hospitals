@@ -125,7 +125,7 @@ router.get('/orders/:id', viewRoles, wrap((req, res) => {
   // `sample_type` lives on the test, and the collection counter needs it on the
   // requisition to know which tube to draw.
   order.items = db.prepare(
-    `SELECT i.*, t.sample_type, t.category, t.tat_hours,
+    `SELECT i.*, t.code, t.sample_type, t.category, t.tat_hours,
             ru.name AS result_by_name, vu.name AS verified_by_name
        FROM lab_order_items i
        LEFT JOIN lab_tests t ON t.id = i.test_id

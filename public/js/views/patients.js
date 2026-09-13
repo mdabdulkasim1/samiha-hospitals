@@ -31,6 +31,17 @@
           <div class="muted small">One number often covers a whole family. Everybody on it is listed
             below — pick the person who has come in.</div>
           <div id="family" class="mt"></div>
+
+          <label class="field mt"><span>…or the register number</span></label>
+          <div class="search-row">
+            <input type="text" id="puhid" autocomplete="off" spellcheck="false"
+                   placeholder="UHID from the patient's card"
+                   value="${UI.esc(params.uhid || '')}">
+            <button class="btn ghost" id="puhid-go">Open file</button>
+          </div>
+          <div class="muted small">One patient, one number, for life. It opens the whole file —
+            every visit, every prescription and every test result they have ever had here.</div>
+          <div id="uhid-miss"></div>
         </div></div>
 
         <div class="search-row">
@@ -113,6 +124,33 @@
       mobile.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); findFamily(); } });
       el.querySelector('#pmobile-go').addEventListener('click', findFamily);
       if (params.phone) findFamily();
+
+      // ------------------------------------------------ the register number
+      /*
+       * The other way in. The mobile is a household and needs picking from;
+       * the register number is one patient, so it opens the file rather than
+       * listing anything. A doctor at a follow-up has the card in their hand
+       * and wants the history, not a search result to click through.
+       */
+      const uhid = el.querySelector('#puhid');
+      const missHost = el.querySelector('#uhid-miss');
+
+      const openByUhid = async () => {
+        const code = uhid.value.trim();
+        missHost.innerHTML = '';
+        if (!code) return;
+        const res = await API.get('/api/patients' + API.qs({ q: code, limit: 5 }));
+        // Match the whole number, not a fragment of one: "12" must not open
+        // the file of the first patient whose UHID happens to contain it.
+        const exact = res.rows.find((r) => String(r.uhid).toLowerCase() === code.toLowerCase());
+        if (exact) return APP.navigate('patients', { id: exact.id });
+        missHost.innerHTML = `<div class="alert warn mt">No patient has the register number
+          <b>${UI.esc(code)}</b>. Check the card, or find them by mobile number above.</div>`;
+      };
+
+      uhid.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); openByUhid(); } });
+      el.querySelector('#puhid-go').addEventListener('click', openByUhid);
+      if (params.uhid) openByUhid();
 
       const input = el.querySelector('#pq');
       const load = async () => {
@@ -660,12 +698,7 @@
             </dl></fieldset>`).join('')
         : UI.empty('No consultations recorded.', '🩺')),
 
-      diagnostics: () => card('Diagnostic orders', UI.table([
-        { label: 'Order', key: 'order_no' },
-        { label: 'Date', render: (o) => UI.esc(UI.date(o.ordered_at)) },
-        { label: 'Tests', render: (o) => UI.esc(o.tests || '—') },
-        { label: 'Status', render: (o) => UI.statusBadge(o.status) },
-      ], p.labOrders, { emptyText: 'No diagnostics ordered.' })),
+      diagnostics: () => diagnosticsPane(p),
 
       medicines: () => card('Prescriptions', UI.table([
         { label: 'Medicine', key: 'drug_name' },
@@ -710,6 +743,7 @@
 
     const card = (title, inner) =>
       `<div class="card"><div class="card-head"><h3>${UI.esc(title)}</h3></div><div class="card-body tight">${inner}</div></div>`;
+
 
     const body = el.querySelector('#ptab-body');
     const show = (name) => {
@@ -1068,5 +1102,192 @@
         APP.reload();
       },
     });
+  }
+
+  /*
+   * Diagnostics on the patient's own record: every result they have ever had.
+   *
+   * The clinic's ask was that a result belongs to the patient rather than to
+   * the visit that produced it, so that a doctor seeing them years later has
+   * the whole file by typing one number. That changes what this tab is. It was
+   * a list of orders — a receipt, useful the same week and useless after — and
+   * it is now the results themselves: the value, the range it was read against
+   * and the flag the lab put on it.
+   *
+   * Trends come first, because they are what a follow-up actually turns on.
+   * One HbA1c is a number; four of them over two years is whether the patient
+   * is getting better, and that is the question in the room.
+   */
+  function diagnosticsPane(p) {
+    const orders = p.labOrders || [];
+    if (!orders.length) return cardOf('Diagnostics', UI.empty('No diagnostics on file.', '🧪'));
+
+    const done = orders.reduce((n, o) => n + (o.items || [])
+      .filter((i) => i.result_value !== null && i.result_value !== '').length, 0);
+    const flagged = orders.reduce((n, o) => n + (o.items || [])
+      .filter((i) => i.abnormal_flag && i.abnormal_flag !== 'normal').length, 0);
+
+    return `
+      <div class="alert info mb">
+        <b>${orders.length}</b> order(s) · <b>${done}</b> result(s) on file
+        ${flagged ? ` · <b>${flagged}</b> outside the reference range` : ''}.
+        This is the patient's permanent record — every test, for the life of the file.
+      </div>
+      ${(p.labTrends || []).length ? cardOf('How these have moved',
+        (p.labTrends || []).map(trendRow).join('')) : ''}
+      ${cardOf('Every test, newest first', orders.map(orderBlock).join(''))}`;
+  }
+
+  const cardOf = (title, inner) =>
+    `<div class="card mb"><div class="card-head"><h3>${UI.esc(title)}</h3></div>
+       <div class="card-body tight">${inner}</div></div>`;
+
+  const flagBadge = (f) => !f ? '' : UI.badge(UI.titleise(f),
+    f === 'critical' ? 'danger' : f === 'normal' ? 'ok' : 'warn');
+
+  /** One order, with what came back from it. */
+  function orderBlock(o) {
+    const items = o.items || [];
+    const head = `
+      <div class="row between wrap" style="gap:.5rem;align-items:baseline">
+        <div><b>${UI.esc(o.order_no)}</b>
+          <span class="muted small"> · ${UI.esc(UI.date(o.ordered_at))}${
+            o.visit_no ? ` · visit ${UI.esc(o.visit_no)}` : ''}${
+            o.doctor_name ? ` · ordered by ${UI.esc(o.doctor_name)}` : ''}</span></div>
+        <div>${UI.statusBadge(o.status)}</div>
+      </div>`;
+
+    if (!items.length) {
+      return `<fieldset class="block mb">${head}
+        <p class="muted small">${UI.esc(o.tests || 'No tests listed.')}</p></fieldset>`;
+    }
+
+    /*
+     * A blood test is a number and belongs in a table; an ECG or an echo is
+     * the technician's report and belongs in prose. Squeezing a paragraph into
+     * a "Result" cell makes it unreadable at exactly the moment it is wanted —
+     * the follow-up — so the two are laid out the way each is written, which
+     * is also how the printed report does it.
+     */
+    const measured = items.filter((i) => !isNarrative(i));
+    const studies = items.filter(isNarrative);
+
+    const rows = measured.map((i) => {
+      const has = i.result_value !== null && i.result_value !== '';
+      const flag = String(i.abnormal_flag || '').toLowerCase();
+      const off = has && flag && flag !== 'normal';
+      return `<tr${off ? ' class="warn-row"' : ''}>
+        <td>${UI.esc(i.test_name)}</td>
+        <td class="num"><b>${has ? UI.esc(i.result_value) : '<span class="muted">awaited</span>'}</b></td>
+        <td>${UI.esc(i.unit || '')}</td>
+        <td class="muted small">${UI.esc(i.ref_range || '—')}</td>
+        <td>${has ? flagBadge(flag) : ''}</td>
+        <td class="muted small">${i.result_at ? UI.esc(UI.date(i.result_at)) : '—'}${
+          i.result_by_name ? `<br>${UI.esc(i.result_by_name)}` : ''}</td>
+      </tr>`;
+    }).join('');
+
+    const reports = studies.map((i) => {
+      const has = i.result_value !== null && i.result_value !== '';
+      return `<div class="mt">
+        <div class="row between wrap" style="gap:.5rem;align-items:baseline">
+          <div><b>${UI.esc(i.test_name)}</b>
+            ${i.abnormal_flag && i.abnormal_flag !== 'normal' ? flagBadge(i.abnormal_flag) : ''}</div>
+          <span class="muted small">${i.result_at ? UI.esc(UI.date(i.result_at)) : ''}${
+            i.result_by_name ? ` · ${UI.esc(i.result_by_name)}` : ''}</span>
+        </div>
+        ${has
+          ? `<p style="white-space:pre-wrap;margin:.2rem 0">${UI.esc(i.result_value)}</p>`
+          : '<p class="muted small" style="margin:.2rem 0">Report awaited.</p>'}
+        ${i.result_notes
+          ? `<p style="margin:.2rem 0"><span class="muted small">Impression: </span>
+               <b>${UI.esc(i.result_notes)}</b></p>` : ''}
+      </div>`;
+    }).join('');
+
+    const notes = measured.filter((i) => i.result_notes);
+
+    return `<fieldset class="block mb">${head}
+      ${rows ? `<div class="table-wrap"><table class="table tight">
+        <thead><tr><th>Test</th><th class="num">Result</th><th>Unit</th>
+          <th>Reference</th><th>Flag</th><th>Reported</th></tr></thead>
+        <tbody>${rows}</tbody></table></div>` : ''}
+      ${notes.length ? `<p class="muted small">${notes
+        .map((i) => `<b>${UI.esc(i.test_name)}:</b> ${UI.esc(i.result_notes)}`).join('<br>')}</p>` : ''}
+      ${reports}
+    </fieldset>`;
+  }
+
+  /*
+   * A study reported in words rather than a number. Taken from the catalogue's
+   * department where there is one — the lab screen draws the same line — and
+   * otherwise from the result itself, so that a historic row whose test was
+   * since removed from the catalogue still reads as the report it is.
+   */
+  function isNarrative(i) {
+    const dept = String(i.category || '').toLowerCase();
+    if (dept === 'radiology' || dept === 'cardiology') return true;
+    if (dept) return false;
+    const v = i.result_value;
+    return typeof v === 'string' && v.length > 60 && !Number.isFinite(Number(v));
+  }
+
+  /**
+   * One test over time. Plotted where the results are numbers and simply
+   * listed where they are not — "Negative" three times running is still a
+   * history worth seeing, it just is not a line.
+   */
+  function trendRow(t) {
+    const pts = t.points;
+    const nums = pts.filter((x) => x.num !== null);
+    let arrow = '';
+    if (nums.length > 1) {
+      const a = nums[0].num;
+      const b = nums[nums.length - 1].num;
+      const pc = a ? Math.round(((b - a) / Math.abs(a)) * 100) : 0;
+      arrow = b > a ? `<span class="muted small">▲ up ${Math.abs(pc)}% since ${UI.esc(UI.date(nums[0].at))}</span>`
+        : b < a ? `<span class="muted small">▼ down ${Math.abs(pc)}% since ${UI.esc(UI.date(nums[0].at))}</span>`
+        : `<span class="muted small">level since ${UI.esc(UI.date(nums[0].at))}</span>`;
+    }
+
+    return `<fieldset class="block mb">
+      <div class="row between wrap" style="gap:.5rem;align-items:baseline">
+        <div><b>${UI.esc(t.test_name)}</b>${t.unit ? ` <span class="muted small">${UI.esc(t.unit)}</span>` : ''}
+          <span class="muted small"> · ${pts.length} readings</span></div>
+        <div>${arrow}</div>
+      </div>
+      ${nums.length > 1 ? sparkline(nums) : ''}
+      <div class="row wrap small" style="gap:.75rem;margin-top:.35rem">
+        ${pts.map((x) => `<span title="${UI.esc(x.order_no)}${
+          x.ref_range ? ' · ref ' + UI.esc(x.ref_range) : ''}">
+          <span class="muted">${UI.esc(UI.date(x.at))}</span>
+          <b>${UI.esc(x.value)}</b>${
+            x.flag && x.flag !== 'normal' ? ' ' + flagBadge(x.flag) : ''}</span>`).join('')}
+      </div>
+    </fieldset>`;
+  }
+
+  /**
+   * A line, drawn as inline SVG. No charting library, for the same reason the
+   * rest of this project has none: it would be the largest dependency here and
+   * it would draw one line.
+   */
+  function sparkline(pts) {
+    const W = 420;
+    const H = 44;
+    const vals = pts.map((p) => p.num);
+    const lo = Math.min(...vals);
+    const hi = Math.max(...vals);
+    const span = hi - lo || 1;
+    const x = (i) => (pts.length === 1 ? W / 2 : (i / (pts.length - 1)) * (W - 8) + 4);
+    const y = (v) => H - 6 - ((v - lo) / span) * (H - 14);
+    const line = pts.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(p.num).toFixed(1)}`).join(' ');
+
+    return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"
+        style="width:100%;height:${H}px;display:block;margin-top:.4rem" aria-hidden="true">
+      <path d="${line}" fill="none" stroke="currentColor" stroke-width="1.5" opacity=".55"/>
+      ${pts.map((p, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(p.num).toFixed(1)}" r="3"
+        fill="${p.flag && p.flag !== 'normal' ? (p.flag === 'critical' ? '#c0392b' : '#e67e22') : 'currentColor'}"/>`).join('')}
+    </svg>`;
   }
 })();

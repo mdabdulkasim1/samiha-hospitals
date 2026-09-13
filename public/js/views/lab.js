@@ -349,6 +349,39 @@
 
   const isImaging = (item) => ['radiology', 'cardiology'].includes(String(item.category || '').toLowerCase());
 
+  /*
+   * What to write about this study.
+   *
+   * A study reported as a paragraph is only as good as the paragraph, and a
+   * technician at the end of a long list writes what they are prompted for.
+   * So the prompt is the study's own: an echocardiogram is not reported in the
+   * language of an ECG, and prompting for "rate, rhythm, axis" in the echo box
+   * — which is what this screen used to do, because the hint was chosen by
+   * department rather than by test — invites the wrong report in the right
+   * field. Matched on the catalogue code first, since the clinic may rename a
+   * test but will not renumber it.
+   */
+  const REPORT_PROMPTS = [
+    [/^ECG|^EKG|HOLTER|^TMT|STRESS/i,
+      'Rate · rhythm · axis · PR, QRS, QTc intervals · ST-segment and T-wave changes · ' +
+      'chamber enlargement · comparison with any previous tracing'],
+    [/^ECHO|ECHOCARDIO/i,
+      'Chambers and their dimensions · LV systolic function and LVEF % · regional wall motion · ' +
+      'each valve in turn · diastolic function · pericardium and any effusion · IVC · aorta'],
+    [/^USG|ULTRASOUND|^DOPPLER/i,
+      'Organ by organ — size, echotexture, any focal lesion · free fluid · ' +
+      'and for obstetric studies: fetal number, presentation, cardiac activity, biometry, liquor, placenta'],
+    [/^XR|X-?RAY/i,
+      'Technique and projection · lung fields · cardiac silhouette and mediastinum · ' +
+      'domes of diaphragm and costophrenic angles · bony cage and soft tissues'],
+  ];
+
+  function reportPrompt(item) {
+    const against = `${item.code || ''} ${item.test_name || ''}`;
+    for (const [pattern, hint] of REPORT_PROMPTS) if (pattern.test(against)) return hint;
+    return 'What the study shows, in the order a reader expects it.';
+  }
+
   async function openOrder(id) {
     const o = await API.get(`/api/lab/orders/${id}`);
     const canEdit = APP.can(['lab']);
@@ -372,10 +405,9 @@
     const imaging = o.items.filter(isImaging).map((i) => `
       <fieldset><legend>${UI.esc(i.test_name)} ${UI.statusBadge(i.status)}</legend>
         ${open(i) ? `
-          ${UI.field({ name: `find-${i.id}`, label: 'Findings', rows: 5, value: i.result_value || '',
-            placeholder: String(i.category || '').toLowerCase() === 'cardiology'
-              ? 'Rate, rhythm, axis, intervals, ST-T changes…'
-              : 'Technique, and what is seen — lung fields, cardiac silhouette, bony cage…' })}
+          ${UI.field({ name: `find-${i.id}`, label: 'Findings', rows: 8, value: i.result_value || '',
+            placeholder: reportPrompt(i) })}
+          <div class="muted small" style="margin:-.35rem 0 .6rem">${UI.esc(reportPrompt(i))}</div>
           ${UI.field({ name: `imp-${i.id}`, label: 'Impression', value: i.result_notes || '',
             placeholder: 'The one line the referring doctor reads first' })}`
           : `<div class="muted small">Findings</div>

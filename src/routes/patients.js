@@ -2,7 +2,7 @@
 const express = require('express');
 const { db } = require('../db');
 const { wrap, notFound, conflict, badRequest } = require('../lib/http');
-const { requireRole, seesMoney } = require('../lib/auth');
+const { requireRole, seesMoney, seesPrices } = require('../lib/auth');
 const { required, str, int, num, bool, phone, paging, oneOf, aadhaar } = require('../lib/validate');
 const { generate } = require('../lib/ids');
 const audit = require('../lib/audit');
@@ -297,7 +297,7 @@ router.get('/:id', deskRoles, wrap((req, res) => {
   patient.visits = db.prepare(
     `SELECT v.*, u.name AS doctor_name, d.name AS department_name
        FROM visits v LEFT JOIN users u ON u.id = v.doctor_id LEFT JOIN departments d ON d.id = v.department_id
-      WHERE v.patient_id = ? ORDER BY v.id DESC LIMIT 30`
+      WHERE v.patient_id = ? ORDER BY v.id DESC`
   ).all(id);
   patient.appointments = db.prepare(
     `SELECT a.*, u.name AS doctor_name FROM appointments a LEFT JOIN users u ON u.id = a.doctor_id
@@ -331,7 +331,7 @@ router.get('/:id', deskRoles, wrap((req, res) => {
     `SELECT c.*, u.name AS doctor_name,
             (SELECT GROUP_CONCAT(title, '; ') FROM consultation_diagnoses WHERE consultation_id = c.id) AS diagnoses
        FROM consultations c LEFT JOIN users u ON u.id = c.doctor_id
-      WHERE c.patient_id = ? ORDER BY c.id DESC LIMIT 20`
+      WHERE c.patient_id = ? ORDER BY c.id DESC`
   ).all(id);
   // The clinic's own notes about them — see the notes routes below for why
   // these sit apart from the consultation and the prescription.
@@ -340,15 +340,98 @@ router.get('/:id', deskRoles, wrap((req, res) => {
        FROM patient_notes n
        LEFT JOIN users u ON u.id = n.created_by
        LEFT JOIN visits v ON v.id = n.visit_id
-      WHERE n.patient_id = ? ORDER BY n.id DESC LIMIT 50`
+      WHERE n.patient_id = ? ORDER BY n.id DESC`
   ).all(id);
   patient.prescriptions = db.prepare(
-    'SELECT * FROM prescriptions WHERE patient_id = ? ORDER BY id DESC LIMIT 40'
+    'SELECT * FROM prescriptions WHERE patient_id = ? ORDER BY id DESC'
   ).all(id);
+  /*
+   * Diagnostics, for the life of the file.
+   *
+   * The order line alone — "FBS, HbA1c, done" — is a receipt, not a record. A
+   * doctor seeing this patient in three years wants the number that came back,
+   * what the normal range was at the time, and whether the lab flagged it. So
+   * every order carries its results, and nothing here is capped: a diagnostic
+   * result is the clinic's memory of the patient and it does not expire.
+   *
+   * Reference ranges are read from the result row rather than from today's
+   * catalogue. A lab that changes its analyser changes its ranges, and a value
+   * from 2019 has to be read against the range that was printed beside it in
+   * 2019 or it means nothing.
+   */
   patient.labOrders = db.prepare(
-    `SELECT o.*, (SELECT GROUP_CONCAT(test_name, ', ') FROM lab_order_items WHERE order_id = o.id) AS tests
-       FROM lab_orders o WHERE o.patient_id = ? ORDER BY o.id DESC LIMIT 20`
+    `SELECT o.*, u.name AS doctor_name, v.visit_no,
+            (SELECT GROUP_CONCAT(test_name, ', ') FROM lab_order_items WHERE order_id = o.id) AS tests
+       FROM lab_orders o
+       LEFT JOIN users u ON u.id = o.doctor_id
+       LEFT JOIN visits v ON v.id = o.visit_id
+      WHERE o.patient_id = ? ORDER BY datetime(o.ordered_at) DESC, o.id DESC`
   ).all(id);
+
+  if (patient.labOrders.length) {
+    const items = db.prepare(
+      `SELECT i.*, o.order_no, o.ordered_at, o.reported_at,
+              r.name AS result_by_name, ver.name AS verified_by_name,
+              t.category, t.sample_type
+         FROM lab_order_items i
+         JOIN lab_orders o ON o.id = i.order_id
+         LEFT JOIN users r ON r.id = i.result_by
+         LEFT JOIN users ver ON ver.id = i.verified_by
+         LEFT JOIN lab_tests t ON t.id = i.test_id
+        WHERE o.patient_id = ?
+        ORDER BY datetime(COALESCE(i.result_at, o.ordered_at)) DESC, i.id DESC`
+    ).all(id);
+
+    // Prices belong to the desks that handle them; a result does not.
+    if (!seesPrices(req.user)) for (const it of items) it.price = null;
+
+    const byOrder = new Map();
+    for (const it of items) {
+      if (!byOrder.has(it.order_id)) byOrder.set(it.order_id, []);
+      byOrder.get(it.order_id).push(it);
+    }
+    for (const o of patient.labOrders) o.items = byOrder.get(o.id) || [];
+
+    /*
+     * The same test, every time it has been done, oldest first. This is the
+     * part a follow-up actually turns on: one HbA1c is a number, four of them
+     * over two years is whether the patient is getting better. Built here
+     * rather than in the browser so it is the same history whichever screen
+     * asks for it.
+     */
+    const series = new Map();
+    for (const it of items) {
+      if (it.result_value === null || it.result_value === '') continue;
+      /*
+       * Only results that are numbers. Half the catalogue reports in prose —
+       * an echocardiogram is a paragraph, a culture is "no growth" — and a
+       * paragraph has no direction of travel. Those stay in the order below,
+       * where they are read, rather than being charted into nonsense.
+       */
+      const num = Number(it.result_value);
+      if (it.result_value === true || it.result_value === false || !Number.isFinite(num)) continue;
+      const key = it.test_name;
+      if (!series.has(key)) {
+        series.set(key, { test_name: key, category: it.category, unit: it.unit, points: [] });
+      }
+      series.get(key).points.push({
+        at: it.result_at || it.ordered_at,
+        order_no: it.order_no,
+        value: it.result_value,
+        num,
+        unit: it.unit,
+        ref_range: it.ref_range,
+        flag: it.abnormal_flag,
+      });
+    }
+    patient.labTrends = [...series.values()]
+      // Oldest first: a history reads left to right.
+      .map((t) => ({ ...t, points: t.points.slice().reverse() }))
+      .filter((t) => t.points.length > 1)
+      .sort((a, b) => b.points.length - a.points.length || a.test_name.localeCompare(b.test_name));
+  } else {
+    patient.labTrends = [];
+  }
   patient.screenings = db.prepare(
     'SELECT * FROM financial_screenings WHERE patient_id = ? ORDER BY id DESC LIMIT 10'
   ).all(id);

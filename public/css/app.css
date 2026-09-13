@@ -780,3 +780,9 @@ table.matrix tr.tfoot td:first-child { background: var(--bg); }
   border: 1px dashed var(--line); border-radius: var(--radius-s);
   background: #fff; cursor: crosshair; touch-action: none;
 }
+
+/* A result outside its reference range, on the patient's permanent record.
+   Tinted rather than shouted: a chart with six flagged rows should still be
+   readable, and the badge in the row already says which way it is out. */
+tbody tr.warn-row { background: var(--warn-soft); }
+tbody tr.warn-row td { border-bottom-color: #F0DFC0; }
