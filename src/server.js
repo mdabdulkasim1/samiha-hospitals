@@ -127,6 +127,71 @@ function startBackgroundJobs() {
  * Seeding once, only when there are no users at all, turns that into a working
  * install without ever touching an existing one.
  */
+/**
+ * A way in that cannot be lost.
+ *
+ * Seeding runs once, on an empty database, and never again — which is right,
+ * or a re-deploy would undo the clinic's own edits. But it means the accounts
+ * a database was born with are the only ones it ever gets automatically, and
+ * a clinic whose database outlived the install that made it can end up with
+ * no password anybody remembers. Losing the way in means losing the
+ * appointment book, the day's takings and the patients' records.
+ *
+ * So when ADMIN_EMAIL and ADMIN_PASSWORD are both set, they are applied at
+ * every startup: the administrator is created if missing and its password
+ * reset to the one the clinic has chosen if not. The clinic keeps that value
+ * where it keeps its other settings, and the way in is always the same and
+ * always known. Neither variable set, nothing happens at all.
+ */
+function ensureAdministrator() {
+  const email = (process.env.ADMIN_EMAIL || '').trim().toLowerCase();
+  const password = process.env.ADMIN_PASSWORD || '';
+  if (!email || !password) return;
+
+  try {
+    const { hashPassword } = require('./lib/auth');
+    const hash = hashPassword(password);
+    const byEmail = db.prepare('SELECT id FROM users WHERE LOWER(email) = ?').get(email);
+
+    if (byEmail) {
+      db.prepare("UPDATE users SET password_hash = ?, role = 'admin', active = 1 WHERE id = ?")
+        .run(hash, byEmail.id);
+      console.log(`[setup] Administrator ${email} — password applied from ADMIN_PASSWORD.`);
+      return;
+    }
+
+    // No account on that address. Rather than make a second administrator,
+    // move the existing one onto it where there is one to move.
+    const existing = db.prepare("SELECT id FROM users WHERE role = 'admin' ORDER BY id LIMIT 1").get();
+    if (existing) {
+      db.prepare('UPDATE users SET email = ?, password_hash = ?, active = 1 WHERE id = ?')
+        .run(email, hash, existing.id);
+      console.log(`[setup] Administrator moved to ${email}, password from ADMIN_PASSWORD.`);
+      return;
+    }
+
+    /*
+     * A staff code nobody is using. ADMIN01 is the obvious one and is often
+     * taken — by the seeded administrator, or by somebody since moved to
+     * another role — and a collision here would throw, leaving the clinic
+     * with no way in, which is the one outcome this whole routine exists to
+     * prevent.
+     */
+    let code = 'ADMIN01';
+    for (let n = 1; db.prepare('SELECT 1 FROM users WHERE staff_code = ?').get(code); n += 1) {
+      code = `ADMIN${String(n + 1).padStart(2, '0')}`;
+    }
+
+    db.prepare(
+      `INSERT INTO users (staff_code, name, email, role, password_hash)
+       VALUES (?, ?, ?, 'admin', ?)`
+    ).run(code, process.env.ADMIN_NAME || 'Administrator', email, hash);
+    console.log(`[setup] Administrator ${email} (${code}) created from ADMIN_EMAIL / ADMIN_PASSWORD.`);
+  } catch (err) {
+    console.error('[setup] could not apply ADMIN_PASSWORD:', err.message);
+  }
+}
+
 function seedIfEmpty() {
   const users = db.prepare('SELECT COUNT(*) AS c FROM users').get().c;
 
@@ -142,6 +207,8 @@ function seedIfEmpty() {
     try { require('./db/catalogue').sync(); }
     catch (err) { console.error('[catalogue] sync failed:', err.message); }
   }
+
+  ensureAdministrator();
 
   if (!config.autoSeed) return;
   if (users > 0) return;
@@ -179,4 +246,7 @@ if (require.main === module) {
   }
 }
 
+// `ensureAdministrator` is exported so the way into the clinic can be tested
+// the way it actually runs — at startup, against whatever the database holds.
 module.exports = app;
+module.exports.ensureAdministrator = ensureAdministrator;
