@@ -71,9 +71,15 @@ code, .mono { font-family: var(--mono); font-size: .92em; }
 .login-card { width: min(400px, 100%); }
 .login-card h2 { font-size: 22px; margin-bottom: 6px; }
 .login-card .muted { margin-bottom: 24px; }
+.demo-accounts { margin-top: 26px; border-top: 1px solid var(--line); padding-top: 18px; }
+.demo-accounts h4 { color: var(--ink-3); text-transform: uppercase; letter-spacing: .07em; font-size: 11px; margin-bottom: 10px; }
+.demo-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+.demo-grid button {
   text-align: left; padding: 7px 10px; border: 1px solid var(--line); background: var(--surface);
   border-radius: var(--radius-s); cursor: pointer; font: inherit; font-size: 12px; color: var(--ink-2);
 }
+.demo-grid button:hover { border-color: var(--teal); background: var(--teal-soft); color: var(--teal-dark); }
+.demo-grid button b { display: block; color: var(--ink); font-size: 12.5px; }
 
 /* ------------------------------------------------------------------ shell */
 .app { display: grid; grid-template-columns: var(--sidebar) 1fr; min-height: 100vh; }
@@ -379,8 +385,6 @@ legend { font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-
 .btn.ghost:hover:not(:disabled) { border-color: var(--teal); color: var(--teal-dark); background: var(--teal-soft); }
 .btn.ok { background: var(--ok); }
 .btn.warn { background: var(--warn); }
-/* For the one action that cannot be undone. */
-.btn.danger { background: var(--danger); }
 .btn.sm { padding: 5px 10px; font-size: 12.5px; }
 .btn.block { width: 100%; }
 .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }

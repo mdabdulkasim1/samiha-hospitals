@@ -103,7 +103,6 @@
         await router();
         refreshBadges();
         setInterval(refreshBadges, 45000);
-        if (APP.weakPassword) warnWeakPassword();
       } catch {
         renderLogin();
       }
@@ -117,27 +116,6 @@
     },
   };
   window.APP = APP;
-
-  /**
-   * Still signing in with a password this software published.
-   *
-   * Shown once, on the sign-in that used it, and it cannot be dismissed into
-   * oblivion — the link goes straight to the box that fixes it. A clinic
-   * holding patient records should not be reachable with a password printed
-   * in a manual.
-   */
-  function warnWeakPassword() {
-    const host = document.getElementById('page-alert') || document.getElementById('view');
-    if (!host) return;
-    const bar = document.createElement('div');
-    bar.className = 'alert danger mb';
-    bar.innerHTML = `<b>Change this password.</b> This account is still using one of the
-      defaults this system was shipped with, so anyone who has seen the manual can sign in as
-      ${UI.esc(APP.user.name)}. <button class="link-btn" id="wp-go">Change it now</button>`;
-    host.prepend(bar);
-    const go = document.getElementById('wp-go');
-    if (go) go.addEventListener('click', () => { APP.weakPassword = false; APP.navigate('account'); });
-  }
 
   // ------------------------------------------------------------------ login
   function renderLogin() {
@@ -160,8 +138,7 @@
             <h2>Staff sign in</h2>
             <div class="muted">Use your staff email or employee code.</div>
             <form id="login-form">
-              ${UI.field({ name: 'username', label: 'Email or staff code', required: true,
-                placeholder: 'name@clinic email, or your staff code' })}
+              ${UI.field({ name: 'username', label: 'Email or staff code', required: true, placeholder: 'reception@samiha.local' })}
               ${UI.password({ name: 'password', label: 'Password', required: true })}
               <div class="row-between mb" style="margin-top:-6px">
                 <span></span>
@@ -170,14 +147,17 @@
               <button class="btn block" type="submit">Sign in</button>
             </form>
             <div id="login-error"></div>
-            <!--
-              No account list here.
-              A sign-in page that names every desk and prints the password is a
-              demonstration, not a way in: it hands a stranger the roles, the
-              address format and the secret. Who works here is the
-              administrator's business and is under Staff & Doctors, behind a
-              sign-in.
-            -->
+            <div class="demo-accounts">
+              <h4>Demo desks — password <code>samiha@123</code></h4>
+              <div class="demo-grid">
+                ${[['admin@samiha.local','Administrator'],['reception@samiha.local','Front desk'],
+                   ['counselor@samiha.local','Financial counselor'],['nurse@samiha.local','Nurse / M.A.'],
+                   ['imran@samiha.local','Dr. Imran (Medicine)'],['lab@samiha.local','Lab technician'],
+                   ['pharmacy@samiha.local','Pharmacist'],['cashier@samiha.local','Cashier'],
+                   ['ward@samiha.local','Ward sister']]
+                  .map(([email, role]) => `<button data-email="${UI.esc(email)}"><b>${UI.esc(role)}</b>${UI.esc(email)}</button>`).join('')}
+              </div>
+            </div>
           </div>
         </div>
       </div>`;
@@ -196,8 +176,6 @@
         const values = UI.formValues(form);
         const res = await API.post('/api/auth/login', values);
         API.setToken(res.token);
-        // Carried through the boot so the warning survives the screen change.
-        APP.weakPassword = Boolean(res.weakPassword);
         await APP.boot();
       } catch (err) {
         // "Invalid credentials" most often means a mistyped password, so point
@@ -214,6 +192,14 @@
         btn.disabled = false;
         btn.textContent = 'Sign in';
       }
+    });
+
+    document.querySelectorAll('.demo-grid button').forEach((b) => {
+      b.addEventListener('click', () => {
+        form.querySelector('[name=username]').value = b.dataset.email;
+        form.querySelector('[name=password]').value = 'samiha@123';
+        form.querySelector('[name=password]').focus();
+      });
     });
   }
 

@@ -48,146 +48,70 @@ db.prepare(
 ).run(...departments.map((d) => d[0]));
 
 // -------------------------------------------------------------------- staff
-/*
- * The one account the clinic starts with.
- *
- * This used to seed eight invented members of staff and three invented
- * doctors, all sharing one published password, and the sign-in page listed
- * them. That is a demonstration. A clinic running on this has its own people,
- * and who they are is the administrator's to enter — Staff & Doctors adds a
- * receptionist, a technician or a doctor with their own sessions and fees, and
- * that is how the list grows from here.
- *
- * So exactly one administrator is created, and only when there is no user at
- * all. Its password comes from the environment where the clinic has set one,
- * and is otherwise generated and printed once to the log at first boot. What
- * it is never again is a constant in this file: a default password published
- * in a repository is the same as no password.
- */
-function firstAdministrator() {
-  const email = (process.env.ADMIN_EMAIL || 'admin@samihapolyclinic.com').toLowerCase();
-  const chosen = process.env.ADMIN_PASSWORD || null;
+const staff = [
+  { staff_code: 'ADMIN01', name: 'System Administrator', email: 'admin@samiha.local', role: 'admin' },
+  { staff_code: 'REC01', name: 'Fathima Reception', email: 'reception@samiha.local', role: 'reception' },
+  { staff_code: 'CNS01', name: 'Anita Counselor', email: 'counselor@samiha.local', role: 'counselor' },
+  { staff_code: 'NUR01', name: 'Sister Mary (M.A.)', email: 'nurse@samiha.local', role: 'nurse' },
+  { staff_code: 'LAB01', name: 'Ravi Lab Technician', email: 'lab@samiha.local', role: 'lab', department_id: deptId.LAB },
+  { staff_code: 'PHR01', name: 'Suresh Pharmacist', email: 'pharmacy@samiha.local', role: 'pharmacy', department_id: deptId.PHA },
+  { staff_code: 'CSH01', name: 'Kavitha Cashier', email: 'cashier@samiha.local', role: 'cashier' },
+  { staff_code: 'WRD01', name: 'Ward Sister Leela', email: 'ward@samiha.local', role: 'ward', department_id: deptId.DAY },
+];
+for (const s of staff) upsert('users', 'staff_code', { ...s, password_hash: hashPassword('samiha@123') });
 
-  /*
-   * With ADMIN_PASSWORD set, that password is the truth on every boot.
-   *
-   * The administrator must not be able to get locked out. Losing the way into
-   * this system means losing the appointment book, the day's takings and the
-   * patients' records, and "click the link in the email" is no answer at
-   * seven in the morning when the mailbox is on a phone nobody has. So the
-   * clinic sets the password where it keeps its other settings and it is
-   * applied at startup — every time, not only the first — and the way in is
-   * always the same and always known.
-   *
-   * It is written where the clinic already keeps its secrets, and never in
-   * this repository. Kept out of the environment instead, the account is
-   * created once with a generated password printed to the log, and from then
-   * on it is theirs to remember.
-   */
-  const existing = db.prepare("SELECT id, email FROM users WHERE role = 'admin' ORDER BY id LIMIT 1").get();
+const doctors = [
+  { staff_code: 'DOC01', phone: '919840110001', name: 'Dr. Imran Sheikh', email: 'imran@samiha.local', dept: 'IM',
+    qualification: 'MBBS, MD (General Medicine)', specialization: 'Diabetes, hypertension & thyroid',
+    reg_no: 'TN/45231', consult_fee: 500, follow_up_fee: 300, slot_minutes: 15, room_no: 'OPD-1' },
+  { staff_code: 'DOC02', phone: '919840110002', name: 'Dr. Sara Ahmed', email: 'sara@samiha.local', dept: 'PED',
+    qualification: 'MBBS, DCH', specialization: 'Neonatal & child health',
+    reg_no: 'TN/51122', consult_fee: 450, follow_up_fee: 250, slot_minutes: 15, room_no: 'OPD-2' },
+  { staff_code: 'DOC03', phone: '919840110003', name: 'Dr. Nafisa Rahman', email: 'nafisa@samiha.local', dept: 'GYN',
+    qualification: 'MBBS, MS (OBG)', specialization: 'High-risk pregnancy & infertility',
+    reg_no: 'TN/48890', consult_fee: 600, follow_up_fee: 350, slot_minutes: 20, room_no: 'OPD-3' },
+  { staff_code: 'DOC06', phone: '919840110006', name: 'Dr. Arif Hussain', email: 'arif@samiha.local', dept: 'CAR',
+    qualification: 'MBBS, MD, DM (Cardiology)', specialization: 'Interventional cardiology & echo',
+    reg_no: 'TN/53412', consult_fee: 800, follow_up_fee: 450, slot_minutes: 20, room_no: 'OPD-6' },
+  { staff_code: 'DOC07', phone: '919840110007', name: 'Dr. Neha Kulkarni', email: 'neha@samiha.local', dept: 'DEN',
+    qualification: 'BDS, MDS', specialization: 'Conservative dentistry & endodontics',
+    reg_no: 'TN/DEN/2201', consult_fee: 400, follow_up_fee: 250, slot_minutes: 30, room_no: 'DENTAL-1' },
+  { staff_code: 'DOC05', phone: '919840110005', name: 'Dr. Priya Menon', email: 'priya@samiha.local', dept: 'DER',
+    qualification: 'MBBS, MD (Dermatology)', specialization: 'Clinical & cosmetic dermatology',
+    reg_no: 'TN/49775', consult_fee: 550, follow_up_fee: 300, slot_minutes: 15, room_no: 'OPD-5' },
+  { staff_code: 'DOC04', phone: '919840110004', name: 'Dr. Vikram Rao', email: 'vikram@samiha.local', dept: 'ORT',
+    qualification: 'MBBS, MS (Ortho)', specialization: 'Joint replacement & spine',
+    reg_no: 'TN/52310', consult_fee: 600, follow_up_fee: 350, slot_minutes: 20, room_no: 'OPD-4' },
+];
 
-  if (existing && chosen) {
-    db.prepare('UPDATE users SET email = ?, password_hash = ? WHERE id = ?')
-      .run(email, hashPassword(chosen), existing.id);
-    return { email, password: chosen, generated: false, reapplied: true };
-  }
-  if (existing) return null;
-
-  // 18 bytes of base64 is plenty against guessing and still short enough to
-  // read off a terminal and type once before it is changed.
-  const password = chosen || require('crypto').randomBytes(18).toString('base64url');
-  upsert('users', 'staff_code', {
-    staff_code: 'ADMIN01',
-    name: process.env.ADMIN_NAME || 'Administrator',
-    email,
-    role: 'admin',
-    password_hash: hashPassword(password),
+for (const d of doctors) {
+  const id = upsert('users', 'staff_code', {
+    staff_code: d.staff_code, name: d.name, email: d.email, phone: d.phone, role: 'doctor',
+    department_id: deptId[d.dept], password_hash: hashPassword('samiha@123'),
   });
-  return { email, password, generated: !chosen };
-}
-/*
- * The demonstration, which a real clinic never gets.
- *
- * A worked example is genuinely useful — it is what the test suite runs
- * against, and what somebody evaluating this wants to click around in — but
- * it has no business appearing in a clinic's register, so it is asked for
- * rather than assumed. SEED_DEMO=1 puts the invented staff, doctors and
- * sample patients in; nothing else does.
- */
-const WANT_DEMO = process.env.SEED_DEMO === '1';
-
-if (WANT_DEMO) {
-  const staff = [
-    { staff_code: 'ADMIN01', name: 'System Administrator', email: 'admin@samiha.local', role: 'admin' },
-    { staff_code: 'REC01', name: 'Fathima Reception', email: 'reception@samiha.local', role: 'reception' },
-    { staff_code: 'CNS01', name: 'Anita Counselor', email: 'counselor@samiha.local', role: 'counselor' },
-    { staff_code: 'NUR01', name: 'Sister Mary (M.A.)', email: 'nurse@samiha.local', role: 'nurse' },
-    { staff_code: 'LAB01', name: 'Ravi Lab Technician', email: 'lab@samiha.local', role: 'lab', department_id: deptId.LAB },
-    { staff_code: 'PHR01', name: 'Suresh Pharmacist', email: 'pharmacy@samiha.local', role: 'pharmacy', department_id: deptId.PHA },
-    { staff_code: 'CSH01', name: 'Kavitha Cashier', email: 'cashier@samiha.local', role: 'cashier' },
-    { staff_code: 'WRD01', name: 'Ward Sister Leela', email: 'ward@samiha.local', role: 'ward', department_id: deptId.DAY },
-  ];
-  for (const s of staff) upsert('users', 'staff_code', { ...s, password_hash: hashPassword('samiha@123') });
-
-  const doctors = [
-    { staff_code: 'DOC01', phone: '919840110001', name: 'Dr. Imran Sheikh', email: 'imran@samiha.local', dept: 'IM',
-      qualification: 'MBBS, MD (General Medicine)', specialization: 'Diabetes, hypertension & thyroid',
-      reg_no: 'TN/45231', consult_fee: 500, follow_up_fee: 300, slot_minutes: 15, room_no: 'OPD-1' },
-    { staff_code: 'DOC02', phone: '919840110002', name: 'Dr. Sara Ahmed', email: 'sara@samiha.local', dept: 'PED',
-      qualification: 'MBBS, DCH', specialization: 'Neonatal & child health',
-      reg_no: 'TN/51122', consult_fee: 450, follow_up_fee: 250, slot_minutes: 15, room_no: 'OPD-2' },
-    { staff_code: 'DOC03', phone: '919840110003', name: 'Dr. Nafisa Rahman', email: 'nafisa@samiha.local', dept: 'GYN',
-      qualification: 'MBBS, MS (OBG)', specialization: 'High-risk pregnancy & infertility',
-      reg_no: 'TN/48890', consult_fee: 600, follow_up_fee: 350, slot_minutes: 20, room_no: 'OPD-3' },
-    { staff_code: 'DOC06', phone: '919840110006', name: 'Dr. Arif Hussain', email: 'arif@samiha.local', dept: 'CAR',
-      qualification: 'MBBS, MD, DM (Cardiology)', specialization: 'Interventional cardiology & echo',
-      reg_no: 'TN/53412', consult_fee: 800, follow_up_fee: 450, slot_minutes: 20, room_no: 'OPD-6' },
-    { staff_code: 'DOC07', phone: '919840110007', name: 'Dr. Neha Kulkarni', email: 'neha@samiha.local', dept: 'DEN',
-      qualification: 'BDS, MDS', specialization: 'Conservative dentistry & endodontics',
-      reg_no: 'TN/DEN/2201', consult_fee: 400, follow_up_fee: 250, slot_minutes: 30, room_no: 'DENTAL-1' },
-    { staff_code: 'DOC05', phone: '919840110005', name: 'Dr. Priya Menon', email: 'priya@samiha.local', dept: 'DER',
-      qualification: 'MBBS, MD (Dermatology)', specialization: 'Clinical & cosmetic dermatology',
-      reg_no: 'TN/49775', consult_fee: 550, follow_up_fee: 300, slot_minutes: 15, room_no: 'OPD-5' },
-    { staff_code: 'DOC04', phone: '919840110004', name: 'Dr. Vikram Rao', email: 'vikram@samiha.local', dept: 'ORT',
-      qualification: 'MBBS, MS (Ortho)', specialization: 'Joint replacement & spine',
-      reg_no: 'TN/52310', consult_fee: 600, follow_up_fee: 350, slot_minutes: 20, room_no: 'OPD-4' },
-  ];
-
-  for (const d of doctors) {
-    const id = upsert('users', 'staff_code', {
-      staff_code: d.staff_code, name: d.name, email: d.email, phone: d.phone, role: 'doctor',
-      department_id: deptId[d.dept], password_hash: hashPassword('samiha@123'),
-    });
-    db.prepare('UPDATE users SET department_id = ?, name = ?, phone = COALESCE(phone, ?) WHERE id = ?')
-      .run(deptId[d.dept], d.name, d.phone, id);
-    if (!db.prepare('SELECT 1 FROM doctor_profiles WHERE user_id = ?').get(id)) {
-      db.prepare(
-        `INSERT INTO doctor_profiles (user_id, qualification, specialization, reg_no, consult_fee,
-                                      follow_up_fee, slot_minutes, room_no, signature_line)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      ).run(id, d.qualification, d.specialization, d.reg_no, d.consult_fee, d.follow_up_fee,
-            d.slot_minutes, d.room_no, `${d.name}\n${d.qualification}\nReg. No. ${d.reg_no}`);
+  // The mobile is what a booking alert reaches them on, so keep it current.
+  db.prepare('UPDATE users SET department_id = ?, name = ?, phone = COALESCE(phone, ?) WHERE id = ?')
+    .run(deptId[d.dept], d.name, d.phone, id);
+  if (!db.prepare('SELECT 1 FROM doctor_profiles WHERE user_id = ?').get(id)) {
+    db.prepare(
+      `INSERT INTO doctor_profiles (user_id, qualification, specialization, reg_no, consult_fee,
+                                    follow_up_fee, slot_minutes, room_no, signature_line)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(id, d.qualification, d.specialization, d.reg_no, d.consult_fee, d.follow_up_fee,
+          d.slot_minutes, d.room_no, `${d.name}\n${d.qualification}\nReg. No. ${d.reg_no}`);
+  }
+  // Mon–Sat morning and evening OPD; Sunday morning only.
+  if (!db.prepare('SELECT 1 FROM doctor_schedules WHERE doctor_id = ?').get(id)) {
+    const ins = db.prepare(
+      'INSERT INTO doctor_schedules (doctor_id, weekday, start_time, end_time, slot_minutes, max_tokens) VALUES (?, ?, ?, ?, ?, ?)'
+    );
+    for (let weekday = 1; weekday <= 6; weekday += 1) {
+      ins.run(id, weekday, '09:00', '13:00', d.slot_minutes, 20);
+      ins.run(id, weekday, '17:00', '20:00', d.slot_minutes, 15);
     }
-    // Mon–Sat morning and evening OPD; Sunday morning only.
-    if (!db.prepare('SELECT 1 FROM doctor_schedules WHERE doctor_id = ?').get(id)) {
-      const ins = db.prepare(
-        'INSERT INTO doctor_schedules (doctor_id, weekday, start_time, end_time, slot_minutes, max_tokens) VALUES (?, ?, ?, ?, ?, ?)'
-      );
-      for (let weekday = 1; weekday <= 6; weekday += 1) {
-        ins.run(id, weekday, '09:00', '13:00', d.slot_minutes, 20);
-        ins.run(id, weekday, '17:00', '20:00', d.slot_minutes, 15);
-      }
-      ins.run(id, 0, '09:00', '12:00', d.slot_minutes, 12);
-    }
+    ins.run(id, 0, '09:00', '12:00', d.slot_minutes, 12);
   }
 }
-
-/*
- * After the demonstration, not before it: on a demo install ADMIN01 is the
- * demo's own administrator, and this then finds a user already there and does
- * nothing. On a real install there is no demo and this is the only account.
- */
-const firstAdmin = firstAdministrator();
 
 // ------------------------------------------------- financial assistance data
 const programs = [
@@ -508,16 +432,12 @@ for (const [key, value] of [
   db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)').run(key, value);
 }
 
-/*
- * Sample patients only for the demonstration. A patient record is a person,
- * and inventing five of them puts fictional people on a real clinic's
- * register, on its day book and in its reports, where somebody has to notice
- * and delete them. A live clinic's first patient is registered at the desk.
- */
-if (WANT_DEMO && db.prepare('SELECT COUNT(*) AS c FROM patients').get().c === 0) {
+// -------------------------------------------------------- sample patients
+if (db.prepare('SELECT COUNT(*) AS c FROM patients').get().c === 0) {
   const samples = [
     { first: 'Ayesha', last: 'Begum', gender: 'female', age: 34, phone: '919876500001',
-      city: 'Chennai', blood: 'O+', uninsured: 1, allergies: 'Sulfa drugs', chronic: 'Hypothyroidism' },
+      city: 'Chennai', blood: 'O+', uninsured: 1, allergies: 'Sulfa drugs',
+      chronic: 'Hypothyroidism' },
     { first: 'Rahul', last: 'Verma', gender: 'male', age: 52, phone: '919876500002',
       city: 'Chennai', blood: 'B+', uninsured: 0, insurer: 'Star Health', policy: 'SH-99201',
       chronic: 'Type 2 diabetes, Hypertension' },
@@ -538,7 +458,6 @@ if (WANT_DEMO && db.prepare('SELECT COUNT(*) AS c FROM patients').get().c === 0)
           s.blood, s.uninsured, s.insurer || null, s.policy || null, s.allergies || null, s.chronic || null);
   }
 }
-
 
 console.log('Seed complete.');
 console.log('  Departments :', db.prepare("SELECT COUNT(*) AS c FROM departments WHERE active = 1").get().c,
@@ -576,29 +495,5 @@ console.log('  Beds        :', db.prepare('SELECT COUNT(*) AS c FROM beds').get(
 console.log('  Insurers    :', db.prepare("SELECT COUNT(*) AS c FROM insurers WHERE kind != 'tpa'").get().c,
   '+', db.prepare("SELECT COUNT(*) AS c FROM insurers WHERE kind = 'tpa'").get().c, 'TPAs');
 console.log('  Patients    :', db.prepare('SELECT COUNT(*) AS c FROM patients').get().c);
-
-/*
- * The one time the first password is ever shown. It is not stored anywhere
- * readable and cannot be printed again — a forgotten one is reset by email
- * from the sign-in page.
- */
-if (firstAdmin && firstAdmin.reapplied) {
-  console.log(`\n  Administrator ${firstAdmin.email} — password re-applied from ADMIN_PASSWORD.`);
-  console.log('  Staff accounts are managed under Staff & Doctors.\n');
-} else if (firstAdmin) {
-  console.log('\n  ─────────────────────────────────────────────────────────────');
-  console.log('  The clinic starts with one account. Sign in and add your staff');
-  console.log('  under Staff & Doctors.');
-  console.log(`\n    email    ${firstAdmin.email}`);
-  if (firstAdmin.generated) {
-    console.log(`    password ${firstAdmin.password}`);
-    console.log('\n  Shown once and not recoverable. Copy it now, sign in, and');
-    console.log('  change it under My account — or set ADMIN_PASSWORD in the');
-    console.log('  environment and it is re-applied on every restart.');
-  } else {
-    console.log('    password as set in ADMIN_PASSWORD');
-  }
-  console.log('  ─────────────────────────────────────────────────────────────\n');
-} else {
-  console.log('\n  Staff accounts are managed under Staff & Doctors.\n');
-}
+console.log('\n  Sign in with any staff email and password  samiha@123');
+console.log('  e.g. admin@samiha.local / reception@samiha.local / imran@samiha.local\n');

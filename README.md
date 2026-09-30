@@ -311,8 +311,6 @@ Everything lives in `.env` — see [`.env.example`](.env.example). The essential
 | `DB_FILE` | Database path (default `./data/samiha.db`) — put it on a persistent disk |
 | `APP_URL` | Public URL; password-reset links are built from it |
 | `RECOVERY_EMAIL` | Clinic mailbox that receives every reset link and backup notice (`samihahospital@gmail.com`) |
-| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | The first administrator. Leave the password unset and one is generated and printed once at first boot |
-| `SEED_DEMO` | `1` loads the demonstration data. Never set on a clinic's own installation |
 | `BACKUP_WORKBOOK_DAY` | Day of the week for the full Excel book, 0 = Sunday (default 0) |
 | `MAIL_PROVIDER` | `mock` (offline, the default) or `smtp` (Gmail App Password) |
 | `BACKUP_DIR`, `BACKUP_HOUR`, `BACKUP_RETENTION` | Nightly snapshots and how many to keep |

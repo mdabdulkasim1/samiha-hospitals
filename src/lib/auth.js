@@ -94,24 +94,9 @@ function passwordProblems(password) {
   if (!/[A-Za-z]/.test(value)) problems.push('contain a letter');
   if (!/[0-9]/.test(value)) problems.push('contain a number');
   if (/^[0-9]+$/.test(value)) problems.push('not be only numbers');
-  if (COMMON.includes(value.toLowerCase())) problems.push('not be a commonly used password');
+  const common = ['password', '12345678', 'samiha@123', 'qwerty123', 'admin123', 'welcome1'];
+  if (common.includes(value.toLowerCase())) problems.push('not be a commonly used password');
   return problems;
-}
-
-/*
- * Passwords nobody may keep: the usual guesses, and the one this system used
- * to print on its own sign-in page. That one is the worst of them — it was
- * published with the software, so every install that still uses it is open to
- * anyone who has ever seen the page.
- */
-const COMMON = ['password', '12345678', 'samiha@123', 'qwerty123', 'admin123', 'welcome1'];
-
-/**
- * Whether an account is still on one of those. Checked at sign-in, where the
- * password is in hand — a stored hash cannot be asked, only answered.
- */
-function isWeakPassword(password) {
-  return COMMON.includes(String(password || '').toLowerCase());
 }
 
 // ------------------------------------------------------------- reset tokens
@@ -187,7 +172,6 @@ const PRICE_ROLES = ['admin', 'cashier', 'counselor', 'pharmacy', 'ward', 'nurse
 const seesPrices = (user) => Boolean(user) && PRICE_ROLES.includes(user.role);
 
 module.exports = {
-  isWeakPassword,
   MONEY_ROLES, seesMoney, PRICE_ROLES, seesPrices,
   hashPassword, verifyPassword, passwordProblems,
   createResetToken, userForResetToken, consumeResetToken, purgeExpiredResets, hashToken,

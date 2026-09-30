@@ -39,31 +39,6 @@ because the app restarted.
 
 ## SQLite needs a persistent disk
 
-> **Check this before the first real patient.** A container's own filesystem is
-> thrown away when it is redeployed. A database at the default
-> `./data/samiha.db` lives inside the container, so every deploy starts an
-> empty clinic — and nobody finds out until the morning the register is blank.
->
-> Attach a volume and point **both** `DB_FILE` and `BACKUP_DIR` at it:
->
-> ```
-> DB_FILE=/data/samiha.db
-> BACKUP_DIR=/data/backups
-> ```
->
-> **How to know it worked.** Sign in and open **Account & System → This
-> installation**. The *Records kept* line answers it:
->
-> - **Yes — kept on disk** · the database is older than the process reading
->   it, so it has survived at least one restart. This is proof.
-> - **Not proven yet** · the database was created when the app last started.
->   Correct on a first install. **Redeploy once and look again** — if it still
->   says this, nothing is being kept.
->
-> The startup log also prints a box the first time a production install
-> creates an empty database.
-
-
 The whole database is one file. On a platform with an ephemeral filesystem (Railway, Render,
 Fly, Heroku), **every deploy or restart wipes it** unless you attach a volume.
 
@@ -134,73 +109,6 @@ because a password you cannot see is the most common reason a correct login is r
 reset and change-password screens also show a live strength meter, and refuse two entries that
 do not match before anything reaches the server. A failed sign-in points at the eye and at
 Caps Lock rather than just repeating "invalid credentials".
-
-## Going live
-
-A new install creates **one account** — an administrator — and no patients. Every
-member of staff after that is added by the administrator under **Staff &
-Doctors**, which is also how a doctor joins: their qualification, registration
-number, consulting fees, room and OPD sessions are set there, and they are
-issued the doctor code that appears on everything they sign.
-
-| Setting | Meaning |
-|---|---|
-| `ADMIN_EMAIL` | The first administrator's sign-in address (default `admin@samihapolyclinic.com`) |
-| `ADMIN_PASSWORD` | Their password, **re-applied on every restart**. Leave it unset and one is generated and printed **once** to the startup log |
-| `ADMIN_NAME` | The name on the account (default `Administrator`) |
-| `SEED_DEMO` | `1` loads the demonstration — invented staff, doctors and sample patients. Never set this on a clinic's own installation |
-
-**The administrator cannot be locked out.** Set `ADMIN_PASSWORD` in the
-environment and it is applied to the administrator at every startup — the way
-in is always the same and always known, with no reset email in the way. Losing
-access to this system means losing the appointment book, the day's takings and
-the patients' records, and "click the link in the email" is no answer at seven
-in the morning.
-
-Left unset, the account is created once with a generated password printed to
-the log. That one is not recoverable — copy it, sign in, and change it under
-**My account**, or set `ADMIN_PASSWORD` and stop worrying about it.
-
-Other staff who forget a password reset it by email from the sign-in page.
-
-> **The sign-in page names nobody.** It used to list every desk and print the
-> shared password, which is a demonstration rather than a way in — it hands a
-> stranger the roles, the address format and the secret. Who works at the
-> clinic is under Staff & Doctors, behind a sign-in.
-
-Signing in with a password this system once shipped with raises a warning on
-the screen and an entry in the audit log, and such a password cannot be chosen
-when changing one.
-
-### Clearing the demonstration out
-
-An installation that has been tried out holds demo staff and sample patients,
-and changing the seed does not remove them: the seed only decides what a *new*
-database gets. **Account & System → Going live** clears them.
-
-It shows exactly what would go before anything does, and asks for the clinic's
-name to be typed to confirm. What it separates is what the clinic *is* from
-what has *happened in* it:
-
-| Kept | Cleared |
-|---|---|
-| Departments, wards and beds | Patients and every record of one |
-| Diagnostic catalogue and rate card | Appointments, visits, consultations |
-| Formulary and the stock on the shelf | Invoices, receipts, payment plans |
-| Insurers and TPAs, the ICD list | Lab orders, prescriptions, admissions |
-| Sliding-scale bands and assistance | Pharmacy sales, enquiries, claims |
-| Your own staff accounts | The demo accounts that came in the box |
-
-A snapshot is written to the backups first, every time. Numbering restarts, so
-the first real patient is UHID 1 and the first bill is invoice 1.
-
-The stock on the shelf is deliberately kept: the opening quantity is the
-clinic's own count of its own pharmacy, and throwing it away would mean
-counting the whole shelf again.
-
-What a departing account *did* is kept — the audit log still answers "who did
-this", and a stock movement still says who made it — with the reference to the
-deleted account cleared.
 
 ## Backups
 
