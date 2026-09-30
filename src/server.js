@@ -2,6 +2,7 @@
 const path = require('path');
 const express = require('express');
 const config = require('./config');
+const assets = require('./lib/assets');
 const { db } = require('./db');
 const auth = require('./lib/auth');
 const { ApiError } = require('./lib/http');
@@ -68,8 +69,26 @@ app.use('/api/exports', require('./routes/exports'));
 app.use('/api/admin', require('./routes/admin'));
 
 // --------------------------------------------------------------- static + SPA
-app.use(express.static(path.join(config.root, 'public'), { index: false, maxAge: config.isProd ? '1h' : 0 }));
-app.get(/^\/(?!api\/).*/, (_req, res) => res.sendFile(path.join(config.root, 'public', 'index.html')));
+/*
+ * Assets are addressed with a stamp taken from their own contents (see
+ * lib/assets.js), so a given URL's body never changes and a browser may keep
+ * it as long as it likes. A release changes the stamp, which changes every
+ * URL, and the whole set is fetched together rather than in pieces.
+ */
+app.use(express.static(path.join(config.root, 'public'), {
+  index: false,
+  maxAge: config.isProd ? '365d' : 0,
+  setHeaders(res, filePath) {
+    // index.html is the one thing that must never be held: it is what
+    // carries the new stamps to a browser still running the old build.
+    if (filePath.endsWith('index.html')) res.setHeader('Cache-Control', 'no-store');
+  },
+}));
+
+app.get(/^\/(?!api\/).*/, (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.type('html').send(assets.page());
+});
 
 // --------------------------------------------------------------- error handler
 app.use((req, res) => res.status(404).json({ error: `No route for ${req.method} ${req.path}` }));
