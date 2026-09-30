@@ -110,33 +110,6 @@ reset and change-password screens also show a live strength meter, and refuse tw
 do not match before anything reaches the server. A failed sign-in points at the eye and at
 Caps Lock rather than just repeating "invalid credentials".
 
-## The administrator cannot be locked out
-
-Seeding runs **once**, on an empty database, and never again — otherwise a
-re-deploy would undo the clinic's own edits. That has a consequence worth
-knowing: once a database persists (on a mounted volume, as it should), the
-accounts it was created with are the only ones it ever gets automatically.
-Attach a volume to an install that had none and the database survives from
-then on, so seeding never runs again and no new accounts appear.
-
-So set these, and the way in is always the same and always known:
-
-| Setting | Meaning |
-|---|---|
-| `ADMIN_EMAIL` | The administrator's sign-in address |
-| `ADMIN_PASSWORD` | Their password, **applied at every startup** |
-| `ADMIN_NAME` | The name on the account (default `Administrator`) |
-
-Both must be set for anything to happen; with neither, nothing is touched. At
-each startup the administrator is created if there is none, moved to that
-address if there is one on another, re-enabled if somebody disabled it, and
-its password set to the one in the environment. Change the variable and the
-new password takes effect on the next restart.
-
-Losing the way into this system means losing the appointment book, the day's
-takings and the patients' records, and "click the link in the email" is no
-answer at seven in the morning.
-
 ## Backups
 
 A consistent snapshot is taken with SQLite's own online backup API — safe to run while the
