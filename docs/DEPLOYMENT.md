@@ -39,6 +39,22 @@ because the app restarted.
 
 ## SQLite needs a persistent disk
 
+> **Check this before the first real patient.** A container's own filesystem is
+> thrown away when it is redeployed. A database at the default
+> `./data/samiha.db` lives inside the container, so every deploy starts an
+> empty clinic — and nobody finds out until the morning the register is blank.
+>
+> Attach a volume and point **both** `DB_FILE` and `BACKUP_DIR` at it:
+>
+> ```
+> DB_FILE=/data/samiha.db
+> BACKUP_DIR=/data/backups
+> ```
+>
+> On the first boot of an empty database in production the startup log says so
+> in a box. Seeing that box on a *second* deploy means nothing is being kept.
+
+
 The whole database is one file. On a platform with an ephemeral filesystem (Railway, Render,
 Fly, Heroku), **every deploy or restart wipes it** unless you attach a volume.
 
@@ -121,13 +137,22 @@ issued the doctor code that appears on everything they sign.
 | Setting | Meaning |
 |---|---|
 | `ADMIN_EMAIL` | The first administrator's sign-in address (default `admin@samihapolyclinic.com`) |
-| `ADMIN_PASSWORD` | Their password. Leave it unset and one is generated and printed **once** to the startup log |
+| `ADMIN_PASSWORD` | Their password, **re-applied on every restart**. Leave it unset and one is generated and printed **once** to the startup log |
 | `ADMIN_NAME` | The name on the account (default `Administrator`) |
 | `SEED_DEMO` | `1` loads the demonstration — invented staff, doctors and sample patients. Never set this on a clinic's own installation |
 
-The generated password is shown once, in the log, and is not recoverable —
-copy it, sign in, and change it under **My account**. A forgotten one is reset
-by email from the sign-in page.
+**The administrator cannot be locked out.** Set `ADMIN_PASSWORD` in the
+environment and it is applied to the administrator at every startup — the way
+in is always the same and always known, with no reset email in the way. Losing
+access to this system means losing the appointment book, the day's takings and
+the patients' records, and "click the link in the email" is no answer at seven
+in the morning.
+
+Left unset, the account is created once with a generated password printed to
+the log. That one is not recoverable — copy it, sign in, and change it under
+**My account**, or set `ADMIN_PASSWORD` and stop worrying about it.
+
+Other staff who forget a password reset it by email from the sign-in page.
 
 > **The sign-in page names nobody.** It used to list every desk and print the
 > shared password, which is a demonstration rather than a way in — it hands a

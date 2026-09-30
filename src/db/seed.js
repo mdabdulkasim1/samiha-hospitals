@@ -65,14 +65,37 @@ db.prepare(
  * in a repository is the same as no password.
  */
 function firstAdministrator() {
-  if (db.prepare('SELECT COUNT(*) AS c FROM users').get().c > 0) return null;
-
   const email = (process.env.ADMIN_EMAIL || 'admin@samihapolyclinic.com').toLowerCase();
   const chosen = process.env.ADMIN_PASSWORD || null;
+
+  /*
+   * With ADMIN_PASSWORD set, that password is the truth on every boot.
+   *
+   * The administrator must not be able to get locked out. Losing the way into
+   * this system means losing the appointment book, the day's takings and the
+   * patients' records, and "click the link in the email" is no answer at
+   * seven in the morning when the mailbox is on a phone nobody has. So the
+   * clinic sets the password where it keeps its other settings and it is
+   * applied at startup — every time, not only the first — and the way in is
+   * always the same and always known.
+   *
+   * It is written where the clinic already keeps its secrets, and never in
+   * this repository. Kept out of the environment instead, the account is
+   * created once with a generated password printed to the log, and from then
+   * on it is theirs to remember.
+   */
+  const existing = db.prepare("SELECT id, email FROM users WHERE role = 'admin' ORDER BY id LIMIT 1").get();
+
+  if (existing && chosen) {
+    db.prepare('UPDATE users SET email = ?, password_hash = ? WHERE id = ?')
+      .run(email, hashPassword(chosen), existing.id);
+    return { email, password: chosen, generated: false, reapplied: true };
+  }
+  if (existing) return null;
+
   // 18 bytes of base64 is plenty against guessing and still short enough to
   // read off a terminal and type once before it is changed.
   const password = chosen || require('crypto').randomBytes(18).toString('base64url');
-
   upsert('users', 'staff_code', {
     staff_code: 'ADMIN01',
     name: process.env.ADMIN_NAME || 'Administrator',
@@ -559,7 +582,10 @@ console.log('  Patients    :', db.prepare('SELECT COUNT(*) AS c FROM patients').
  * readable and cannot be printed again — a forgotten one is reset by email
  * from the sign-in page.
  */
-if (firstAdmin) {
+if (firstAdmin && firstAdmin.reapplied) {
+  console.log(`\n  Administrator ${firstAdmin.email} — password re-applied from ADMIN_PASSWORD.`);
+  console.log('  Staff accounts are managed under Staff & Doctors.\n');
+} else if (firstAdmin) {
   console.log('\n  ─────────────────────────────────────────────────────────────');
   console.log('  The clinic starts with one account. Sign in and add your staff');
   console.log('  under Staff & Doctors.');
@@ -567,7 +593,8 @@ if (firstAdmin) {
   if (firstAdmin.generated) {
     console.log(`    password ${firstAdmin.password}`);
     console.log('\n  Shown once and not recoverable. Copy it now, sign in, and');
-    console.log('  change it under My account.');
+    console.log('  change it under My account — or set ADMIN_PASSWORD in the');
+    console.log('  environment and it is re-applied on every restart.');
   } else {
     console.log('    password as set in ADMIN_PASSWORD');
   }
