@@ -230,6 +230,7 @@ APP_URL=https://your-domain</pre>
         <div class="card-body"><dl class="kv">
           <dt>Environment</dt><dd>${UI.esc(s.environment)}</dd>
           <dt>Database</dt><dd class="mono small">${UI.esc(s.database)}</dd>
+          <dt>Records kept</dt><dd>${storageVerdict(s.storage)}</dd>
           <dt>WhatsApp</dt><dd>${UI.esc(s.whatsappProvider)}</dd>
           <dt>Accounts</dt><dd>${UI.num(s.counts.users)}</dd>
           <dt>Patients</dt><dd>${UI.num(s.counts.patients)}</dd>
@@ -343,6 +344,30 @@ APP_URL=https://your-domain</pre>
         e.target.disabled = false;
       }
     });
+  }
+
+  /**
+   * Whether this clinic's records survive a restart, in one line.
+   *
+   * The proof needs no knowledge of the host: if the database was first
+   * opened before the process now reading it, the file outlived a restart.
+   * If the two are the same moment, this database was made just now — which
+   * is right on a first install and means the last one was thrown away on
+   * any deploy after that.
+   */
+  function storageVerdict(st) {
+    if (!st) return '<span class="muted">—</span>';
+    const since = st.firstBoot ? UI.dateTime(st.firstBoot) : null;
+    if (st.persistence === 'survived') {
+      return `${UI.badge('Yes — kept on disk', 'ok')}
+        <div class="muted small">In use since ${UI.esc(since)}, through at least one restart.</div>`;
+    }
+    return `${UI.badge('Not proven yet', 'warn')}
+      <div class="muted small">This database was created when the app last started${
+        since ? ` (${UI.esc(since)})` : ''}. That is right on a first install.
+        <b>Redeploy once and look again</b> — if it still says this, the database is inside the
+        container and everything entered is being lost on each deploy. Point <code>DB_FILE</code>
+        and <code>BACKUP_DIR</code> at a mounted volume.</div>`;
   }
 
   async function backupTab(body) {

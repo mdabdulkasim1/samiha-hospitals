@@ -51,8 +51,17 @@ because the app restarted.
 > BACKUP_DIR=/data/backups
 > ```
 >
-> On the first boot of an empty database in production the startup log says so
-> in a box. Seeing that box on a *second* deploy means nothing is being kept.
+> **How to know it worked.** Sign in and open **Account & System → This
+> installation**. The *Records kept* line answers it:
+>
+> - **Yes — kept on disk** · the database is older than the process reading
+>   it, so it has survived at least one restart. This is proof.
+> - **Not proven yet** · the database was created when the app last started.
+>   Correct on a first install. **Redeploy once and look again** — if it still
+>   says this, nothing is being kept.
+>
+> The startup log also prints a box the first time a production install
+> creates an empty database.
 
 
 The whole database is one file. On a platform with an ephemeral filesystem (Railway, Render,

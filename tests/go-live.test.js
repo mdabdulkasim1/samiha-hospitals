@@ -277,3 +277,48 @@ test('and such a password cannot be chosen', () => {
   assert.ok(passwordProblems('samiha@123').length, 'the published one is refused outright');
   assert.deepStrictEqual(passwordProblems('An0ther#Pass'), [], 'a real one is fine');
 });
+
+// ------------------------------------------- do the records survive a deploy
+test('a database created this moment is not yet proof of anything', () => {
+  /*
+   * The silent failure this catches: a database inside the container is
+   * thrown away on the next deploy, and the clinic finds out on the morning
+   * the register is blank. The test is whether the file is older than the
+   * process reading it.
+   */
+  const storage = require('../src/services/storage');
+  assert.strictEqual(storage.mark(), true, 'the first open is recorded');
+  assert.strictEqual(storage.mark(), false, 'and only the first');
+
+  const st = storage.status();
+  assert.strictEqual(st.persistence, 'unproven',
+    'written moments ago by this very process, so it proves nothing yet');
+  assert.ok(st.firstBoot, 'but when it was made is on record');
+  assert.strictEqual(st.writable, true);
+  assert.strictEqual(st.database, config.dbFile);
+});
+
+test('a database older than the process has survived a restart', () => {
+  const storage = require('../src/services/storage');
+  // Backdate the mark: the same database, opened by an earlier process.
+  db.prepare('UPDATE settings SET value = ? WHERE key = ?')
+    .run(new Date(Date.now() - 86400000).toISOString(), storage.KEY);
+
+  assert.strictEqual(storage.status().persistence, 'survived',
+    'a file that predates the process reading it outlived a restart');
+});
+
+test('the administrator is told which it is', async () => {
+  const r = await api('GET', '/api/admin/system');
+  assert.strictEqual(r.status, 200);
+  assert.ok(r.body.storage, 'the installation card carries the verdict');
+  assert.strictEqual(r.body.storage.persistence, 'survived');
+  assert.ok(r.body.storage.firstBoot);
+
+  // And it is the administrator's, like the rest of that screen. The demo
+  // lab account was swept earlier in this file, so its token is dead too —
+  // either way the answer is "not for you".
+  const refused = await api('GET', '/api/admin/system', undefined, 'lab');
+  assert.ok([401, 403].includes(refused.status),
+    `the installation card is the administrator's, got ${refused.status}`);
+});

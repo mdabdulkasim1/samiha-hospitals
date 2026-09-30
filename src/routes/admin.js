@@ -11,6 +11,7 @@ const clinic = require('../services/clinic');
 const upi = require('../services/upi');
 const audit = require('../lib/audit');
 const golive = require('../services/golive');
+const storage = require('../services/storage');
 
 const router = express.Router();
 const adminOnly = requireRole('admin');
@@ -83,6 +84,9 @@ router.get('/system', adminOnly, wrap(async (_req, res) => {
     whatsappProvider: config.whatsapp.provider,
     environment: config.nodeEnv,
     database: config.dbFile,
+    // Whether the records outlive a restart — the one thing about an install
+    // that quietly destroys a clinic if it is wrong.
+    storage: storage.status(),
     counts: {
       users: db.prepare('SELECT COUNT(*) AS c FROM users').get().c,
       patients: db.prepare('SELECT COUNT(*) AS c FROM patients').get().c,

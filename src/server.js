@@ -2,6 +2,7 @@
 const path = require('path');
 const express = require('express');
 const config = require('./config');
+const storage = require('./services/storage');
 const { db } = require('./db');
 const auth = require('./lib/auth');
 const { ApiError } = require('./lib/http');
@@ -156,39 +157,25 @@ function seedIfEmpty() {
 }
 
 /**
- * Whether this database survives a restart.
- *
- * A container's own filesystem is thrown away when it is redeployed, so a
- * database sitting inside it is a database that lasts until the next release
- * — and a clinic will not find that out until the morning its register is
- * empty. The tell is that a production install has just created its database
- * from nothing: a clinic that has been running has records, and a fresh one
- * on every boot means nothing is being kept.
- *
- * Recorded the first time and compared afterwards, so this speaks up on the
- * second deploy rather than on the first, when a new database is expected.
+ * Say so, loudly, when a production install has just created its database.
+ * The reasoning is in services/storage.js; this is where it reaches a human.
  */
 function warnIfDataIsTemporary() {
   if (!config.isProd) return;
-  try {
-    const KEY = 'install.first_boot';
-    const seen = db.prepare('SELECT value FROM settings WHERE key = ?').get(KEY);
-    if (!seen) {
-      db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)')
-        .run(KEY, new Date().toISOString());
-      console.warn(
-        '\n  ┌────────────────────────────────────────────────────────────────┐\n'
-        + '  │  This install has just created an empty database.              │\n'
-        + '  │                                                                │\n'
-        + `  │  ${config.dbFile.slice(-58).padEnd(60)}  │\n`
-        + '  │                                                                │\n'
-        + '  │  If that path is inside the container rather than on a mounted │\n'
-        + '  │  volume, everything entered will be lost at the next deploy —  │\n'
-        + '  │  patients, bills and all. Attach a volume and point DB_FILE    │\n'
-        + '  │  and BACKUP_DIR at it before seeing real patients.             │\n'
-        + '  └────────────────────────────────────────────────────────────────┘\n');
-    }
-  } catch { /* never let a warning stop the clinic opening */ }
+  if (!storage.mark()) return;
+  console.warn(
+    '\n  ┌────────────────────────────────────────────────────────────────┐\n'
+    + '  │  This install has just created an empty database.              │\n'
+    + '  │                                                                │\n'
+    + `  │  ${config.dbFile.slice(-58).padEnd(60)}  │\n`
+    + '  │                                                                │\n'
+    + '  │  If that path is inside the container rather than on a mounted │\n'
+    + '  │  volume, everything entered will be lost at the next deploy —  │\n'
+    + '  │  patients, bills and all. Attach a volume and point DB_FILE    │\n'
+    + '  │  and BACKUP_DIR at it before seeing real patients.             │\n'
+    + '  │                                                                │\n'
+    + '  │  Account & System → This installation confirms it either way.  │\n'
+    + '  └────────────────────────────────────────────────────────────────┘\n');
 }
 
 if (require.main === module) {
