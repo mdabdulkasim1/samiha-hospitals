@@ -2,7 +2,7 @@
 const express = require('express');
 const { db } = require('../db');
 const config = require('../config');
-const { wrap, notFound, badRequest } = require('../lib/http');
+const { wrap, notFound, badRequest, conflict } = require('../lib/http');
 const { requireRole } = require('../lib/auth');
 const { str, int } = require('../lib/validate');
 const backup = require('../services/backup');
@@ -10,6 +10,7 @@ const mailer = require('../services/mailer');
 const clinic = require('../services/clinic');
 const upi = require('../services/upi');
 const audit = require('../lib/audit');
+const golive = require('../services/golive');
 
 const router = express.Router();
 const adminOnly = requireRole('admin');
@@ -172,6 +173,59 @@ router.post('/users/:id/send-reset', adminOnly, wrap(async (req, res) => {
     ok: true, expiresAt, delivered: sent.ok,
     ...(config.mail.provider !== 'smtp' ? { devLink: link } : {}),
     message: `Reset link sent to ${user.email} and copied to ${config.mail.recoveryEmail}.`,
+  });
+}));
+
+/*
+ * Going live: clearing the demonstration out of a clinic that is about to use
+ * this for real.
+ *
+ * Two routes on purpose. The first only counts, so the administrator sees
+ * exactly what would go before anything does; the second does it, and only
+ * when the request repeats the clinic's own name back. A confirmation box
+ * people click without reading is not a confirmation.
+ */
+router.get('/go-live', adminOnly, wrap((req, res) => {
+  res.json({ ...golive.plan(req.user.id), confirm: config.clinic.name });
+}));
+
+router.post('/go-live', adminOnly, wrap(async (req, res) => {
+  // A fallback, or an empty box throws instead of being refused.
+  if (str(req.body.confirm, '').toLowerCase() !== config.clinic.name.trim().toLowerCase()) {
+    throw badRequest(`Type the clinic's name exactly — ${config.clinic.name} — to confirm.`);
+  }
+
+  /*
+   * A snapshot first, every time. This is irreversible and somebody will one
+   * day run it on a clinic that had started entering real patients; the backup
+   * is the difference between a bad afternoon and a lost register. It is not
+   * emailed — it would be the whole patient list leaving the building over a
+   * routine nobody asked for a copy of.
+   */
+  let snapshot = null;
+  try {
+    snapshot = await backup.create({ kind: 'manual', userId: req.user.id, notify: false });
+  } catch (err) {
+    throw conflict(`Nothing was cleared: the safety backup failed (${err.message}).`);
+  }
+
+  const done = golive.apply(req.user.id);
+  audit.log(req, 'go_live', 'system', null, {
+    rows: done.rows,
+    tables: done.tables.length,
+    staffRemoved: done.staff.map((s) => s.staff_code),
+    backup: snapshot.filename,
+  });
+
+  res.json({
+    ok: true,
+    cleared: done.rows,
+    tables: done.tables.length,
+    staffRemoved: done.staff.length,
+    kept: done.kept,
+    backup: snapshot.filename,
+    message: `Cleared ${done.rows} record(s) and ${done.staff.length} demo account(s). `
+      + `A snapshot was saved as ${snapshot.filename} first.`,
   });
 }));
 

@@ -42,10 +42,25 @@ router.post('/login', wrap((req, res) => {
     secure: config.isProd,
     maxAge: config.session.ttlHours * 3600_000,
   });
-  audit.log({ ...req, user }, 'login', 'user', user.id);
+  req.user = user;   // the real request, so the log keeps the caller's address
+  audit.log(req, 'login', 'user', user.id);
+
+  /*
+   * Said at the one moment it can be: the password is in hand here and never
+   * again — a stored hash cannot be asked what it is, only whether a guess
+   * matches. The one that matters is the password this system used to print
+   * on its own sign-in page, which every install that still uses it shares
+   * with anyone who has ever seen that page.
+   */
+  const weakPassword = auth.isWeakPassword(password);
+  if (weakPassword) {
+    audit.log(req, 'weak_password', 'user', user.id, { atLogin: true });
+  }
+
   res.json({
     token: session.token,
     expiresAt: session.expiresAt,
+    weakPassword,
     user: { id: user.id, name: user.name, role: user.role, staffCode: user.staff_code, email: user.email, departmentId: user.department_id },
   });
 }));

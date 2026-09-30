@@ -236,7 +236,15 @@ APP_URL=https://your-domain</pre>
           <dt>Visits</dt><dd>${UI.num(s.counts.visits)}</dd>
           <dt>Invoices</dt><dd>${UI.num(s.counts.invoices)}</dd>
         </dl></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h3>Going live</h3>
+          <span class="muted small">Clear the demonstration out before the first real patient</span></div>
+        <div class="card-body" id="golive"></div>
       </div>`;
+
+    drawGoLive(body.querySelector('#golive'));
 
     body.querySelector('#test-mail').addEventListener('click', async (e) => {
       e.target.disabled = true;
@@ -252,6 +260,88 @@ APP_URL=https://your-domain</pre>
       } catch (err) {
         out.innerHTML = `<div class="alert danger mt">${UI.esc(err.message)}</div>`;
       } finally { e.target.disabled = false; }
+    });
+  }
+
+  /**
+   * Clearing the demonstration.
+   *
+   * This system ships with a working demo in it — invented staff, invented
+   * doctors, sample patients — and whatever was entered while the clinic was
+   * trying it out. None of that belongs in a register that is about to hold
+   * real people, and the seed cannot remove it: the seed only decides what a
+   * new database gets, and this one already has it.
+   *
+   * Shown as a count of exactly what would go before anything does, and
+   * confirmed by typing the clinic's own name, because a box people click
+   * without reading is not a confirmation.
+   */
+  async function drawGoLive(host) {
+    host.innerHTML = UI.loading();
+    let p;
+    try { p = await API.get('/api/admin/go-live'); }
+    catch (err) { host.innerHTML = `<div class="alert danger">${UI.esc(err.message)}</div>`; return; }
+
+    const nothing = !p.rows && !p.staff.length;
+    if (nothing) {
+      host.innerHTML = `<div class="alert ok">Nothing left to clear — this clinic is running on
+        its own records. Staff are managed under <b>Staff &amp; Doctors</b>.</div>`;
+      return;
+    }
+
+    host.innerHTML = `
+      <div class="alert warn"><b>This cannot be undone.</b> A snapshot is saved to the backups
+        first, and everything the clinic was set up with is kept.</div>
+
+      <div class="grid c2 mb">
+        <div>
+          <div class="k">Would be cleared</div>
+          ${p.rows ? `<dl class="kv">${p.tables.map((t) =>
+            `<dt>${UI.esc(UI.titleise(t.table.replace(/_/g, ' ')))}</dt>
+             <dd>${UI.num(t.rows)}</dd>`).join('')}</dl>`
+            : '<p class="muted small">No records.</p>'}
+          ${p.staff.length ? `<div class="k mt">Demo accounts</div>
+            <p class="small">${p.staff.map((x) =>
+              `${UI.esc(x.name)} <span class="muted">(${UI.esc(x.role)})</span>`).join(' · ')}</p>` : ''}
+        </div>
+        <div>
+          <div class="k">Kept</div>
+          <dl class="kv">
+            <dt>Departments</dt><dd>${UI.num(p.kept.departments)}</dd>
+            <dt>Beds</dt><dd>${UI.num(p.kept.beds)}</dd>
+            <dt>Diagnostic catalogue</dt><dd>${UI.num(p.kept.labTests)}</dd>
+            <dt>Services &amp; rates</dt><dd>${UI.num(p.kept.services)}</dd>
+            <dt>Formulary &amp; stock</dt><dd>${UI.num(p.kept.drugs)}</dd>
+            <dt>Insurers &amp; TPAs</dt><dd>${UI.num(p.kept.insurers)}</dd>
+            <dt>Your accounts</dt><dd>${UI.num(p.kept.users)}</dd>
+          </dl>
+        </div>
+      </div>
+
+      <label class="field"><span>Type <b>${UI.esc(p.confirm)}</b> to confirm</span>
+        <input type="text" id="gl-confirm" autocomplete="off" placeholder="${UI.esc(p.confirm)}"></label>
+      <button class="btn danger" id="gl-go">Clear the demo data</button>
+      <div id="gl-out"></div>`;
+
+    host.querySelector('#gl-go').addEventListener('click', async (e) => {
+      const confirm = host.querySelector('#gl-confirm').value;
+      const out = host.querySelector('#gl-out');
+      if (!await UI.confirm(
+        `Clear ${UI.num(p.rows)} record(s) and ${p.staff.length} demo account(s)? `
+        + 'A snapshot is saved first, but this cannot be undone from the screen.',
+        { title: 'Clear the demo data' })) return;
+
+      e.target.disabled = true;
+      out.innerHTML = '<div class="loading"><span class="spinner"></span></div>';
+      try {
+        const r = await API.post('/api/admin/go-live', { confirm });
+        out.innerHTML = `<div class="alert ok mt">${UI.esc(r.message)}</div>`;
+        UI.ok('The clinic is live.');
+        setTimeout(() => drawGoLive(host), 1200);
+      } catch (err) {
+        out.innerHTML = `<div class="alert danger mt">${UI.esc(err.message)}</div>`;
+        e.target.disabled = false;
+      }
     });
   }
 
