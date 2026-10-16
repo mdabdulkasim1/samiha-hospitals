@@ -183,7 +183,7 @@ if (require.main === module) {
     console.log(`  ▸ database:    ${config.dbFile}`);
     console.log(`  ▸ WhatsApp:    ${config.whatsapp.provider}` +
       (config.whatsapp.provider === 'mock' ? ' (simulator — no messages leave this machine)' : ''));
-    console.log(`  ▸ Email:       ${config.mail.provider} → recovery copies to ${config.mail.recoveryEmail}` +
+    console.log(`  ▸ Email:       ${config.mail.provider} → all recovery mail to ${config.mail.recoveryEmail}` +
       (config.mail.provider === 'mock' ? ' (offline — reset links appear in the outbox)' : ''));
     console.log(`  ▸ Backups:     ${config.backup.dir}` +
       (config.backup.hour !== null ? ` (daily at ${String(config.backup.hour).padStart(2, '0')}:00)` : ' (automatic backup off)') + '\n');

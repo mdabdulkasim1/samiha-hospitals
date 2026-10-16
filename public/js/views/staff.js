@@ -77,8 +77,10 @@
             { label: 'Follow-up', num: true, render: (d) => UI.money(d.follow_up_fee || 0) },
             { label: 'Slot', num: true, render: (d) => `${UI.esc(d.slot_minutes || 15)} min` },
             { label: 'Status', render: (d) => d.active ? UI.badge('Active', 'ok') : UI.badge('Disabled', 'danger') },
+            ...signInColumns(),
           ], doctors, { emptyText: 'No doctors yet — add the first one.' });
           UI.bindRows(host, doctors, (d) => APP.navigate('staff', { id: d.id }));
+          wireSignIn(host, doctors);
         },
 
         staff() {
@@ -94,8 +96,10 @@
             { label: 'Email', render: (u) => UI.esc(u.email || '—') },
             { label: 'Phone', render: (u) => UI.esc(u.phone || '—') },
             { label: 'Status', render: (u) => u.active ? UI.badge('Active', 'ok') : UI.badge('Disabled', 'danger') },
+            ...signInColumns(),
           ], others, { emptyText: 'No other staff accounts.' });
           UI.bindRows(host, others, (u) => APP.navigate('staff', { id: u.id }));
+          wireSignIn(host, others);
         },
 
         departments() {
@@ -125,6 +129,129 @@
       tabs.doctors();
     },
   });
+
+  // ----------------------------------------------------------- sign-in access
+  /*
+   * What the administrator can and cannot be shown.
+   *
+   * Not the password somebody already has: passwords are stored as one-way
+   * hashes, so there is nothing on the system to read back. That is deliberate
+   * — a database that could list everyone's password hands over every account,
+   * and every patient record behind them, the moment a copy of it goes astray.
+   *
+   * What is shown instead is everything the administrator actually needs to
+   * get somebody working: the exact thing they type into the sign-in box, when
+   * their password was last set and by whom, and a button that issues a new
+   * one and puts it on screen to be written down or read out.
+   */
+  function signInColumns() {
+    if (!APP.can(['admin'])) return [];
+    return [
+      {
+        label: 'Signs in with',
+        render: (u) => `<code>${UI.esc(u.email || u.staff_code)}</code>`,
+      },
+      {
+        label: 'Password',
+        render: (u) => `<span data-pw-cell="${u.id}">${passwordCell(u)}</span>`,
+      },
+      {
+        label: '',
+        render: (u) => `<button class="btn ghost sm" data-pw="${u.id}">Set password</button>`,
+      },
+    ];
+  }
+
+  function passwordCell(u) {
+    if (!u.password_set_at) return '<span class="muted">Never set</span>';
+    const by = u.password_set_by_name ? ` by ${UI.esc(u.password_set_by_name)}` : '';
+    const seen = u.last_login_at
+      ? `last signed in ${UI.esc(UI.dateShort(u.last_login_at))}`
+      : '<span style="color:var(--warn)">never signed in</span>';
+    return `<span class="muted small">Set ${UI.esc(UI.dateShort(u.password_set_at))}${by}<br>${seen}</span>`;
+  }
+
+  /** Wires the "Set password" buttons in a table rendered with signInColumns(). */
+  function wireSignIn(host, rows) {
+    host.querySelectorAll('[data-pw]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const user = rows.find((r) => String(r.id) === btn.dataset.pw);
+        if (user) openSetPassword(user, host);
+      });
+    });
+  }
+
+  function openSetPassword(user, host) {
+    UI.modal({
+      title: `Password — ${user.name}`,
+      size: 'narrow',
+      body: `
+        <p class="muted small">They sign in with
+          <code>${UI.esc(user.email || user.staff_code)}</code>.</p>
+        <p class="muted small">The password they have now cannot be shown — it is stored
+          scrambled, which is what keeps the patients' records safe if the database is ever
+          copied. Issue a new one here and it appears on screen once, to hand over.</p>
+        ${UI.field({
+          name: 'password', label: 'New password', type: 'text',
+          placeholder: 'Leave blank to have one made',
+          hint: 'At least 8 characters with a letter and a number.',
+        })}
+        <p class="muted small">Setting it signs them out everywhere, so anyone using the
+          old password stops straight away.</p>`,
+      footer: `<button class="btn ghost" data-act="__close">Cancel</button>
+               <button class="btn" data-act="set">Set password</button>`,
+      onAction: async (act, modal) => {
+        if (act !== 'set') return;
+        const body = UI.formValues(modal);
+        const result = await API.post(`/api/masters/staff/${user.id}/password`, {
+          password: body.password || '',
+        });
+        /*
+         * The row is updated where it stands rather than the page reloaded.
+         * Re-rendering would tear down every open modal — including the one
+         * about to show the password, which there is no second chance to read.
+         */
+        user.password_set_at = result.passwordSetAt;
+        user.password_set_by_name = result.passwordSetByName;
+        const cell = host.querySelector(`[data-pw-cell="${user.id}"]`);
+        if (cell) cell.innerHTML = passwordCell(user);
+
+        showPassword(result);
+      },
+    });
+  }
+
+  /**
+   * The one and only time this password is readable. Asking again does not
+   * show it again — it sets another one.
+   */
+  function showPassword(result) {
+    UI.modal({
+      title: `Hand this to ${result.name}`,
+      size: 'narrow',
+      body: `
+        <div class="muted small">Signs in with</div>
+        <div class="pw-show">${UI.esc(result.signInWith)}</div>
+        <div class="muted small mt">Password</div>
+        <div class="pw-show" id="pw-value">${UI.esc(result.password)}</div>
+        <p class="muted small mt">Write it down or copy it now. Once this box is closed the
+          password cannot be read back — you would have to set another one.
+          Ask them to change it to something of their own after they sign in.</p>`,
+      footer: `<button class="btn ghost" data-act="copy">Copy password</button>
+               <button class="btn teal" data-act="__close">Done</button>`,
+      onAction: async (act) => {
+        if (act !== 'copy') return;
+        try {
+          await navigator.clipboard.writeText(result.password);
+          UI.ok('Password copied.');
+        } catch (err) {
+          UI.warn('Could not copy — select the password and copy it by hand.');
+        }
+        return 'keep';
+      },
+    });
+  }
 
   // ------------------------------------------------------------ add / edit
   async function openStaffForm(fixedRole, existing) {

@@ -1,12 +1,13 @@
 'use strict';
 const express = require('express');
+const crypto = require('crypto');
 const { db } = require('../db');
 const { wrap, notFound, conflict, badRequest } = require('../lib/http');
 const { requireRole, seesPrices } = require('../lib/auth');
 const { required, str, num, int, bool } = require('../lib/validate');
 const audit = require('../lib/audit');
 const { generate, doctorCode } = require('../lib/ids');
-const { hashPassword } = require('../lib/auth');
+const { hashPassword, passwordProblems } = require('../lib/auth');
 const scheduling = require('../services/scheduling');
 const config = require('../config');
 
@@ -41,8 +42,10 @@ router.get('/staff', wrap((req, res) => {
   const rows = db.prepare(
     `SELECT u.id, u.staff_code, u.name, u.email, u.phone, u.role, u.active, u.department_id,
             d.name AS department_name, dp.doctor_code, dp.qualification, dp.specialization,
-            dp.consult_fee, dp.follow_up_fee, dp.slot_minutes, dp.room_no
+            dp.consult_fee, dp.follow_up_fee, dp.slot_minutes, dp.room_no,
+            u.password_set_at, u.last_login_at, setter.name AS password_set_by_name
        FROM users u
+       LEFT JOIN users setter ON setter.id = u.password_set_by
        LEFT JOIN departments d ON d.id = u.department_id
        LEFT JOIN doctor_profiles dp ON dp.user_id = u.id
       WHERE (? IS NULL OR u.role = ?)
@@ -96,6 +99,8 @@ router.post('/staff', adminOnly, wrap((req, res) => {
      VALUES (?, ?, ?, ?, ?, ?, ?)`
   ).run(staffCode, str(req.body.name), str(req.body.email) ? str(req.body.email).toLowerCase() : null,
         str(req.body.phone), hashPassword(req.body.password), str(req.body.role), int(req.body.departmentId) || null);
+  db.prepare("UPDATE users SET password_set_at = datetime('now'), password_set_by = ? WHERE id = ?")
+    .run(req.user.id, info.lastInsertRowid);
 
   let doctorCodeIssued = null;
   if (req.body.role === 'doctor') {
@@ -130,7 +135,9 @@ router.patch('/staff/:id', adminOnly, wrap((req, res) => {
         req.body.departmentId === undefined ? null : int(req.body.departmentId),
         req.body.active === undefined ? null : (bool(req.body.active) ? 1 : 0), id);
   if (req.body.password) {
-    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(req.body.password), id);
+    db.prepare(
+      "UPDATE users SET password_hash = ?, password_set_at = datetime('now'), password_set_by = ? WHERE id = ?"
+    ).run(hashPassword(req.body.password), req.user.id, id);
   }
   if (user.role === 'doctor') {
     // A profile row may be missing if the account was created as another role.
@@ -478,6 +485,74 @@ router.patch('/lab-tests/:id', requireRole('admin', 'lab'), wrap((req, res) => {
     to: { price, refLow, refHigh, refText: req.body.refText === undefined ? row.ref_text : req.body.refText },
   });
   res.json(db.prepare('SELECT * FROM lab_tests WHERE id = ?').get(id));
+}));
+
+/**
+ * Giving a member of staff a password, and showing it once.
+ *
+ * What cannot be done, and should not be: show the password somebody already
+ * has. Passwords are kept as one-way hashes, so there is nothing to show —
+ * and that is the point. A clinic that could list its staff's passwords
+ * would be a clinic whose database hands every account over the moment it
+ * leaks, and the patients' records with them.
+ *
+ * What an administrator actually needs is to be able to put a working
+ * password in somebody's hand, which this does: set one, or have one made,
+ * and it comes back in the response to be read out or written down. It is
+ * returned this once and never again — ask again and you set a new one.
+ *
+ * This matters most for the people the reset-link flow cannot help. A nurse
+ * or a cashier with no email address can never receive a link, so without
+ * this their only way back in is somebody editing the database.
+ */
+router.post('/staff/:id/password', adminOnly, wrap((req, res) => {
+  const id = int(req.params.id);
+  const user = db.prepare('SELECT id, name, staff_code, email, role FROM users WHERE id = ?').get(id);
+  if (!user) throw notFound('Staff member not found');
+
+  /*
+   * Made of unambiguous characters when we make it: this gets read off a
+   * screen, said down a corridor and typed by somebody else, and an O next
+   * to a 0 costs a phone call.
+   */
+  const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+  const makePassword = () => {
+    const bytes = crypto.randomBytes(12);
+    return `${Array.from(bytes, (b) => ALPHABET[b % ALPHABET.length]).join('')}#7`;
+  };
+
+  const chosen = str(req.body.password, '');
+  const password = chosen || makePassword();
+
+  const problems = passwordProblems(password);
+  if (problems.length) {
+    throw badRequest(`The password must ${problems.join(', and ')}.`);
+  }
+
+  db.prepare(
+    "UPDATE users SET password_hash = ?, password_set_at = datetime('now'), password_set_by = ?, active = 1 WHERE id = ?"
+  ).run(hashPassword(password), req.user.id, id);
+
+  // Every other session of theirs ends: a password handed over is a password
+  // the last holder should no longer be signed in with. The session asking
+  // survives, so an administrator setting their own does not sign themselves
+  // out halfway through — for anybody else it matches nothing.
+  db.prepare('DELETE FROM sessions WHERE user_id = ? AND token != ?').run(id, req.sessionToken || '');
+
+  // The password itself is never written to the log — only that it happened.
+  audit.log(req, 'set_password', 'user', id, { staffCode: user.staff_code, generated: !chosen });
+
+  const stamped = db.prepare('SELECT password_set_at FROM users WHERE id = ?').get(id);
+  res.json({
+    id: user.id,
+    name: user.name,
+    staffCode: user.staff_code,
+    signInWith: user.email || user.staff_code,
+    password,
+    generated: !chosen,
+    passwordSetAt: stamped.password_set_at,
+    passwordSetByName: req.user.name,
+  });
 }));
 
 router.post('/services', adminOnly, wrap((req, res) => {

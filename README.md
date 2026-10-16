@@ -310,7 +310,7 @@ Everything lives in `.env` — see [`.env.example`](.env.example). The essential
 | `SESSION_SECRET` | **Set this.** Generate with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
 | `DB_FILE` | Database path (default `./data/samiha.db`) — put it on a persistent disk |
 | `APP_URL` | Public URL; password-reset links are built from it |
-| `RECOVERY_EMAIL` | Clinic mailbox that receives every reset link and backup notice (`samihahospital@gmail.com`) |
+| `RECOVERY_EMAIL` | The only mailbox any reset link or backup notice is sent to (`samihahospital@gmail.com`) |
 | `BACKUP_WORKBOOK_DAY` | Day of the week for the full Excel book, 0 = Sunday (default 0) |
 | `MAIL_PROVIDER` | `mock` (offline, the default) or `smtp` (Gmail App Password) |
 | `BACKUP_DIR`, `BACKUP_HOUR`, `BACKUP_RETENTION` | Nightly snapshots and how many to keep |

@@ -208,8 +208,9 @@
     UI.modal({
       title: 'Reset your password',
       size: 'narrow',
-      body: `<p class="muted">Enter your staff email or employee code. We will email a reset link to
-          your address, with a copy to the clinic's recovery mailbox so you can always get back in.</p>
+      body: `<p class="muted">Enter your staff email or employee code. The reset link is emailed to
+          the clinic's mailbox, not to you — ask the administrator for it, or have them set you a
+          new password from Staff &amp; Doctors.</p>
         <form id="fp-form">
           ${UI.field({ name: 'username', label: 'Email or staff code', required: true, value: prefill || '' })}
         </form>

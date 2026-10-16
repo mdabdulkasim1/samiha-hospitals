@@ -89,7 +89,9 @@ router.post('/change-password', auth.requireAuth, wrap(async (req, res) => {
   const msg = mailer.templates.passwordChanged({
     name: row.name, when: new Date().toISOString().replace('T', ' ').slice(0, 19),
   });
-  mailer.send({ to: row.email, subject: msg.subject, text: msg.text })
+  // To the clinic's mailbox, like everything else about access: most staff
+  // have no address, and the administrator should see that this happened.
+  mailer.send({ to: config.mail.recoveryEmail, subject: msg.subject, text: msg.text })
     .catch((err) => console.error('[mail]', err.message));
 
   audit.log(req, 'change_password', 'user', req.user.id);
@@ -110,8 +112,9 @@ router.post('/forgot-password', wrap(async (req, res) => {
 
   const generic = {
     ok: true,
-    message: `If that account exists, a reset link has been sent to its email address and to ` +
-      `${config.mail.recoveryEmail}. The link is valid for ${config.mail.resetTtlMinutes} minutes.`,
+    message: `If that account exists, a reset link has been sent to the clinic's mailbox, `
+      + `${config.mail.recoveryEmail}. Ask the administrator for it. `
+      + `The link is valid for ${config.mail.resetTtlMinutes} minutes.`,
   };
 
   if (throttled(`${username}|${ip}`)) {
@@ -135,8 +138,21 @@ router.post('/forgot-password', wrap(async (req, res) => {
   const msg = mailer.templates.passwordReset({
     name: user.name, link, ttlMinutes: config.mail.resetTtlMinutes, requestedFrom: ip,
   });
+  /*
+   * Every reset link goes to the clinic's own mailbox, and only there.
+   *
+   * Most of the staff on this system have no email address — a nurse, a
+   * cashier, a ward sister sign in with a staff code — so a link sent "to
+   * them" would go nowhere and they would be locked out with no way back.
+   * The clinic keeps one mailbox, the administrator reads it, and they hand
+   * the link or the new password over in person.
+   *
+   * It is also the safer arrangement: a staff address that is wrong, shared,
+   * or belongs to somebody who has left is a way into the patients' records,
+   * and this makes one mailbox the only route in.
+   */
   const sent = await mailer.send({
-    to: user.email, subject: msg.subject, text: msg.text, html: msg.html,
+    to: config.mail.recoveryEmail, subject: msg.subject, text: msg.text, html: msg.html,
   });
 
   audit.log(req, 'forgot_password', 'user', user.id, { username, delivered: sent.ok });
@@ -181,7 +197,7 @@ router.post('/reset-password', wrap(async (req, res) => {
   const msg = mailer.templates.passwordChanged({
     name: user.name, when: new Date().toISOString().replace('T', ' ').slice(0, 19),
   });
-  mailer.send({ to: user.email, subject: msg.subject, text: msg.text })
+  mailer.send({ to: config.mail.recoveryEmail, subject: msg.subject, text: msg.text })
     .catch((err) => console.error('[mail]', err.message));
 
   audit.log({ ...req, user: { id: user.id, name: user.name, role: user.role } },

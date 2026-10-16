@@ -90,7 +90,8 @@ module.exports = {
   autoSeed: String(env.AUTO_SEED || 'true').toLowerCase() !== 'false',
   mail: {
     provider: env.MAIL_PROVIDER || 'mock',       // 'mock' | 'smtp'
-    // Every recovery link and backup notice is copied to this mailbox.
+    // Every recovery link and backup notice goes to this mailbox, and only
+    // this one: most staff sign in with a staff code and have no inbox.
     recoveryEmail: env.RECOVERY_EMAIL || 'samihahospital@gmail.com',
     from: env.MAIL_FROM || `SAMIHA Healthcare <${env.RECOVERY_EMAIL || 'samihahospital@gmail.com'}>`,
     host: env.SMTP_HOST || 'smtp.gmail.com',

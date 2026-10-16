@@ -255,6 +255,14 @@ function migrate() {
   if (stranded) {
     console.log(`[migrate] ${stranded} visit(s) moved out of the retired screening lane to the cashier.`);
   }
+  /*
+   * When a password was last set, and by whom. Not the password — that is a
+   * one-way hash and must stay one — but enough for an administrator to see
+   * at a glance whose sign-in has never been set up, and when each was last
+   * handed out.
+   */
+  ensureColumn('users', 'password_set_at', 'TEXT');
+  ensureColumn('users', 'password_set_by', 'INTEGER REFERENCES users(id)');
   ensureColumn('lab_tests', 'component_of', 'TEXT');
   ensureColumn('lab_tests', 'sort_order', 'INTEGER NOT NULL DEFAULT 0');
   /*

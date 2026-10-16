@@ -148,13 +148,20 @@ router.delete('/backups/:filename', adminOnly, wrap((req, res) => {
 }));
 
 // -------------------------------------------------------------- staff resets
-/** An administrator resetting a password for someone standing at the desk. */
+/**
+ * An administrator resetting a password for someone standing at the desk.
+ *
+ * The link goes to the clinic's mailbox, never to the staff member — most of
+ * them sign in with a staff code and have no inbox at all, so an account with
+ * no address is exactly the case this has to serve, not refuse. Faster still,
+ * for somebody who is standing right there: Staff & Doctors → Set password,
+ * which puts a working password on screen to hand over.
+ */
 router.post('/users/:id/send-reset', adminOnly, wrap(async (req, res) => {
   const auth = require('../lib/auth');
   const id = int(req.params.id);
   const user = db.prepare('SELECT * FROM users WHERE id = ? AND active = 1').get(id);
   if (!user) throw notFound('Staff member not found.');
-  if (!user.email) throw badRequest('This account has no email address — set one first.');
 
   const { token, expiresAt } = auth.createResetToken(user.id, {
     requestedBy: `admin:${req.user.name}`,
@@ -165,13 +172,15 @@ router.post('/users/:id/send-reset', adminOnly, wrap(async (req, res) => {
   const msg = mailer.templates.passwordReset({
     name: user.name, link, ttlMinutes: config.mail.resetTtlMinutes, requestedFrom: `${req.user.name} (admin)`,
   });
-  const sent = await mailer.send({ to: user.email, subject: msg.subject, text: msg.text, html: msg.html });
+  const sent = await mailer.send({
+    to: config.mail.recoveryEmail, subject: msg.subject, text: msg.text, html: msg.html,
+  });
 
   audit.log(req, 'admin_send_reset', 'user', user.id);
   res.json({
     ok: true, expiresAt, delivered: sent.ok,
     ...(config.mail.provider !== 'smtp' ? { devLink: link } : {}),
-    message: `Reset link sent to ${user.email} and copied to ${config.mail.recoveryEmail}.`,
+    message: `Reset link for ${user.name} sent to ${config.mail.recoveryEmail}.`,
   });
 }));
 

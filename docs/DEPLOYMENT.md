@@ -55,10 +55,15 @@ own — password-reset links are built from it, so if it is wrong the links poin
 
 ## Recovery mailbox
 
-Every password-reset link and every backup notice is copied to **`RECOVERY_EMAIL`**
-(`samihahospital@gmail.com` by default). That means an account can always be recovered even
-when the staff member has lost access to their own inbox — the administrator can pick the
-link out of the clinic mailbox.
+Every password-reset link and every backup notice goes to **`RECOVERY_EMAIL`**
+(`samihahospital@gmail.com` by default) — to that one address and nowhere else, never to the
+staff member's own inbox.
+
+That is deliberate. Most of the people on this system sign in with a staff code and have no
+email address at all, so a link sent "to them" would go nowhere and they would be locked out
+with no way back. It is also the safer arrangement: a staff address that is wrong, shared, or
+belongs to somebody who has left would otherwise be a way into the patients' records. The
+administrator reads the clinic mailbox and hands the link over in person.
 
 ### Sending real email through Gmail
 
@@ -87,10 +92,21 @@ outbox and shown to the administrator instead, so the app works with no mail ser
 ## Forgotten password
 
 **A staff member:** Sign-in screen → *Forgotten your password?* → enter email or staff code.
-A link valid for 30 minutes arrives, and is copied to the recovery mailbox.
+A link valid for 30 minutes arrives in the clinic mailbox — ask the administrator for it.
 
-**An administrator, for someone at the desk:** Account & System → Staff access → *Send reset
-link*. No need to know their current password.
+**An administrator, for someone at the desk:** Staff & Doctors → find them → *Set password*.
+A password is made (or typed in), shown on screen once to hand over, and every session they
+had is signed out. This is the quickest route, and the only one that works for staff with no
+email address.
+
+**An administrator, by link:** Account & System → Staff access → *Send reset link*. The link
+goes to the clinic mailbox. No need to know their current password.
+
+A password that somebody already has can never be shown. Passwords are kept as one-way
+hashes, so there is nothing on the system to read back — which is what keeps every account,
+and the patient records behind it, safe if a copy of the database ever goes astray. What the
+*Password* column shows instead is when each password was last set, by whom, and whether that
+person has ever signed in.
 
 Guardrails:
 

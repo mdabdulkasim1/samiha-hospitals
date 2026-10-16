@@ -151,7 +151,7 @@
             </dl>
             <div class="alert info mt">
               Changing your password signs out every other device you are logged in on.
-              A confirmation is emailed to you and to the clinic's recovery mailbox.
+              A confirmation goes to the clinic's recovery mailbox.
             </div>
           </div>
         </div>
@@ -195,9 +195,10 @@
                   : 'offline mode. Nothing is actually emailed; reset links appear in the WhatsApp/outbox list instead.')
               : `could not connect: ${UI.esc(h.error || '')}`}
           </div>
-          <p class="muted small">Every password-reset link and every backup notice is copied to this
-            address, so an account can be recovered even if the staff member has lost access to their
-            own inbox.</p>
+          <p class="muted small">Every password-reset link and every backup notice goes to this one
+            address and nowhere else. Most of the staff here sign in with a staff code and have no
+            inbox of their own, so the administrator reads the mailbox and hands the link — or a new
+            password, set from Staff &amp; Doctors — over in person.</p>
 
           <dl class="kv mt">
             <dt>Provider</dt><dd>${UI.esc(s.mail.provider)}</dd>
@@ -344,7 +345,7 @@ APP_URL=https://your-domain</pre>
     const staff = await API.get('/api/masters/staff');
     body.innerHTML = `<div class="card">
       <div class="card-head"><h3>Staff access</h3>
-        <span class="muted small">Send someone a reset link without knowing their password</span></div>
+        <span class="muted small">Reset links arrive in the clinic mailbox — hand them over in person</span></div>
       <div class="card-body tight" id="st-list"></div></div>
       <div id="st-out"></div>`;
 
@@ -354,7 +355,11 @@ APP_URL=https://your-domain</pre>
       { label: 'Email', render: (u) => UI.esc(u.email || '—') },
       { label: 'Department', render: (u) => UI.esc(u.department_name || '—') },
       { label: 'Active', render: (u) => u.active ? UI.badge('Yes', 'ok') : UI.badge('Disabled', 'danger') },
-      { label: '', render: (u) => u.email && u.active
+      // No email address is no obstacle any more: the link goes to the clinic's
+      // mailbox either way, which is the whole point for staff who sign in
+      // with a code. To put a password straight into somebody's hand instead,
+      // Staff & Doctors → Set password.
+      { label: '', render: (u) => u.active
         ? `<button class="btn ghost sm" data-reset="${u.id}">Send reset link</button>` : '' },
     ], staff, { emptyText: 'No staff accounts.' });
 

@@ -240,10 +240,104 @@ test('an administrator can send a staff member a reset link', async () => {
   assert.strictEqual((await login('imran@samiha.local', 'Doctor2026x')).status, 200);
 });
 
-test('every outbound recovery message is copied to the clinic mailbox', async () => {
+test('the clinic mailbox is the only address any recovery message goes to', async () => {
   const outbox = (await api('GET', '/api/whatsapp/outbox', undefined, 'admin')).body;
   const emails = outbox.filter((n) => n.channel === 'email');
   assert.ok(emails.length > 0, 'recovery emails should be recorded');
-  assert.ok(emails.every((n) => n.to_addr.includes('samihahospital@gmail.com')),
-    'the recovery mailbox must be on every message');
+  for (const n of emails) {
+    // Not merely copied there — sent there and nowhere else. A staff address
+    // that is wrong, shared or belongs to somebody who has left would
+    // otherwise be a way into the patients' records.
+    assert.strictEqual(n.to_addr, 'samihahospital@gmail.com',
+      `a recovery message went to ${n.to_addr}`);
+  }
+});
+
+// ------------------------------------------- handing a password over in person
+/*
+ * The flow for the people the reset link cannot reach. A nurse or a cashier
+ * signs in with a staff code and has no inbox, so the administrator sets them
+ * a password and reads it out. What they are never shown is the password
+ * somebody already has: it is kept as a one-way hash, and must stay that way.
+ */
+test('an administrator can issue a password and is shown it once', async () => {
+  const staff = (await api('GET', '/api/masters/staff', undefined, 'admin')).body;
+  const sister = staff.find((u) => u.email === 'ward@samiha.local');
+  assert.ok(sister, 'the ward sister should be on the staff list');
+
+  const existing = await login('ward@samiha.local', 'samiha@123');
+  assert.strictEqual(existing.status, 200);
+
+  const issued = await api('POST', `/api/masters/staff/${sister.id}/password`, {}, 'admin');
+  assert.strictEqual(issued.status, 200, JSON.stringify(issued.body));
+  assert.strictEqual(issued.body.generated, true);
+  assert.strictEqual(issued.body.signInWith, 'ward@samiha.local');
+  assert.ok(issued.body.password.length >= 12);
+  // Read off a screen and typed by somebody else: no character that can be
+  // mistaken for another.
+  assert.doesNotMatch(issued.body.password, /[O0Il1]/);
+
+  // It works, and the password it replaced does not.
+  assert.strictEqual((await login('ward@samiha.local', issued.body.password)).status, 200);
+  assert.strictEqual((await login('ward@samiha.local', 'samiha@123')).status, 401);
+
+  // Whoever was signed in with the old one is signed out.
+  const stale = await fetch(`${base}/api/auth/me`,
+    { headers: { Authorization: `Bearer ${existing.body.token}` } });
+  assert.strictEqual(stale.status, 401);
+
+  // The list now says when it was set and by whom — never what it is.
+  const after = (await api('GET', '/api/masters/staff', undefined, 'admin')).body
+    .find((u) => u.id === sister.id);
+  assert.ok(after.password_set_at, 'the list should show when the password was set');
+  assert.strictEqual(after.password_set_by_name, 'System Administrator');
+  assert.ok(!Object.keys(after).some((k) => /password_hash|^password$/.test(k)),
+    'the staff list must never carry a password or its hash');
+});
+
+test('a chosen password is held to the same rules, and only admins may set one', async () => {
+  const staff = (await api('GET', '/api/masters/staff', undefined, 'admin')).body;
+  const tech = staff.find((u) => u.email === 'lab@samiha.local');
+
+  const weak = await api('POST', `/api/masters/staff/${tech.id}/password`, { password: 'abc' }, 'admin');
+  assert.strictEqual(weak.status, 400);
+  assert.match(weak.body.error, /at least 8 characters/);
+
+  const common = await api('POST', `/api/masters/staff/${tech.id}/password`, { password: 'password' }, 'admin');
+  assert.strictEqual(common.status, 400);
+  assert.match(common.body.error, /commonly used/);
+
+  const chosen = await api('POST', `/api/masters/staff/${tech.id}/password`,
+    { password: 'Melapalayam#2026' }, 'admin');
+  assert.strictEqual(chosen.status, 200, JSON.stringify(chosen.body));
+  assert.strictEqual(chosen.body.generated, false);
+  assert.strictEqual((await login('lab@samiha.local', 'Melapalayam#2026')).status, 200);
+
+  // Nobody but an administrator, and no such account.
+  assert.strictEqual((await api('POST', `/api/masters/staff/${tech.id}/password`, {}, 'nurse')).status, 403);
+  assert.strictEqual((await api('POST', '/api/masters/staff/999999/password', {}, 'admin')).status, 404);
+});
+
+test('an administrator setting their own password stays signed in', async () => {
+  const me = (await api('GET', '/api/auth/me', undefined, 'admin')).body.user;
+  const issued = await api('POST', `/api/masters/staff/${me.id}/password`, {}, 'admin');
+  assert.strictEqual(issued.status, 200, JSON.stringify(issued.body));
+
+  // The session that did it survives — being logged out halfway through would
+  // strand the one person who can let everybody else back in.
+  assert.strictEqual((await api('GET', '/api/auth/me', undefined, 'admin')).status, 200);
+  assert.strictEqual((await login('admin@samiha.local', issued.body.password)).status, 200);
+});
+
+test('the password itself is never written to the audit log', async () => {
+  const staff = (await api('GET', '/api/masters/staff', undefined, 'admin')).body;
+  const cashier = staff.find((u) => u.email === 'cashier@samiha.local');
+  const issued = await api('POST', `/api/masters/staff/${cashier.id}/password`, {}, 'admin');
+  assert.strictEqual(issued.status, 200);
+
+  const logs = (await api('GET', '/api/reports/audit?entity=user', undefined, 'admin')).body;
+  const rows = (logs.rows || logs).filter((r) => r.action === 'set_password');
+  assert.ok(rows.length > 0, 'setting a password should be recorded');
+  const dump = JSON.stringify(rows);
+  assert.ok(!dump.includes(issued.body.password), 'the log must record the act, not the password');
 });

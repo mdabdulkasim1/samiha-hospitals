@@ -794,3 +794,12 @@ tbody tr.panel-head td { background: var(--bg); border-top: 2px solid var(--line
 /* A test heading inside a health-check package: subordinate to the package's
    own heading above it, so three levels still read as a hierarchy. */
 tbody tr.panel-head.panel-sub td { background: transparent; border-top: 1px solid var(--line); }
+
+/* A password being handed over: read off the screen and typed by somebody
+   else, so it is large, spaced and monospaced to tell O from 0. */
+.pw-show {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 19px; font-weight: 700; letter-spacing: .06em;
+  background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius-s);
+  padding: 10px 12px; margin-top: 4px; user-select: all; word-break: break-all;
+}

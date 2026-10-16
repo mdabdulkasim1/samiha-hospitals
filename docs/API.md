@@ -37,7 +37,7 @@ status: `400` invalid input · `401` not signed in · `403` wrong role · `404` 
 | GET/POST | `/admin/backups` | admin — list, take a snapshot |
 | GET | `/admin/backups/:filename/download` | admin |
 | DELETE | `/admin/backups/:filename` | admin |
-| POST | `/admin/users/:id/send-reset` | admin — email a staff member a reset link |
+| POST | `/admin/users/:id/send-reset` | admin — send a reset link to the clinic mailbox |
 
 ## Masters
 | Method | Path | Roles |
@@ -45,6 +45,7 @@ status: `400` invalid input · `401` not signed in · `403` wrong role · `404` 
 | GET/POST | `/masters/departments` | any / admin |
 | GET | `/masters/staff?role=doctor` | any |
 | POST/PATCH | `/masters/staff[/:id]` | admin |
+| POST | `/masters/staff/:id/password` | admin — set a password and return it once |
 | GET/POST | `/masters/doctors/:id/schedule` | any / admin, reception |
 | POST | `/masters/doctors/:id/leave` | admin, reception |
 | GET/POST | `/masters/services` | any / admin |
