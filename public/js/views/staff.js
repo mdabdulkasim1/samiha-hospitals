@@ -4,6 +4,9 @@
 
   const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
+  // Which of the three tabs is showing, kept across a refresh of the view.
+  let openTab = 'doctors';
+
   const ROLES = [
     { value: 'doctor', label: 'Doctor — consults, prescribes, orders' },
     { value: 'reception', label: 'Front desk — enquiries, registration, check-in' },
@@ -123,10 +126,19 @@
       };
 
       el.querySelectorAll('#s-tabs button').forEach((b) => b.addEventListener('click', () => {
+        openTab = b.dataset.tab;
         el.querySelectorAll('#s-tabs button').forEach((x) => x.classList.toggle('active', x === b));
         tabs[b.dataset.tab]();
       }));
-      tabs.doctors();
+      /*
+       * Come back to the tab that was open. Setting a password or removing an
+       * account refreshes the page, and being thrown back to Doctors after
+       * every one of them makes tidying up a list of staff a chore.
+       */
+      if (!tabs[openTab]) openTab = 'doctors';
+      el.querySelectorAll('#s-tabs button').forEach((x) =>
+        x.classList.toggle('active', x.dataset.tab === openTab));
+      tabs[openTab]();
     },
   });
 
@@ -141,8 +153,9 @@
    *
    * What is shown instead is everything the administrator actually needs to
    * get somebody working: the exact thing they type into the sign-in box, when
-   * their password was last set and by whom, and a button that issues a new
-   * one and puts it on screen to be written down or read out.
+   * their password was last set and by whom, a button that issues a new one
+   * and puts it on screen to be written down or read out, and a way to take
+   * the account off the system when somebody leaves.
    */
   function signInColumns() {
     if (!APP.can(['admin'])) return [];
@@ -157,7 +170,13 @@
       },
       {
         label: '',
-        render: (u) => `<button class="btn ghost sm" data-pw="${u.id}">Set password</button>`,
+        render: (u) => `<div class="btn-row nowrap">`
+          + `<button class="btn ghost sm" data-pw="${u.id}">Set password</button>`
+          // Not on your own row: deleting the account you are signed in with is
+          // refused anyway, and offering it is just a button that cannot work.
+          + (u.id === (APP.user && APP.user.id) ? ''
+            : `<button class="btn ghost sm danger" data-del="${u.id}">Delete</button>`)
+          + '</div>',
       },
     ];
   }
@@ -171,7 +190,7 @@
     return `<span class="muted small">Set ${UI.esc(UI.dateShort(u.password_set_at))}${by}<br>${seen}</span>`;
   }
 
-  /** Wires the "Set password" buttons in a table rendered with signInColumns(). */
+  /** Wires the buttons in a table rendered with signInColumns(). */
   function wireSignIn(host, rows) {
     host.querySelectorAll('[data-pw]').forEach((btn) => {
       btn.addEventListener('click', (e) => {
@@ -179,6 +198,63 @@
         const user = rows.find((r) => String(r.id) === btn.dataset.pw);
         if (user) openSetPassword(user, host);
       });
+    });
+    host.querySelectorAll('[data-del]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const user = rows.find((r) => String(r.id) === btn.dataset.del);
+        if (user) openDeleteStaff(user);
+      });
+    });
+  }
+
+  /**
+   * Taking an account off the system.
+   *
+   * Deleting is offered because it is what is wanted for an account that
+   * should never have existed — a duplicate, a test row, somebody entered
+   * twice. For anybody who has actually worked here it will be refused by the
+   * server, because their consultations, results and bills still name them,
+   * and a record that cannot say who signed it is worth less than no record.
+   * Disabling is the answer there, and it is offered in the same breath: the
+   * sign-in stops dead, the history stays whole.
+   */
+  function openDeleteStaff(user) {
+    const who = `${user.name}${user.staff_code ? ` (${user.staff_code})` : ''}`;
+    UI.modal({
+      title: `Remove ${user.name}?`,
+      size: 'narrow',
+      body: `
+        <p>This takes <b>${UI.esc(who)}</b> off the system altogether — the account and
+          their sign-in${user.role === 'doctor' ? ', along with their OPD sessions and leave' : ''}.</p>
+        <p class="muted small">If they have seen a patient, signed a result or taken a
+          payment, deleting is refused: those records name this account and must keep
+          naming it. <b>Disable</b> instead and they can no longer sign in, while
+          everything they did stays exactly as it is.</p>
+        <div id="del-out"></div>`,
+      footer: `<button class="btn ghost" data-act="__close">Cancel</button>
+               ${user.active ? '<button class="btn warn" data-act="disable">Disable</button>' : ''}
+               <button class="btn danger" data-act="delete">Delete for good</button>`,
+      onAction: async (act, modal) => {
+        const out = modal.querySelector('#del-out');
+        if (act === 'disable') {
+          await API.patch(`/api/masters/staff/${user.id}`, { active: false });
+          UI.ok(`${user.name} can no longer sign in.`);
+          APP.reload();
+          return;
+        }
+        if (act !== 'delete') return;
+        try {
+          await API.del(`/api/masters/staff/${user.id}`);
+        } catch (err) {
+          // The refusal says exactly what is holding the account, so it belongs
+          // in front of the administrator rather than in a toast that vanishes.
+          out.innerHTML = `<div class="alert danger mt">${UI.esc(err.message)}</div>`;
+          return 'keep';
+        }
+        UI.ok(`${user.name} removed.`);
+        APP.reload();
+      },
     });
   }
 

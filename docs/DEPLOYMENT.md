@@ -102,6 +102,18 @@ email address.
 **An administrator, by link:** Account & System → Staff access → *Send reset link*. The link
 goes to the clinic mailbox. No need to know their current password.
 
+## Removing a staff account
+
+Staff & Doctors → find them → **Delete**. It goes through only for an account the records
+do not name — a duplicate, a row entered twice, somebody who never started. For anyone who
+has seen a patient, signed a result or taken a payment it is refused, and the refusal says
+exactly what is holding it ("1 visit", "3 prescriptions"). **Disable** is offered in the same
+box and is the right answer there: the sign-in stops dead and every record they signed still
+says who signed it.
+
+Deleting takes the account, its sessions and, for a doctor, their OPD sessions and leave.
+The audit trail stays — each entry keeps the person's name as it was written.
+
 A password that somebody already has can never be shown. Passwords are kept as one-way
 hashes, so there is nothing on the system to read back — which is what keeps every account,
 and the patient records behind it, safe if a copy of the database ever goes astray. What the

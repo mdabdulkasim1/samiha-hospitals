@@ -555,6 +555,99 @@ router.post('/staff/:id/password', adminOnly, wrap((req, res) => {
   });
 }));
 
+/*
+ * Removing a staff account.
+ *
+ * Two bookkeeping columns point at a user without being a record of anything
+ * they did: who set somebody's password, and the actor on an audit row — and
+ * the audit row keeps the person's name as plain text regardless. Those are
+ * detached. Everything else that names a user is the clinic's own history —
+ * a consultation, a prescription, a result, a bill — and must never be
+ * quietly cut loose from the person who signed it.
+ */
+const USER_FK_DETACHED = new Set(['audit_logs.user_id', 'users.password_set_by']);
+
+const singular = (table) => table.replace(/_/g, ' ')
+  .replace(/ies$/, 'y').replace(/ses$/, 's').replace(/s$/, '');
+
+/**
+ * Every place in the database that still points at this user, worked out from
+ * the schema itself rather than a list kept by hand — the list would rot the
+ * first time a table was added.
+ */
+function userReferences(id) {
+  const tables = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+  ).all();
+
+  const held = [];
+  const detach = [];
+  for (const { name } of tables) {
+    for (const fk of db.pragma(`foreign_key_list("${name}")`)) {
+      if (fk.table !== 'users') continue;
+      // Rows that exist only to serve the account go with it.
+      if (String(fk.on_delete || '').toUpperCase() === 'CASCADE') continue;
+      if (USER_FK_DETACHED.has(`${name}.${fk.from}`)) {
+        detach.push({ table: name, column: fk.from });
+        continue;
+      }
+      const { n } = db.prepare(`SELECT COUNT(*) AS n FROM "${name}" WHERE "${fk.from}" = ?`).get(id);
+      // "1 visit", not "1 visits" — this sentence is read by somebody deciding
+      // whether to disable an account, and it should read like English.
+      if (n) held.push({ what: n === 1 ? singular(name) : name.replace(/_/g, ' '), count: n });
+    }
+  }
+  return { held, detach };
+}
+
+router.delete('/staff/:id', adminOnly, wrap((req, res) => {
+  const id = int(req.params.id);
+  const user = db.prepare('SELECT id, name, staff_code, role, active FROM users WHERE id = ?').get(id);
+  if (!user) throw notFound('Staff member not found');
+
+  // Signing yourself out of existence mid-click.
+  if (id === req.user.id) {
+    throw badRequest('You cannot delete the account you are signed in with. '
+      + 'Sign in as another administrator first.');
+  }
+  // The clinic must never be left without a way in.
+  if (user.role === 'admin') {
+    const { n } = db.prepare(
+      "SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND active = 1 AND id != ?"
+    ).get(id);
+    if (!n) {
+      throw badRequest('This is the only administrator account left. '
+        + 'Add another administrator before deleting this one.');
+    }
+  }
+
+  const { held, detach } = userReferences(id);
+  if (held.length) {
+    /*
+     * Their work is in the records, so the account stays. Disabling it stops
+     * them signing in, which is the thing actually being asked for, and the
+     * consultations and results they signed still say who signed them.
+     */
+    const list = held.map((h) => `${h.count} ${h.what}`).join(', ');
+    throw conflict(
+      `${user.name} cannot be deleted — the records still refer to this account: ${list}. `
+      + 'Disable the account instead: they can no longer sign in, and the history stays intact.',
+      { references: held, canDisable: user.active === 1 }
+    );
+  }
+
+  const remove = db.transaction(() => {
+    for (const { table, column } of detach) {
+      db.prepare(`UPDATE "${table}" SET "${column}" = NULL WHERE "${column}" = ?`).run(id);
+    }
+    db.prepare('DELETE FROM users WHERE id = ?').run(id);
+  });
+  remove();
+
+  audit.log(req, 'delete', 'user', id, { staffCode: user.staff_code, name: user.name, role: user.role });
+  res.json({ ok: true, id, name: user.name, staffCode: user.staff_code });
+}));
+
 router.post('/services', adminOnly, wrap((req, res) => {
   required(req.body, ['code', 'name', 'price']);
   const info = db.prepare('INSERT INTO services (code, name, category, price, tax_pct) VALUES (?, ?, ?, ?, ?)')

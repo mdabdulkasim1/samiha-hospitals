@@ -46,6 +46,7 @@ status: `400` invalid input · `401` not signed in · `403` wrong role · `404` 
 | GET | `/masters/staff?role=doctor` | any |
 | POST/PATCH | `/masters/staff[/:id]` | admin |
 | POST | `/masters/staff/:id/password` | admin — set a password and return it once |
+| DELETE | `/masters/staff/:id` | admin — remove an account with no history (409 otherwise) |
 | GET/POST | `/masters/doctors/:id/schedule` | any / admin, reception |
 | POST | `/masters/doctors/:id/leave` | admin, reception |
 | GET/POST | `/masters/services` | any / admin |

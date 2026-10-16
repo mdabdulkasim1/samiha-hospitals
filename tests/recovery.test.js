@@ -21,6 +21,11 @@ process.env.APP_URL = 'https://clinic.example';
 require('../src/db/seed');
 const app = require('../src/server');
 const config = require('../src/config');
+const { db } = require('../src/db');
+
+// Reaching past the API to plant a record the clinic would normally create
+// over several screens — the point here is what the record does to a delete.
+const dbExec = (sql) => db.exec(sql);
 
 let server;
 let base;
@@ -316,6 +321,73 @@ test('a chosen password is held to the same rules, and only admins may set one',
   // Nobody but an administrator, and no such account.
   assert.strictEqual((await api('POST', `/api/masters/staff/${tech.id}/password`, {}, 'nurse')).status, 403);
   assert.strictEqual((await api('POST', '/api/masters/staff/999999/password', {}, 'admin')).status, 404);
+});
+
+// ------------------------------------------------- taking an account off the system
+test('an account with no history can be deleted outright', async () => {
+  const made = await api('POST', '/api/masters/staff',
+    { name: 'Duplicate Entry', role: 'nurse', password: 'Samiha#2026' }, 'admin');
+  assert.strictEqual(made.status, 201, JSON.stringify(made.body));
+
+  const gone = await api('DELETE', `/api/masters/staff/${made.body.id}`, undefined, 'admin');
+  assert.strictEqual(gone.status, 200, JSON.stringify(gone.body));
+  assert.strictEqual(gone.body.name, 'Duplicate Entry');
+
+  const list = (await api('GET', '/api/masters/staff', undefined, 'admin')).body;
+  assert.ok(!list.some((u) => u.id === made.body.id), 'the account should be off the list');
+});
+
+test('an account the records still name is refused, and says what holds it', async () => {
+  const staff = (await api('GET', '/api/masters/staff', undefined, 'admin')).body;
+  const doctor = staff.find((u) => u.role === 'doctor');
+
+  // A single visit is enough: the record names this doctor and must keep doing so.
+  const patient = (await api('GET', '/api/patients?limit=1', undefined, 'admin')).body;
+  const patientId = (patient.rows || patient)[0].id;
+  dbExec(`INSERT INTO visits (visit_no, patient_id, doctor_id) VALUES ('V-DEL-TEST', ${patientId}, ${doctor.id})`);
+
+  const refused = await api('DELETE', `/api/masters/staff/${doctor.id}`, undefined, 'admin');
+  assert.strictEqual(refused.status, 409, JSON.stringify(refused.body));
+  assert.match(refused.body.error, /1 visit\b/, 'the reason should name the records, in English');
+  assert.match(refused.body.error, /Disable the account instead/);
+  assert.deepStrictEqual(refused.body.details.references, [{ what: 'visit', count: 1 }]);
+
+  // Still there, and still able to be disabled instead.
+  const after = (await api('GET', '/api/masters/staff', undefined, 'admin')).body;
+  assert.ok(after.some((u) => u.id === doctor.id), 'the account must survive the refusal');
+  const disabled = await api('PATCH', `/api/masters/staff/${doctor.id}`, { active: false }, 'admin');
+  assert.strictEqual(disabled.status, 200);
+  assert.strictEqual((await login(doctor.email, 'samiha@123')).status, 401,
+    'a disabled account cannot sign in');
+});
+
+test('deleting keeps the audit trail, under the name it was written with', async () => {
+  // An account that has done nothing but be acted upon, so it is deletable.
+  const made = await api('POST', '/api/masters/staff',
+    { name: 'Temporary Locum', role: 'nurse', password: 'Samiha#2026' }, 'admin');
+  const id = made.body.id;
+  await api('POST', `/api/masters/staff/${id}/password`, {}, 'admin');
+
+  assert.strictEqual((await api('DELETE', `/api/masters/staff/${id}`, undefined, 'admin')).status, 200);
+
+  const logs = (await api('GET', '/api/reports/audit?entity=user', undefined, 'admin')).body;
+  const rows = (logs.rows || logs).filter((r) => r.entity_id === id);
+  assert.ok(rows.some((r) => r.action === 'set_password'),
+    'what was done to the account stays on the record after it is gone');
+  assert.ok(rows.some((r) => r.action === 'delete'), 'and the deletion itself is recorded');
+  assert.ok(rows.every((r) => r.actor), 'every row still names who did it');
+});
+
+test('the account you are signed in with cannot be deleted, and only admins may delete', async () => {
+  const me = (await api('GET', '/api/auth/me', undefined, 'admin')).body.user;
+  const self = await api('DELETE', `/api/masters/staff/${me.id}`, undefined, 'admin');
+  assert.strictEqual(self.status, 400);
+  assert.match(self.body.error, /cannot delete the account you are signed in with/);
+
+  const staff = (await api('GET', '/api/masters/staff', undefined, 'admin')).body;
+  const someone = staff.find((u) => u.role === 'pharmacy');
+  assert.strictEqual((await api('DELETE', `/api/masters/staff/${someone.id}`, undefined, 'nurse')).status, 403);
+  assert.strictEqual((await api('DELETE', '/api/masters/staff/999999', undefined, 'admin')).status, 404);
 });
 
 test('an administrator setting their own password stays signed in', async () => {

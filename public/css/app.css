@@ -803,3 +803,9 @@ tbody tr.panel-head.panel-sub td { background: transparent; border-top: 1px soli
   background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius-s);
   padding: 10px 12px; margin-top: 4px; user-select: all; word-break: break-all;
 }
+
+/* A button for the one action that cannot be undone. */
+.btn.danger { background: var(--danger); }
+.btn.ghost.danger { background: var(--surface); border-color: var(--line); color: var(--danger); }
+.btn.ghost.danger:hover:not(:disabled) { border-color: var(--danger); background: var(--danger-soft); color: var(--danger); }
+.btn-row.nowrap { flex-wrap: nowrap; }
