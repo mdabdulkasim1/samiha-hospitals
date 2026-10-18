@@ -9,6 +9,13 @@
       { id: 'enquiries',   label: 'Enquiries',        icon: '☏', roles: ['admin','reception','counselor','cashier'] },
       { id: 'appointments',label: 'Appointments',     icon: '▤', roles: ['admin','reception','nurse','doctor','counselor','cashier'] },
       { id: 'patients',    label: 'Patients',         icon: '☺', roles: '*' },
+      /*
+       * Everybody in the clinic gets asked "who is this and what have we done
+       * for them before", so everybody gets the box that answers it. What it
+       * then shows differs by role: the clinical history travels to all of
+       * them, the billing only to the desks that handle money.
+       */
+      { id: 'track',       label: 'Patient Track',    icon: '⌖', roles: '*' },
     ]},
     { group: 'Clinical', items: [
       { id: 'vitals',      label: 'Nurse Station',   icon: '♥', roles: ['admin','nurse','doctor'] },

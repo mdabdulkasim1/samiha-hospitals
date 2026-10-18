@@ -58,6 +58,7 @@ status: `400` invalid input · `401` not signed in · `403` wrong role · `404` 
 | Method | Path | Roles |
 |---|---|---|
 | GET | `/patients?q=&page=` | clinical desks |
+| GET | `/patients/lookup?q=` | clinical desks — one box: mobile, register number or whole Aadhaar |
 | POST | `/patients` | reception |
 | GET | `/patients/:id` | clinical desks — full 360° record |
 | PATCH | `/patients/:id` | reception, nurse, doctor, counselor |

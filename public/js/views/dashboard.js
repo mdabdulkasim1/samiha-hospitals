@@ -40,6 +40,28 @@ APP.register('dashboard', {
     const money = Boolean(d.revenue);
 
     el.innerHTML = `
+      ${/*
+         * The box everybody is asked to use, at the top of the board everybody
+         * lands on. Whoever is standing at a counter has one identifier —
+         * whichever the patient happens to carry — so it takes all three and
+         * works out which it was given.
+         */''}
+      <div class="card mb track-card"><div class="card-body">
+        <div class="track-head">
+          <span class="track-icon" aria-hidden="true">⌖</span>
+          <div>
+            <h3>Track a patient</h3>
+            <div class="muted small">Mobile number, register number or Aadhaar — whichever they have.
+              Opens everything the clinic has done for them.</div>
+          </div>
+        </div>
+        <div class="search-row mt">
+          <input type="search" id="dash-track" autocomplete="off" spellcheck="false"
+                 placeholder="98400 12345  ·  SPD26000123  ·  2345 6789 0123">
+          <button class="btn" id="dash-track-go">Find patient</button>
+        </div>
+      </div></div>
+
       <div class="grid c4 mb">
         ${stat('orange', 'Enquiry patients', UI.num(d.patients ? d.patients.enquiry : 0),
           `${UI.num(d.patients ? d.patients.enquiryToday : 0)} new today · not yet registered`, 'enquiry_patients')}
@@ -169,6 +191,16 @@ APP.register('dashboard', {
 
     el.querySelectorAll('[data-go]').forEach((b) =>
       b.addEventListener('click', () => APP.navigate(b.dataset.go)));
+
+    // Typing the number here hands it straight to Patient Track, so the search
+    // starts from the dashboard and finishes on the record.
+    const track = el.querySelector('#dash-track');
+    const toTrack = () => {
+      const q = track.value.trim();
+      APP.navigate('track', q ? { q } : {});
+    };
+    el.querySelector('#dash-track-go').addEventListener('click', toTrack);
+    track.addEventListener('keydown', (e) => { if (e.key === 'Enter') toTrack(); });
 
     // Every figure on the board opens the rows it was counted from.
     el.querySelectorAll('[data-metric]').forEach((b) =>

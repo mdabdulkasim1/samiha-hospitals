@@ -919,8 +919,11 @@
             value: p.immunisations || '' })}
           ${UI.field({ name: 'billingAddress', label: 'Billing address', type: 'textarea', rows: 2,
             value: p.billing_address || '' })}
-          <div class="grid c2">
+          <div class="grid c3">
             ${UI.field({ name: 'occupation', label: 'Occupation', value: p.occupation || '' })}
+            ${UI.field({ name: 'aadhaarNumber', label: 'Aadhaar number', value: p.aadhaar_number || '',
+              placeholder: '12 digits',
+              hint: 'Opens the file on Patient Track. Checked against its own check digit.' })}
             ${UI.field({ name: 'idNumber', label: 'Photo ID number', value: p.id_number || '' })}
           </div>
           <fieldset><legend>Consent</legend>

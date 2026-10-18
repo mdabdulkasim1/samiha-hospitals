@@ -150,9 +150,14 @@ router.get('/', deskRoles, wrap((req, res) => {
   const clauses = ['p.active = 1'];
   const params = [];
   if (q) {
+    // A whole Aadhaar finds the one patient it belongs to, and only a whole
+    // one: see the lookup route below for why it is never matched in part.
+    const aadhaarDigits = q.replace(/\D/g, '');
+    const whole = /^\d{12}$/.test(aadhaarDigits) ? aadhaarDigits : '\u0000';
     clauses.push(`(p.uhid LIKE ? OR p.first_name LIKE ? OR p.last_name LIKE ? OR p.phone LIKE ?
-      OR p.whatsapp LIKE ? OR (p.first_name || ' ' || COALESCE(p.last_name,'')) LIKE ?)`);
-    params.push(like, like, like, like, like, like);
+      OR p.whatsapp LIKE ? OR (p.first_name || ' ' || COALESCE(p.last_name,'')) LIKE ?
+      OR p.aadhaar_number = ?)`);
+    params.push(like, like, like, like, like, like, whole);
   }
   if (stage) { clauses.push('p.stage = ?'); params.push(stage); }
   const where = `WHERE ${clauses.join(' AND ')}`;
@@ -226,6 +231,102 @@ router.get('/by-phone', deskRoles, wrap((req, res) => {
     isFamily: members.length > 1,
     members,
   });
+}));
+
+/**
+ * Patient Track — one box, whichever number the patient has brought.
+ *
+ * At the counter nobody knows which identifier they are about to be handed.
+ * A regular recites a mobile number, somebody with the clinic card reads the
+ * register number off it, and somebody with neither produces an Aadhaar. The
+ * desk should not have to decide which field to type it into, so this works
+ * out what it was given and searches accordingly.
+ *
+ * Open to everyone who works here, because everyone is asked. A technician
+ * with a sample in hand, a pharmacist with a prescription, a nurse before
+ * vitals — all of them need to be sure the record in front of them is the
+ * person in front of them. What the record then shows them is a separate
+ * question, and the answer is on GET /:id: the clinical history travels to
+ * all of them, and what the patient owes travels only to the money desks.
+ */
+router.get('/lookup', deskRoles, wrap((req, res) => {
+  const raw = str(req.query.q, '');
+  if (!raw) throw badRequest('Enter a mobile number, a register number or an Aadhaar number.');
+  const digits = raw.replace(/\D/g, '');
+
+  const select = `SELECT p.id, p.uhid, p.title, p.first_name, p.last_name, p.gender, p.age_years,
+            p.dob, p.phone, p.whatsapp, p.city, p.blood_group, p.allergies, p.stage,
+            p.registered_at, p.enquiry_at,
+            (SELECT COUNT(*) FROM visits v WHERE v.patient_id = p.id) AS visit_count,
+            (SELECT MAX(v.arrived_at) FROM visits v WHERE v.patient_id = p.id) AS last_visit,
+            (SELECT COUNT(*) FROM lab_orders o WHERE o.patient_id = p.id) AS lab_count,
+            (SELECT COALESCE(SUM(i.balance), 0) FROM invoices i
+              WHERE i.patient_id = p.id AND i.status IN ('unpaid','partial')) AS outstanding_raw
+       FROM patients p
+      WHERE p.active = 1`;
+
+  let matchedOn = null;
+  let rows = [];
+
+  /*
+   * Aadhaar is matched whole or not at all — twelve digits, exactly.
+   *
+   * Never a partial match, even though every other identifier here allows
+   * one. A box that answered "which patients have an Aadhaar starting 4729"
+   * would let anybody with a staff login walk the register four digits at a
+   * time, and an Aadhaar is not ours to hand out. Somebody who has the whole
+   * number already has the thing the search would otherwise reveal.
+   */
+  if (/^\d{12}$/.test(digits)) {
+    matchedOn = 'aadhaar';
+    rows = db.prepare(`${select} AND p.aadhaar_number = ? ORDER BY p.id DESC`).all(digits);
+  }
+
+  // The register number, as printed on the clinic card.
+  if (!rows.length && /[A-Za-z]/.test(raw)) {
+    const uhid = raw.trim().toUpperCase();
+    rows = db.prepare(`${select} AND UPPER(p.uhid) = ? ORDER BY p.id DESC`).all(uhid);
+    if (rows.length) matchedOn = 'uhid';
+  }
+
+  /*
+   * A mobile number, matched on its last ten digits so that 9840012345,
+   * 09840012345 and +91 98400 12345 are one number. One number is often one
+   * family, and every member of it comes back for the desk to choose from.
+   */
+  if (!rows.length && digits.length >= 6 && digits.length <= 13) {
+    const like = `%${digits.slice(-10)}`;
+    rows = db.prepare(
+      `${select} AND (p.phone LIKE ? OR p.whatsapp LIKE ?) ORDER BY p.stage DESC, p.first_name`
+    ).all(like, like);
+    if (rows.length) matchedOn = 'phone';
+  }
+
+  // Nothing yet, so fall back to what somebody types when they have no number
+  // at all: a name, or part of the register number.
+  if (!rows.length) {
+    const like = `%${raw.trim()}%`;
+    rows = db.prepare(
+      `${select} AND (p.uhid LIKE ? OR p.first_name LIKE ? OR p.last_name LIKE ?
+         OR (p.first_name || ' ' || COALESCE(p.last_name, '')) LIKE ?)
+       ORDER BY p.id DESC LIMIT 25`
+    ).all(like, like, like, like);
+    if (rows.length) matchedOn = 'name';
+  }
+
+  // What a patient owes is the money desk's business. Everyone else is here
+  // for the record, and a balance on the screen is not part of it.
+  const money = seesMoney(req.user);
+  for (const r of rows) {
+    r.name = fullName(r);
+    r.outstanding = money ? r.outstanding_raw : null;
+    delete r.outstanding_raw;
+  }
+
+  audit.log(req, 'lookup', 'patient', rows.length === 1 ? rows[0].id : null,
+    { by: matchedOn, found: rows.length });
+
+  res.json({ query: raw, matchedOn, count: rows.length, patients: rows, seesMoney: money });
 }));
 
 // --------------------------------------------------------------- registration
@@ -481,6 +582,14 @@ router.patch('/:id', requireRole('reception', 'nurse', 'doctor', 'counselor'), w
     occupation: str(req.body.occupation), emergency_name: str(req.body.emergencyName),
     emergency_phone: phone(req.body.emergencyPhone), emergency_relation: str(req.body.emergencyRelation),
     id_type: str(req.body.idType), id_number: str(req.body.idNumber),
+    /*
+     * The Aadhaar was previously only ever accepted at registration, so a
+     * patient who brought theirs on a later visit could not have it recorded
+     * at all — and the desk that looks a patient up by it would never find
+     * them. Validated here exactly as it is on the way in: a mistyped Aadhaar
+     * is not a wrong field, it is somebody else's number.
+     */
+    aadhaar_number: aadhaar(req.body.aadhaarNumber),
     insurance_provider: str(req.body.insuranceProvider), insurance_policy_no: str(req.body.insurancePolicyNo),
     insurance_valid_till: str(req.body.insuranceValidTill), allergies: str(req.body.allergies),
     chronic_conditions: str(req.body.chronicConditions), notes: str(req.body.notes),

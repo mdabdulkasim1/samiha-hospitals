@@ -211,3 +211,97 @@ test('the mobile number finds the household, each with their own number', async 
   assert.ok(mine, 'the patient is found by the number they gave');
   assert.strictEqual(mine.uhid, uhid, 'and the register number shown is theirs');
 });
+
+// ------------------------------------------------------- Patient Track
+/*
+ * One box at the counter, whichever number the patient has brought, and the
+ * same answer for everybody who works here — except the money, which goes
+ * only to the desks that handle it.
+ */
+test('the one box finds a patient by mobile, register number or Aadhaar', async () => {
+  const aadhaar = '234567890124';   // valid Verhoeff check digit
+  const set = await api('PATCH', `/api/patients/${patientId}`, { aadhaarNumber: aadhaar }, 'reception');
+  assert.strictEqual(set.status, 200, JSON.stringify(set.body));
+
+  for (const [q, by] of [
+    ['9845099001', 'phone'],            // as the patient recites it
+    ['+91 98450 99001', 'phone'],       // as it is written on a form
+    [uhid, 'uhid'],                     // off the clinic card
+    [uhid.toLowerCase(), 'uhid'],       // typed in a hurry
+    ['2345 6789 0124', 'aadhaar'],      // off the Aadhaar card, as grouped
+    [aadhaar, 'aadhaar'],
+    ['Lifelong', 'name'],               // no number at all
+  ]) {
+    const r = await api('GET', `/api/patients/lookup?q=${encodeURIComponent(q)}`, undefined, 'reception');
+    assert.strictEqual(r.status, 200, `${q}: ${JSON.stringify(r.body)}`);
+    assert.strictEqual(r.body.matchedOn, by, `"${q}" should match on ${by}`);
+    assert.ok(r.body.patients.some((p) => p.id === patientId), `"${q}" should find the patient`);
+  }
+
+  const none = await api('GET', '/api/patients/lookup?q=ZZQQ9', undefined, 'reception');
+  assert.strictEqual(none.body.count, 0);
+  const empty = await api('GET', '/api/patients/lookup?q=', undefined, 'reception');
+  assert.strictEqual(empty.status, 400);
+});
+
+test('part of an Aadhaar never matches, so the register cannot be walked', async () => {
+  // Whole: found. Any part of it: nothing, however much of it is given.
+  assert.strictEqual((await api('GET', '/api/patients/lookup?q=234567890124',
+    undefined, 'reception')).body.count, 1);
+
+  for (const partial of ['23456789012', '2345678901', '234567', '2345']) {
+    const r = await api('GET', `/api/patients/lookup?q=${partial}`, undefined, 'reception');
+    assert.ok(!r.body.patients.some((p) => p.id === patientId),
+      `${partial} must not find anybody by Aadhaar`);
+    assert.notStrictEqual(r.body.matchedOn, 'aadhaar');
+  }
+
+  // The same rule on the registry search, which shares the field.
+  const list = await api('GET', '/api/patients?q=23456789', undefined, 'reception');
+  assert.ok(!list.body.rows.some((p) => p.id === patientId));
+  const whole = await api('GET', '/api/patients?q=234567890124', undefined, 'reception');
+  assert.ok(whole.body.rows.some((p) => p.id === patientId), 'a whole one still finds them');
+});
+
+test('an Aadhaar can be recorded after registration, and only a real one', async () => {
+  const bad = await api('PATCH', `/api/patients/${patientId}`, { aadhaarNumber: '234567890123' }, 'reception');
+  assert.strictEqual(bad.status, 400);
+  assert.match(bad.body.error, /check digit/);
+
+  const short = await api('PATCH', `/api/patients/${patientId}`, { aadhaarNumber: '12345' }, 'reception');
+  assert.strictEqual(short.status, 400);
+
+  // And the good one from the test above survived the refusals.
+  const still = await api('GET', '/api/patients/lookup?q=234567890124', undefined, 'reception');
+  assert.strictEqual(still.body.count, 1);
+});
+
+test('everyone who works here can track a patient; the money travels narrowly', async () => {
+  // The lab is the test: as far from the cash box as the clinic gets, and
+  // still the one holding a sample that has to belong to the right person.
+  const found = await api('GET', `/api/patients/lookup?q=${uhid}`, undefined, 'lab');
+  assert.strictEqual(found.status, 200);
+  assert.strictEqual(found.body.seesMoney, false);
+  assert.strictEqual(found.body.patients[0].outstanding, null, 'no balance for the bench');
+
+  const record = await api('GET', `/api/patients/${patientId}`, undefined, 'lab');
+  assert.strictEqual(record.body.invoices, null, 'and no bills');
+  assert.strictEqual(record.body.outstanding, null);
+  // What they came for is all there.
+  assert.ok(record.body.labOrders.length >= 6);
+  assert.ok(record.body.labTrends.length >= 1);
+
+  const cashier = await api('GET', `/api/patients/lookup?q=${uhid}`, undefined, 'admin');
+  assert.strictEqual(cashier.body.seesMoney, true);
+  assert.strictEqual(typeof cashier.body.patients[0].outstanding, 'number');
+});
+
+test('a lookup is recorded: who opened whose file, and on what', async () => {
+  await api('GET', `/api/patients/lookup?q=${uhid}`, undefined, 'lab');
+  const logs = (await api('GET', '/api/reports/audit?entity=patient', undefined, 'admin')).body;
+  const mine = (logs.rows || logs).filter((r) => r.action === 'lookup');
+  assert.ok(mine.length, 'patient lookups are on the audit trail');
+  assert.ok(mine.some((r) => /lab/i.test(r.actor || '')), 'with who did it');
+  assert.ok(mine.every((r) => !/\d{12}/.test(r.details || '')),
+    'and never the Aadhaar that was typed');
+});
