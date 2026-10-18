@@ -15,6 +15,8 @@ const { generate } = require('../lib/ids');
 const pharmacy = require('../services/pharmacy');
 const formulary = require('../db/formulary');
 const audit = require('../lib/audit');
+const xlsx = require('../lib/xlsx');
+const config = require('../config');
 
 const router = express.Router();
 const readRoles = requireRole('pharmacy', 'doctor', 'nurse', 'cashier');
@@ -381,8 +383,14 @@ router.post('/purchases/:id/pay', stockRoles, wrap((req, res) => {
 /**
  * The register proper: for every medicine, what we held at the start of the
  * period, what came in, what went out and by which route, and what is left.
+ *
+ * The rows and totals are worked out once.
+ *
+ * Shared by the screen and by the spreadsheet it downloads, so a figure can
+ * never read one way on the page and another in the file somebody takes to a
+ * meeting. The price rules are applied here too, for the same reason.
  */
-router.get('/register', readRoles, wrap((req, res) => {
+function registerFor(req) {
   const from = str(req.query.from) || new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
   const to = str(req.query.to) || today();
   const drugId = req.query.drugId ? int(req.query.drugId) : null;
@@ -390,7 +398,8 @@ router.get('/register', readRoles, wrap((req, res) => {
   const like = `%${q}%`;
 
   const rows = db.prepare(
-    `SELECT d.id AS drug_id, d.code, d.name, d.form, d.strength, d.schedule_type, d.barcode,
+    `SELECT d.id AS drug_id, d.code, d.name, d.generic_name, d.form, d.strength,
+            d.schedule_type, d.barcode,
             d.reorder_level, d.mrp, d.purchase_price, d.unit_rate,
             COALESCE((SELECT SUM(l.qty_delta) FROM stock_ledger l
                        WHERE l.drug_id = d.id AND date(l.created_at) < date(?)), 0) AS opening,
@@ -448,7 +457,112 @@ router.get('/register', readRoles, wrap((req, res) => {
     totals.stockValue = null;
   }
 
+  return { from, to, rows, totals };
+}
+
+router.get('/register', readRoles, wrap((req, res) => {
+  const { from, to, rows, totals } = registerFor(req);
   res.json({ from, to, rows, totals, mayEditRate: req.user.role === 'admin' });
+}));
+
+/**
+ * The register as a spreadsheet — the pharmacist's and the administrator's.
+ *
+ * The same rows the screen is showing, for the same period and under the same
+ * filter, so what gets carried into a stock meeting is what the person at the
+ * counter was looking at. Three sheets, because "all the stock" is three
+ * different questions: what moved over the period, what is physically on the
+ * shelf batch by batch with its expiry, and what it all adds up to.
+ *
+ * Not open to the roles that may only read the register on screen. A doctor or
+ * a nurse checking whether something is in stock has no call to walk out with
+ * the whole shelf and its valuation in a file.
+ */
+router.get('/register.xlsx', requireRole('pharmacy'), wrap((req, res) => {
+  const { from, to, rows, totals } = registerFor(req);
+  const prices = seesPrices(req.user);
+  const stamp = new Date().toISOString().replace('T', ' ').slice(0, 16);
+
+  const register = xlsx.fromRows('Stock register', rows.map((r) => ({
+    Code: r.code,
+    Medicine: r.name,
+    Generic: r.generic_name || '',
+    Form: r.form || '',
+    Strength: r.strength || '',
+    Schedule: r.schedule_type || '',
+    Barcode: r.barcode || '',
+    'Reorder level': r.reorder_level,
+    Opening: r.opening,
+    Received: r.inward,
+    Issued: r.outward,
+    Closing: r.closing,
+    'On hand': r.on_hand,
+    'Expired on shelf': r.expired_qty,
+    // Blank, not zero, where no rate has been set: see the register route
+    // above for why an unrated medicine is worth no stated amount.
+    'Unit rate': prices ? (r.unit_rate > 0 ? r.unit_rate : '') : '',
+    Value: prices ? (r.value === null ? '' : r.value) : '',
+    MRP: prices ? (r.mrp || '') : '',
+  })), ['Code', 'Medicine', 'Generic', 'Form', 'Strength', 'Schedule', 'Barcode',
+    'Reorder level', 'Opening', 'Received', 'Issued', 'Closing', 'On hand',
+    'Expired on shelf', 'Unit rate', 'Value', 'MRP']);
+
+  /*
+   * Every batch on the shelf, because the register counts a medicine and the
+   * shelf holds packets. Which batch expires when is the thing a stock count
+   * actually turns on, and it cannot be read off a per-medicine total.
+   */
+  const batches = xlsx.fromRows('Batches on hand', db.prepare(
+    `SELECT d.code AS Code, d.name AS Medicine, b.batch_no AS Batch,
+            b.expiry_date AS Expiry,
+            CASE WHEN date(b.expiry_date) < date('now') THEN 'EXPIRED'
+                 WHEN date(b.expiry_date) < date('now', '+90 days') THEN 'expiring' ELSE '' END AS Flag,
+            b.qty_received AS Received, b.qty_available AS "On hand",
+            b.barcode AS Barcode, b.received_at AS "Received on",
+            ${prices ? 'b.mrp AS MRP, b.purchase_price AS "Purchase price"' : "'' AS MRP, '' AS \"Purchase price\""}
+       FROM drug_batches b JOIN drugs d ON d.id = b.drug_id
+      WHERE b.qty_available > 0
+      ORDER BY d.name, date(b.expiry_date)`
+  ).all(), ['Code', 'Medicine', 'Batch', 'Expiry', 'Flag', 'Received', 'On hand',
+    'Barcode', 'Received on', 'MRP', 'Purchase price']);
+
+  const summary = {
+    name: 'Summary',
+    columns: ['Pharmacy stock register', ''],
+    rows: [
+      [config.clinic.name, ''],
+      ['Period', `${from} to ${to}`],
+      ['Downloaded', `${stamp} by ${req.user.name}`],
+      ['', ''],
+      ['Medicines on the register', totals.medicines],
+      ['Received over the period', totals.inward],
+      ['Issued over the period', totals.outward],
+      ['Units on hand now', totals.onHand],
+      ['Expired units still on the shelf', totals.expiredQty],
+      ...(prices ? [
+        ['Stock value', totals.stockValue],
+        ['Medicines with no unit rate', totals.unrated],
+        ['', totals.unrated
+          ? 'Those medicines are left out of the value above — set a rate to count them.'
+          : ''],
+      ] : []),
+    ],
+  };
+
+  const book = xlsx.build([summary, register, batches]);
+  audit.log(req, 'export', 'stock_register', null, {
+    from, to, medicines: rows.length, batches: batches.rows.length, bytes: book.length,
+  });
+
+  const slug = String(config.clinic.name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  res.setHeader('Content-Type',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition',
+    `attachment; filename="${slug}-pharmacy-stock-${to}.xlsx"`);
+  res.setHeader('Content-Length', book.length);
+  // A stock sheet is a snapshot of the moment it was asked for, never a cached one.
+  res.setHeader('Cache-Control', 'no-store');
+  res.end(book);
 }));
 
 /** Every movement of one medicine, newest first, for the drill-down. */

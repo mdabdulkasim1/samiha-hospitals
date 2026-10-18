@@ -511,6 +511,13 @@
         <input type="date" id="sr-from" value="${from}" style="max-width:165px">
         <input type="date" id="sr-to" value="${to}" style="max-width:165px">
         <input type="search" id="sr-q" placeholder="Filter medicines…" style="max-width:200px">
+        ${/*
+            The register, as a spreadsheet, for the pharmacist and the
+            administrator. It carries whatever period and filter are set here,
+            so the file is what the screen is showing rather than a different
+            answer to the same question.
+          */''}
+        ${isPharmacist() ? '<button class="btn sm" id="sr-xl">⤓ Excel</button>' : ''}
         ${isPharmacist() ? '<button class="btn ghost sm" id="sr-expiry">Write off expired</button>' : ''}
       </div>
         <div id="sr-totals"></div>
@@ -531,12 +538,25 @@
       },
     });
 
+    const filters = () => ({
+      from: body.querySelector('#sr-from').value,
+      to: body.querySelector('#sr-to').value,
+      q: body.querySelector('#sr-q').value.trim(),
+    });
+
+    const download = body.querySelector('#sr-xl');
+    if (download) download.addEventListener('click', () => {
+      const a = document.createElement('a');
+      a.href = '/api/stock/register.xlsx' + API.qs(filters());
+      a.download = '';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      UI.ok('Downloading the stock register…');
+    });
+
     const load = async () => {
-      const params = {
-        from: body.querySelector('#sr-from').value,
-        to: body.querySelector('#sr-to').value,
-        q: body.querySelector('#sr-q').value.trim(),
-      };
+      const params = filters();
       const data = await API.get('/api/stock/register' + API.qs(params));
       body.querySelector('#sr-totals').innerHTML = `
         <div class="grid c5" style="padding:12px 16px 0">

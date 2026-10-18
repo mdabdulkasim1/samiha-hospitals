@@ -288,3 +288,67 @@ test('every download is written to the audit log', async () => {
   assert.strictEqual(detail.what, 'reception');
   assert.ok(detail.bytes > 0 && detail.sheets > 0);
 });
+
+// ------------------------------------------------- the pharmacy stock register
+/*
+ * The button on the Stock register tab. Same rows as the screen, for the same
+ * period, and only for the two people whose job the shelf is.
+ */
+test('the stock register downloads as a workbook of the shelf', async () => {
+  const r = await book('/api/stock/register.xlsx?from=2020-01-01&to=2030-12-31', 'pharmacy');
+  assert.strictEqual(r.status, 200);
+  assert.match(r.headers.get('content-type'), /spreadsheetml\.sheet/);
+  assert.match(r.headers.get('content-disposition'), /attachment; filename=".*pharmacy-stock-2030-12-31\.xlsx"/);
+  // A stock figure read from a cache is a stock figure that is wrong.
+  assert.strictEqual(r.headers.get('cache-control'), 'no-store');
+
+  const files = unzip(r.buf);
+  assert.deepStrictEqual(sheetNames(files), ['Summary', 'Stock register', 'Batches on hand']);
+
+  const summary = textOf(files, 1);
+  assert.match(summary, /2020-01-01 to 2030-12-31/, 'the period it was taken for');
+  assert.match(summary, /Suresh Pharmacist/, 'and who took it');
+  assert.match(summary, /Medicines on the register/);
+
+  const register = textOf(files, 2);
+  for (const column of ['Code', 'Medicine', 'Opening', 'Received', 'Issued', 'Closing',
+    'On hand', 'Expired on shelf', 'Unit rate']) {
+    assert.ok(register.includes(column), `the register should carry a ${column} column`);
+  }
+  assert.match(register, /Paracetamol/, 'and the formulary itself');
+
+  // Every batch on the shelf, because a per-medicine total cannot say what
+  // expires when.
+  const batches = textOf(files, 3);
+  assert.ok(batches.includes('Expiry') && batches.includes('Batch'));
+});
+
+test('the register workbook is the pharmacist\'s and the administrator\'s alone', async () => {
+  assert.strictEqual((await book('/api/stock/register.xlsx', 'admin')).status, 200);
+  // These four may read the register on screen to check whether something is
+  // in stock. Walking out with the whole shelf and its valuation is another
+  // thing entirely.
+  for (const who of ['lab', 'nurse', 'doctor', 'cashier']) {
+    assert.strictEqual((await book('/api/stock/register.xlsx', who)).status, 403,
+      `${who} should not be able to download the stock register`);
+  }
+});
+
+test('the workbook follows the filter the screen is showing', async () => {
+  const all = unzip((await book('/api/stock/register.xlsx', 'pharmacy')).buf);
+  const one = unzip((await book('/api/stock/register.xlsx?q=Paracetamol', 'pharmacy')).buf);
+
+  const rows = (files) =>
+    (files['xl/worksheets/sheet2.xml'].match(/<row /g) || []).length;
+  assert.ok(rows(all) > rows(one), 'a filtered download is the filtered list');
+  assert.ok(rows(one) > 1, 'and still has its header and at least one medicine');
+  assert.match(textOf(one, 2), /Paracetamol/);
+});
+
+test('a download of the shelf is on the audit trail', async () => {
+  await book('/api/stock/register.xlsx', 'pharmacy');
+  const logs = (await api('GET', '/api/reports/audit?entity=stock_register', undefined, 'admin')).body;
+  const rows = (logs.rows || logs).filter((r) => r.action === 'export');
+  assert.ok(rows.length, 'the clinic can ask later who took the stock list');
+  assert.match(rows[0].actor || '', /Pharmacist/);
+});

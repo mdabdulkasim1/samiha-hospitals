@@ -128,6 +128,7 @@ status: `400` invalid input · `401` not signed in · `403` wrong role · `404` 
 | GET | `/stock/labels/drugs?drugIds=` · `/stock/labels?batchIds=` | counter roles |
 | GET/POST | `/stock/purchases` · GET `/stock/purchases/:id` · POST `/stock/purchases/:id/pay` | pharmacy (read: counter roles) |
 | GET | `/stock/register` · `/stock/register/:drugId/movements` | counter roles |
+| GET | `/stock/register.xlsx` | pharmacy, admin — the register, the batches and the totals as a workbook; honours `from`, `to`, `q` |
 | PATCH | `/stock/drugs/:id/rate` | **admin only** — what one unit is worth for stock valuation |
 | GET/POST | `/stock/takes` · GET `/stock/takes/:id` · `/stock/takes/new/sheet` | pharmacy (read: counter roles) |
 | POST | `/stock/write-off-expired` | pharmacy |
