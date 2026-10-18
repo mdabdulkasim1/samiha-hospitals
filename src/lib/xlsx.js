@@ -170,19 +170,35 @@ function sheetXml(sheet) {
   const body = rows.map((r, ri) =>
     `<row r="${ri + 2}">${r.map((v, ci) => cell(v, ci, ri + 2)).join('')}</row>`).join('');
 
+  const lastCell = cellRef(Math.max(columns.length - 1, 0), rows.length + 1);
+
+  /*
+   * The order of what follows is not a matter of taste.
+   *
+   * A worksheet part is an xsd:sequence, so dimension, then sheetViews, then
+   * cols, then sheetData is the only arrangement the schema allows. Readers
+   * that are lenient about it will open a file in any order and give no hint
+   * that anything is wrong; Excel validates, refuses to open the workbook and
+   * offers to "recover" it instead. Do not reorder these.
+   */
   return Buffer.from(
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
     + '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
-    + `<cols>${widths.map((w, i) =>
-      `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join('')}</cols>`
+    + `<dimension ref="A1:${lastCell}"/>`
     // The header row frozen, because every one of these is a list somebody
     // scrolls, and a list you scroll past its own headings is unreadable.
     + '<sheetViews><sheetView workbookViewId="0">'
     + '<pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/>'
     + '</sheetView></sheetViews>'
+    // A <cols> element has to contain at least one <col>, so a sheet with no
+    // columns at all leaves it out rather than writing an empty one.
+    + (widths.length
+      ? `<cols>${widths.map((w, i) =>
+        `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join('')}</cols>`
+      : '')
     + `<sheetData>${header}${body}</sheetData>`
     + (columns.length && rows.length
-      ? `<autoFilter ref="A1:${cellRef(columns.length - 1, rows.length + 1)}"/>` : '')
+      ? `<autoFilter ref="A1:${lastCell}"/>` : '')
     + '</worksheet>',
     'utf8'
   );
@@ -260,7 +276,10 @@ function build(sheets) {
         + '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
         + '<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font>'
         + '<font><b/><sz val="11"/><name val="Calibri"/></font></fonts>'
-        + '<fills count="1"><fill><patternFill patternType="none"/></fill></fills>'
+        // Two fills, because the readers assume index 1 is the gray125
+        // placeholder and index 0 is none, used or not.
+        + '<fills count="2"><fill><patternFill patternType="none"/></fill>'
+        + '<fill><patternFill patternType="gray125"/></fill></fills>'
         + '<borders count="1"><border/></borders>'
         + '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
         + '<cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'

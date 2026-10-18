@@ -131,6 +131,70 @@ test('the writer produces a file a spreadsheet can actually open', () => {
   assert.match(sheet, /t="b"><v>1</, 'and a yes stays a boolean');
 });
 
+/*
+ * The order of a worksheet's children, which is the one thing about this
+ * format that cannot be got away with.
+ *
+ * A worksheet part is an xsd:sequence: dimension, then sheetViews, then cols,
+ * then sheetData. Everything that reads these files in this repository's own
+ * tests — and LibreOffice, and openpyxl — will happily open one in any order
+ * and report nothing wrong. Excel validates it, refuses the workbook outright
+ * and offers to recover it instead, which is how a writer can pass every test
+ * here for months and still produce a file nobody at the clinic can open.
+ *
+ * So the order is asserted directly, on every sheet of a real download.
+ */
+const WORKSHEET_SEQUENCE = [
+  'sheetPr', 'dimension', 'sheetViews', 'sheetFormatPr', 'cols', 'sheetData',
+  'sheetCalcPr', 'sheetProtection', 'protectedRanges', 'scenarios', 'autoFilter',
+  'sortState', 'dataConsolidate', 'customSheetViews', 'mergeCells', 'phoneticPr',
+  'conditionalFormatting', 'dataValidations', 'hyperlinks', 'printOptions',
+  'pageMargins', 'pageSetup', 'headerFooter',
+];
+
+/** The names of a worksheet's own top-level children, in the order written. */
+function worksheetChildren(xml) {
+  const body = xml.slice(xml.indexOf('<worksheet'));
+  const inner = body.slice(body.indexOf('>') + 1);
+  const out = [];
+  let depth = 0;
+  for (const m of inner.matchAll(/<(\/?)([A-Za-z]+)([^>]*?)(\/?)>/g)) {
+    const [, closing, name, , selfClosing] = m;
+    if (closing) { depth -= 1; continue; }
+    if (depth === 0) out.push(name);
+    if (!selfClosing) depth += 1;
+  }
+  return out.filter((n) => WORKSHEET_SEQUENCE.includes(n));
+}
+
+const assertSchemaOrder = (files, where) => {
+  for (const [part, xml] of Object.entries(files)) {
+    if (!part.startsWith('xl/worksheets/sheet')) continue;
+    const kids = worksheetChildren(xml);
+    const positions = kids.map((k) => WORKSHEET_SEQUENCE.indexOf(k));
+    assert.deepStrictEqual(positions, [...positions].sort((a, b) => a - b),
+      `${where} ${part}: a worksheet's children are out of schema order — ${kids.join(', ')}`);
+    assert.ok(kids.includes('sheetData'), `${where} ${part} has its data`);
+  }
+};
+
+test('a worksheet\'s elements are written in the order the schema demands', () => {
+  const files = unzip(xlsx.build([
+    xlsx.fromRows('Full', [{ a: 1, b: 'two' }]),
+    { name: 'No rows', columns: ['a', 'b'], rows: [] },
+    { name: 'No columns', columns: [], rows: [] },
+  ]));
+  assertSchemaOrder(files, 'writer');
+
+  // An empty <cols> is not allowed either: it must hold at least one <col>.
+  const bare = files['xl/worksheets/sheet3.xml'];
+  assert.ok(!bare.includes('<cols>'), 'a sheet with no columns writes no <cols>');
+
+  // The fills Excel assumes exist, used or not.
+  assert.match(files['xl/styles.xml'], /<fills count="2">/);
+  assert.match(files['xl/styles.xml'], /gray125/);
+});
+
 test('a sheet name Excel would refuse is made into one it accepts', () => {
   const files = unzip(xlsx.build([
     { name: 'Bill/Lines: 2026 [final] — a very long name indeed', columns: ['a'], rows: [['x']] },
@@ -343,6 +407,20 @@ test('the workbook follows the filter the screen is showing', async () => {
   assert.ok(rows(all) > rows(one), 'a filtered download is the filtered list');
   assert.ok(rows(one) > 1, 'and still has its header and at least one medicine');
   assert.match(textOf(one, 2), /Paracetamol/);
+});
+
+test('every workbook the clinic can download opens in Excel, not just in a test', async () => {
+  for (const [p, as] of [
+    ['/api/exports/pharmacy.xlsx', 'pharmacy'],
+    ['/api/exports/lab.xlsx', 'lab'],
+    ['/api/exports/cashier.xlsx', 'cashier'],
+    ['/api/exports/full/backup.xlsx', 'admin'],
+    ['/api/stock/register.xlsx', 'pharmacy'],
+  ]) {
+    const r = await book(p, as);
+    assert.strictEqual(r.status, 200, p);
+    assertSchemaOrder(unzip(r.buf), p);
+  }
 });
 
 test('a download of the shelf is on the audit trail', async () => {
