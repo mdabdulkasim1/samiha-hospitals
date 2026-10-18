@@ -45,11 +45,14 @@ filters and the reports:
 
 | Specialist categories | Diagnostic categories |
 |---|---|
-| Internal Medicine · Pediatrics · Gynecology · Cardiology · Dentist · Dermatology · Orthopedics | Diagnostics / Lab · Pharmacy · Day Care / Ward · X-Ray · USG (Ultrasound) |
+| General Practitioner (GP) · Internal Medicine · Pediatrics · Gynecology · Cardiology · Dentist · Dermatology · Orthopedics · Oncology | Diagnostics / Lab · Pharmacy · Day Care / Ward · X-Ray · USG (Ultrasound) |
 
-Only **specialist** departments take consultations and appear in the WhatsApp booking menu;
-diagnostic departments are service counters. Add or change them in **Departments**
-(`POST /api/masters/departments`) or in `src/db/seed.js`.
+Only **specialist** departments take consultations and appear in the WhatsApp booking menu,
+and only once at least one doctor is assigned to them; diagnostic departments are service
+counters. Add or change them in **Departments** (`POST /api/masters/departments`), or add one
+to `src/db/departments.js` — that list is laid down on a new install and topped up on every
+boot, so a department added there reaches a clinic that was set up before it existed, without
+disturbing a name, order or switch the clinic has set for itself.
 
 > **Change every seeded password before going anywhere near real patient data**, and set a
 > real `SESSION_SECRET` in `.env`.

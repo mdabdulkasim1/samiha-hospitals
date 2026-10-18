@@ -41,9 +41,28 @@ function sync({ quiet = false } = {}) {
   };
 
   const before = {
+    departments: db.prepare('SELECT COUNT(*) AS c FROM departments').get().c,
     services: db.prepare('SELECT COUNT(*) AS c FROM services').get().c,
     tests: db.prepare('SELECT COUNT(*) AS c FROM lab_tests').get().c,
   };
+
+  // --------------------------------------------------------------- departments
+  /*
+   * A department the clinic has opened since it was set up.
+   *
+   * Only ones it has never heard of are added. An existing row is left exactly
+   * as it stands — renamed, reordered or switched off, those are the clinic's
+   * decisions, and a restart is no reason to undo them. Nothing is retired
+   * here either: that belongs to seeding a blank install, not to a clinic with
+   * patients filed under the department in question.
+   *
+   * A new specialist department shows on Staff & Doctors straight away, flagged
+   * as having no doctor, and starts taking appointments and appearing in the
+   * booking menu the moment one is added to it.
+   */
+  for (const [code, name, kind, sort_order] of require('./departments').DEPARTMENTS) {
+    upsert('departments', 'code', { code, name, kind, sort_order });
+  }
 
   // ------------------------------------------------------------------ services
   /*
@@ -350,12 +369,15 @@ function sync({ quiet = false } = {}) {
       .run(TARIFF_KEY, new Date().toISOString());
   }
   const added = {
+    departments: db.prepare('SELECT COUNT(*) AS c FROM departments').get().c - before.departments,
     services: db.prepare('SELECT COUNT(*) AS c FROM services').get().c - before.services,
     tests: db.prepare('SELECT COUNT(*) AS c FROM lab_tests').get().c - before.tests,
   };
 
-  if (!quiet && (added.services || added.tests || tariff.updated || tariff.kept.length || fees)) {
+  if (!quiet && (added.departments || added.services || added.tests
+      || tariff.updated || tariff.kept.length || fees)) {
     const bits = [];
+    if (added.departments) bits.push(`${added.departments} department(s) added`);
     if (added.services) bits.push(`${added.services} service(s) added`);
     if (added.tests) bits.push(`${added.tests} diagnostic(s) added`);
     if (tariff.updated) bits.push(`${tariff.updated} rate(s) set from the tariff`);

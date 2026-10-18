@@ -177,8 +177,10 @@ test('a time already taken is met with the nearest free ones', async () => {
   const say = chat('919000100003');
   await say('Hi');
   await say('1');
+  // Numbered as the bot numbers them: a specialist department with no doctor
+  // yet is on the service board but not on the menu, so it takes no number.
   const deptIdx = (await api('GET', '/api/masters/departments?kind=specialist', undefined, 'reception'))
-    .body.findIndex((x) => x.code === 'PED') + 1;
+    .body.filter((x) => x.doctor_count > 0).findIndex((x) => x.code === 'PED') + 1;
   await say(String(deptIdx));
   await say('1');
   await say(open.date);

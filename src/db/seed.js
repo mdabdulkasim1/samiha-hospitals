@@ -18,23 +18,9 @@ const upsert = (table, uniqueCol, row) => {
 };
 
 // ------------------------------------------------------------- departments
-// These mirror the clinic's own service board.
-const departments = [
-  // Specialist categories — these take consultations and appear in booking.
-  ['IM',  'Internal Medicine',  'specialist', 1],
-  ['PED', 'Pediatrics',         'specialist', 2],
-  ['GYN', 'Gynecology',         'specialist', 3],
-  ['CAR', 'Cardiology',         'specialist', 4],
-  ['DEN', 'Dentist',            'specialist', 5],
-  ['DER', 'Dermatology',        'specialist', 6],
-  ['ORT', 'Orthopedics',        'specialist', 7],
-  // Diagnostic categories — service counters rather than consulting rooms.
-  ['LAB', 'Diagnostics / Lab',  'diagnostic', 11],
-  ['PHA', 'Pharmacy',           'diagnostic', 12],
-  ['DAY', 'Day Care / Ward',    'diagnostic', 13],
-  ['XRY', 'X-Ray',              'diagnostic', 14],
-  ['USG', 'USG (Ultrasound)',   'diagnostic', 15],
-];
+// The clinic's own service board, shared with catalogue.js so a department
+// opened later reaches an install that was seeded before it existed.
+const { DEPARTMENTS: departments } = require('./departments');
 const deptId = {};
 for (const [code, name, kind, sort_order] of departments) {
   deptId[code] = upsert('departments', 'code', { code, name, kind, sort_order });

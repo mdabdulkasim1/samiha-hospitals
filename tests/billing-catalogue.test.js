@@ -69,6 +69,43 @@ test.after(() => {
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
+// ----------------------------------------------------------- the service board
+test('the service board carries every department the clinic consults in', async () => {
+  const depts = (await api('GET', '/api/masters/departments', undefined, 'reception')).body;
+  const specialist = depts.filter((d) => d.kind === 'specialist').map((d) => d.name);
+
+  for (const name of ['General Practitioner (GP)', 'Internal Medicine', 'Pediatrics', 'Gynecology',
+    'Cardiology', 'Dentist', 'Dermatology', 'Orthopedics', 'Oncology']) {
+    assert.ok(specialist.includes(name), `${name} should be a specialist department`);
+  }
+  // The general practitioner is where most patients start, so it leads the list.
+  assert.strictEqual(specialist[0], 'General Practitioner (GP)');
+});
+
+test('a department added to the app reaches a clinic that was set up before it', () => {
+  const { sync } = require('../src/db/catalogue');
+
+  // An install from before these existed, with the clinic's own edits on top.
+  db.prepare("DELETE FROM departments WHERE code IN ('GP', 'ONC')").run();
+  db.prepare("UPDATE departments SET name = 'Cardiology & Echo', sort_order = 2 WHERE code = 'CAR'").run();
+  db.prepare("UPDATE departments SET active = 0 WHERE code = 'DEN'").run();
+
+  const { added } = sync({ quiet: true });
+  assert.strictEqual(added.departments, 2, 'the two missing departments should arrive');
+
+  const row = (code) => db.prepare('SELECT * FROM departments WHERE code = ?').get(code);
+  assert.strictEqual(row('GP').kind, 'specialist');
+  assert.strictEqual(row('ONC').name, 'Oncology');
+
+  // And nothing the clinic decided is undone by a restart.
+  assert.strictEqual(row('CAR').name, 'Cardiology & Echo', 'a rename must survive');
+  assert.strictEqual(row('CAR').sort_order, 2, 'a reorder must survive');
+  assert.strictEqual(row('DEN').active, 0, 'a department switched off must stay off');
+
+  // Running again changes nothing.
+  assert.strictEqual(sync({ quiet: true }).added.departments, 0);
+});
+
 // ------------------------------------------------------------- the catalogue
 test('the catalogue offers every billable item, filed where a cashier looks', async () => {
   const groups = (await api('GET', '/api/masters/catalogue', undefined, 'reception')).body;
