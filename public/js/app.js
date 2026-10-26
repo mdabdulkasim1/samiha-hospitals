@@ -44,6 +44,13 @@
        * management decides rather than between the front desk and the nurse.
        */
       { id: 'financial',   label: 'Financial Assistance', icon: '⚖', roles: ['admin','counselor'] },
+      /*
+       * The clinic's own money, as against the patients'. Entering what was
+       * spent is the counter's work too; reading the whole picture is not —
+       * the Overview tab is the administrator's and the counsellor's, and the
+       * server refuses it to anybody else rather than merely hiding it.
+       */
+      { id: 'accounts',    label: 'Accounts & Expenses', icon: '∑', roles: ['admin','counselor','cashier'] },
     ]},
     { group: 'Channels & insight', items: [
       { id: 'whatsapp',    label: 'WhatsApp',         icon: '✆', roles: '*' },
@@ -154,17 +161,14 @@
               <button class="btn block" type="submit">Sign in</button>
             </form>
             <div id="login-error"></div>
-            <div class="demo-accounts">
-              <h4>Demo desks — password <code>samiha@123</code></h4>
-              <div class="demo-grid">
-                ${[['admin@samiha.local','Administrator'],['reception@samiha.local','Front desk'],
-                   ['counselor@samiha.local','Financial counselor'],['nurse@samiha.local','Nurse / M.A.'],
-                   ['imran@samiha.local','Dr. Imran (Medicine)'],['lab@samiha.local','Lab technician'],
-                   ['pharmacy@samiha.local','Pharmacist'],['cashier@samiha.local','Cashier'],
-                   ['ward@samiha.local','Ward sister']]
-                  .map(([email, role]) => `<button data-email="${UI.esc(email)}"><b>${UI.esc(role)}</b>${UI.esc(email)}</button>`).join('')}
-              </div>
-            </div>
+            ${/*
+                No list of accounts here, and no password.
+                A sign-in screen is the one page anybody on the internet can
+                reach, and printing the staff's addresses on it hands over half
+                of every account before anyone has typed anything — the half
+                that cannot be changed afterwards. Who works here is for the
+                administrator to see under Staff & Doctors.
+              */''}
           </div>
         </div>
       </div>`;
@@ -201,13 +205,6 @@
       }
     });
 
-    document.querySelectorAll('.demo-grid button').forEach((b) => {
-      b.addEventListener('click', () => {
-        form.querySelector('[name=username]').value = b.dataset.email;
-        form.querySelector('[name=password]').value = 'samiha@123';
-        form.querySelector('[name=password]').focus();
-      });
-    });
   }
 
   // ------------------------------------------------------- password recovery

@@ -424,8 +424,12 @@ test('the monthly window is asked for in months and answered in months', async (
   assert.strictEqual((await api('GET', '/api/reports/doctor-monthly?months=0')).body.months.length, 6);
 });
 
-test('the monthly report is management information, not for the front desk', async () => {
+test('what each doctor billed is a financial report, and reads like one', async () => {
+  // Billed and collected, doctor by doctor, is the clinic's money — so it goes
+  // where every other financial report goes, and nowhere else. Not the front
+  // desk, not the counter, and certainly not to the doctors it ranks.
   assert.strictEqual((await api('GET', '/api/reports/doctor-monthly', undefined, 'admin')).status, 200);
-  assert.strictEqual((await api('GET', '/api/reports/doctor-monthly', undefined, 'reception')).status, 200);
-  assert.strictEqual((await api('GET', '/api/reports/doctor-monthly', undefined, 'imran')).status, 403);
+  for (const who of ['reception', 'imran']) {
+    assert.strictEqual((await api('GET', '/api/reports/doctor-monthly', undefined, who)).status, 403);
+  }
 });

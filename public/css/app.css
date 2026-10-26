@@ -71,15 +71,6 @@ code, .mono { font-family: var(--mono); font-size: .92em; }
 .login-card { width: min(400px, 100%); }
 .login-card h2 { font-size: 22px; margin-bottom: 6px; }
 .login-card .muted { margin-bottom: 24px; }
-.demo-accounts { margin-top: 26px; border-top: 1px solid var(--line); padding-top: 18px; }
-.demo-accounts h4 { color: var(--ink-3); text-transform: uppercase; letter-spacing: .07em; font-size: 11px; margin-bottom: 10px; }
-.demo-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
-.demo-grid button {
-  text-align: left; padding: 7px 10px; border: 1px solid var(--line); background: var(--surface);
-  border-radius: var(--radius-s); cursor: pointer; font: inherit; font-size: 12px; color: var(--ink-2);
-}
-.demo-grid button:hover { border-color: var(--teal); background: var(--teal-soft); color: var(--teal-dark); }
-.demo-grid button b { display: block; color: var(--ink); font-size: 12.5px; }
 
 /* ------------------------------------------------------------------ shell */
 .app { display: grid; grid-template-columns: var(--sidebar) 1fr; min-height: 100vh; }
@@ -550,9 +541,15 @@ input.rate-box {
 .bars { display: grid; gap: 7px; }
 .bar-row { display: grid; grid-template-columns: 140px 1fr 76px; gap: 10px; align-items: center; font-size: 12.5px; }
 .bar-track { background: var(--line-2); border-radius: 20px; height: 9px; overflow: hidden; }
-.bar-fill { height: 100%; background: var(--teal); border-radius: 20px; }
+/* Block, not inline: a percentage height does not apply to an inline box, so
+   without this the fill is a zero-sized span and the bar never draws at all. */
+.bar-fill { display: block; height: 100%; background: var(--teal); border-radius: 20px; }
 .bar-fill.crimson { background: var(--crimson); }
 .bar-fill.orange { background: var(--orange); }
+/* The two cash-flow hues, so a category bar reads as the same thing as the
+   column above it. Chosen for colour-blind separation — see accounts.js. */
+.bar-fill.income { background: #1C6FB5; }
+.bar-fill.expense { background: #A8500C; }
 .spark { display: flex; align-items: flex-end; gap: 2px; height: 62px; }
 .spark i { flex: 1; background: var(--teal); border-radius: 2px 2px 0 0; min-height: 2px; opacity: .82; }
 .spark i:hover { opacity: 1; background: var(--crimson); }
@@ -819,3 +816,37 @@ tbody tr.panel-head.panel-sub td { background: transparent; border-top: 1px soli
   width: 38px; height: 38px; flex: none; border-radius: 50%;
   background: var(--teal-soft); color: var(--teal-dark); font-size: 21px;
 }
+
+/* ------------------------------------------------------------------- charts
+   The cash-flow charts on Accounts & Expenses. Thin marks, recessive grid,
+   and white doing the separating — the data is the only loud thing here. */
+.chart-legend { display: flex; gap: 18px; margin-bottom: 10px; font-size: 12.5px; color: var(--ink-2); }
+.chart-legend i { display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 6px; }
+.chart-wrap { position: relative; padding-left: 38px; }
+/* Height follows the viewBox, so the drawing is never stretched out of shape. */
+.chart { width: 100%; height: auto; display: block; overflow: visible; }
+.c-grid { stroke: var(--line-2); stroke-width: 1; }
+.c-zero { stroke: var(--line); stroke-width: 1; }
+.c-hit { fill: transparent; cursor: pointer; }
+.c-hit:hover, .c-hit:focus { fill: rgba(22, 35, 43, .045); outline: none; }
+.c-tip-label { fill: var(--ink-2); font-size: 10px; font-weight: 600; }
+.chart-axis {
+  display: grid; grid-template-columns: repeat(var(--n), 1fr);
+  font-size: 10.5px; color: var(--ink-3); text-align: center; margin-top: 2px;
+}
+.chart-axis span { overflow: hidden; white-space: nowrap; }
+.chart-ticks { position: absolute; left: 0; top: 0; bottom: 0; width: 34px; }
+.chart-ticks span {
+  position: absolute; right: 0; transform: translateY(-50%);
+  font-size: 10.5px; color: var(--ink-3);
+}
+.chart-tip {
+  position: fixed; z-index: 90; pointer-events: none;
+  background: var(--ink); color: #fff; border-radius: var(--radius-s);
+  padding: 8px 11px; font-size: 12px; box-shadow: var(--shadow-lg); min-width: 130px;
+}
+.chart-tip .tip-head { color: #C9D4DA; font-size: 11px; margin-bottom: 5px; }
+.chart-tip .tip-row { display: flex; justify-content: space-between; gap: 14px; line-height: 1.7; }
+.chart-tip .tip-row span { color: #C9D4DA; }
+.tabs.inline { border: 0; margin: 0; padding: 0; }
+.tabs.inline button { padding: 5px 10px; font-size: 12.5px; }

@@ -244,7 +244,7 @@ router.get('/doctor-productivity', requireRole('admin', 'reception', 'cashier'),
  * `billed` is what was invoiced in the month; `collected` is what has actually
  * been received against those invoices. They differ, and the gap is the point.
  */
-router.get('/doctor-monthly', requireRole('admin', 'reception', 'cashier'), wrap((req, res) => {
+router.get('/doctor-monthly', requireRole('admin', 'counselor'), wrap((req, res) => {
   const months = Math.min(Math.max(int(req.query.months, 6) || 6, 1), 24);
   const end = str(req.query.to) || today();
   const endDate = new Date(`${end}T00:00:00`);
@@ -404,7 +404,17 @@ router.get('/turnaround', requireAuth, wrap((req, res) => {
   });
 }));
 
-router.get('/revenue', requireRole('admin', 'cashier', 'reception'), wrap((req, res) => {
+/*
+ * What the clinic earned, as against what any one desk collected.
+ *
+ * The clinic's financial reporting is the administrator's and the financial
+ * counsellor's. The cashier still has every figure their own job turns on —
+ * the bills they raise, the payments they take, the day's receipts to balance
+ * the drawer, all on the billing screen — but the month's revenue, its
+ * concessions and what is owed across the clinic is a different question, and
+ * it belongs to the two people answerable for the answer.
+ */
+router.get('/revenue', requireRole('admin', 'counselor'), wrap((req, res) => {
   const from = str(req.query.from) || new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
   const to = str(req.query.to) || today();
   res.json({

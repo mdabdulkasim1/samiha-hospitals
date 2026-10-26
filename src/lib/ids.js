@@ -94,6 +94,7 @@ const generators = {
   claim:       () => `CLM${yymm()}${pad(nextSeq(`clm-${yymm()}`), 5)}`,
   grn:         () => `GRN${yymm()}${pad(nextSeq(`grn-${yymm()}`), 4)}`,
   stockTake:   () => `STK${yymm()}${pad(nextSeq(`stk-${yymm()}`), 4)}`,
+  cashEntry:   () => `CB${yymm()}${pad(nextSeq(`cb-${yymm()}`), 5)}`,
   // Labels the pharmacy prints itself: checksummed internal codes in the "2"
   // range, which manufacturers never use, so ours can never collide with an
   // EAN-13 printed on a pack. 28… identifies a medicine, 29… a single batch.

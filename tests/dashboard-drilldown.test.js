@@ -391,9 +391,15 @@ test('the turnaround list is the sample the averages were taken over', async () 
   }
 });
 
+/*
+ * Read as the counsellor, not the cashier. The revenue report is the clinic's
+ * financial reporting and belongs to the administrator and the financial
+ * counsellor; the drill-downs beneath it are the cashier's own lists of bills
+ * and receipts, and they still open for all three.
+ */
 test('the concession and outstanding figures open the invoices behind them', async () => {
   const w = WINDOW();
-  const r = (await api('GET', `/api/reports/revenue?from=${w.from}&to=${w.to}`, undefined, 'cashier')).body;
+  const r = (await api('GET', `/api/reports/revenue?from=${w.from}&to=${w.to}`, undefined, 'counselor')).body;
 
   const sliding = await rdetail('revenue_sliding', w, 'cashier');
   assert.strictEqual(round2(sliding.body.rows.reduce((a, x) => a + Number(x.amount), 0)),

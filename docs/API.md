@@ -221,6 +221,17 @@ Full detail and the accounting model in [`INSURANCE.md`](INSURANCE.md).
 |---|---|---|
 | GET | `/reports/dashboard?date=` · `/reports/trend?days=` | any |
 | GET | `/reports/turnaround?from=&to=` | any |
-| GET | `/reports/revenue` | admin, cashier, reception |
-| GET | `/reports/doctor-productivity` | admin, reception, cashier |
+| GET | `/reports/revenue` | **admin, counselor** — financial reporting |
+| GET | `/reports/doctor-monthly?months=` | **admin, counselor** — billed and collected per doctor |
+| GET | `/reports/doctor-productivity` | admin, reception, cashier — no money in it |
 | GET | `/reports/audit?entity=&limit=` | admin |
+
+## Accounts & expenses
+The clinic's own cash book, as against the patients' bills.
+| Method | Path | Roles |
+|---|---|---|
+| GET | `/accounts/categories` | cashier, counselor, admin |
+| GET/POST | `/accounts/entries` | cashier, counselor, admin |
+| PATCH | `/accounts/entries/:id` | cashier, counselor, admin |
+| POST | `/accounts/entries/:id/void` | cashier, counselor, admin — never deleted |
+| GET | `/accounts/summary?by=day\|week&from=&to=` | **admin, counselor** — cash flow |

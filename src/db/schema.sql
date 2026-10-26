@@ -1248,3 +1248,42 @@ CREATE TABLE IF NOT EXISTS prescription_diagnoses (
   sort_order INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_rx_dx_sheet ON prescription_diagnoses(sheet_id, sort_order);
+
+-- ------------------------------------------------------------------ cash book
+-- What the clinic spends and what it takes in that no patient was billed for.
+--
+-- Kept apart from invoices and payments, which are the record of what a named
+-- patient was charged and what they handed over. This is the other side of the
+-- same question — the rent, the salaries, the electricity, a reagent delivery
+-- paid in cash, a room let out — and none of it belongs to anybody's file.
+--
+-- Money already collected through billing is NOT re-entered here. It is
+-- counted from the invoices and the pharmacy counter where it already sits,
+-- because a clinic that types its takings in twice will eventually report them
+-- twice, and the second figure is the one somebody acts on.
+--
+-- An entry is never deleted, only voided with a reason. A cash book that can
+-- lose a line is not a cash book, and "it was entered by mistake" is itself
+-- something the clinic may need to see a year later.
+CREATE TABLE IF NOT EXISTS cash_book (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  ref_no      TEXT NOT NULL UNIQUE,
+  direction   TEXT NOT NULL CHECK (direction IN ('in','out')),
+  category    TEXT NOT NULL,
+  amount      REAL NOT NULL CHECK (amount > 0),
+  -- The day the money actually moved, which is not always the day it was typed.
+  entry_date  TEXT NOT NULL,
+  mode        TEXT NOT NULL DEFAULT 'cash'
+                CHECK (mode IN ('cash','card','upi','netbanking','cheque','other')),
+  payee       TEXT,
+  reference   TEXT,
+  notes       TEXT,
+  supplier_id INTEGER REFERENCES suppliers(id),
+  created_by  INTEGER REFERENCES users(id),
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  voided_at   TEXT,
+  voided_by   INTEGER REFERENCES users(id),
+  void_reason TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_cash_book_date ON cash_book(entry_date);
+CREATE INDEX IF NOT EXISTS idx_cash_book_dir ON cash_book(direction, entry_date);

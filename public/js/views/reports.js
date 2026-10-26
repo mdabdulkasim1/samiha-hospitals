@@ -29,7 +29,14 @@
    * them — and would be refused if it were.
    */
   const MGMT = ['admin', 'reception', 'cashier'];
-  const MONEY = ['admin', 'cashier', 'counselor'];
+  /*
+   * The clinic's financial reporting, which is narrower than the people who
+   * handle money. A cashier takes payments all day and reads every figure
+   * their own work turns on from the billing screen; the month's revenue, its
+   * concessions and what is owed across the clinic is the question the
+   * administrator and the financial counsellor answer for, and it is theirs.
+   */
+  const MONEY = ['admin', 'counselor'];
   const OPEN_TO_ALL = ['trend_visits', 'trend_appointments', 'trend_admissions',
     'turnaround_visits', 'trend_lab'];
   const MONEY_METRICS = ['trend_collected', 'revenue_sliding', 'revenue_assistance',
@@ -205,12 +212,12 @@
         <div class="tabs" id="r-tabs">
           <button class="active" data-tab="trend">Footfall trend</button>
           <button data-tab="turnaround">Turnaround</button>
-          ${/* Money and colleague-by-colleague numbers are management's, not a
-                doctor's — a doctor reads their own day in My Clinic. */
-            APP.can(MGMT) ? `
-            ${APP.can(MONEY) ? '<button data-tab="revenue">Revenue</button>' : ''}
-            <button data-tab="doctors">Doctor productivity</button>
-            <button data-tab="doctorMonthly">Doctor month by month</button>` : ''}
+          ${/* Colleague-by-colleague numbers are management's, not a doctor's —
+                a doctor reads their own day in My Clinic. The two tabs that
+                carry rupees are narrower again: see MONEY above. */''}
+          ${APP.can(MONEY) ? '<button data-tab="revenue">Revenue</button>' : ''}
+          ${APP.can(MGMT) ? '<button data-tab="doctors">Doctor productivity</button>' : ''}
+          ${APP.can(MONEY) ? '<button data-tab="doctorMonthly">Doctor month by month</button>' : ''}
           ${APP.can(['admin']) ? '<button data-tab="audit">Audit log</button>' : ''}
         </div>
         <div id="r-body">${UI.loading()}</div>`;
