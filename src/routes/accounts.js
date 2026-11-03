@@ -261,18 +261,29 @@ const takingsBetween = (from, to) => ({
   ).get(from, to).s,
 });
 
-/** The day, or the week it falls in, as one label the whole series sorts by. */
-const bucketExpr = (by, column) => (by === 'week'
-  // Monday-start weeks: a clinic's week runs Monday to Sunday, and a Sunday
-  // OPD belongs to the week it finished, not the one about to start.
-  ? `date(${column}, 'weekday 1', '-7 days')`
-  : `date(${column})`);
+/**
+ * The day, the week it falls in, or the month — one label the whole series
+ * sorts by, and the same expression wherever a figure is bucketed.
+ *
+ * Weeks start on Monday: a clinic's week runs Monday to Sunday, and a Sunday
+ * OPD belongs to the week it finished rather than the one about to start.
+ * A month is labelled by its first day, so every bucket is a real date and
+ * the series sorts as text without a special case.
+ */
+const bucketExpr = (by, column) => {
+  if (by === 'week') return `date(${column}, 'weekday 1', '-7 days')`;
+  if (by === 'month') return `date(${column}, 'start of month')`;
+  return `date(${column})`;
+};
+
+/** How far back each view looks when no dates are given. */
+const DEFAULT_SPAN = { day: 29, week: 83, month: 364 };
 
 router.get('/summary', overviewRoles, wrap((req, res) => {
-  const by = oneOf(req.query.by, ['day', 'week'], 'by') || 'day';
+  const by = oneOf(req.query.by, ['day', 'week', 'month'], 'by') || 'day';
   const to = str(req.query.to) || today();
   const from = str(req.query.from)
-    || new Date(Date.now() - (by === 'week' ? 83 : 29) * 86400000).toISOString().slice(0, 10);
+    || new Date(Date.now() - DEFAULT_SPAN[by] * 86400000).toISOString().slice(0, 10);
 
   const series = new Map();
   const at = (key) => {

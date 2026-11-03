@@ -9,7 +9,7 @@
 const express = require('express');
 const { db } = require('../db');
 const { wrap, notFound, badRequest, conflict } = require('../lib/http');
-const { requireRole, seesPrices } = require('../lib/auth');
+const { requireRole, seesPrices, hasFullAccess } = require('../lib/auth');
 const { required, str, int, num, money, oneOf, paging } = require('../lib/validate');
 const { generate } = require('../lib/ids');
 const pharmacy = require('../services/pharmacy');
@@ -462,7 +462,7 @@ function registerFor(req) {
 
 router.get('/register', readRoles, wrap((req, res) => {
   const { from, to, rows, totals } = registerFor(req);
-  res.json({ from, to, rows, totals, mayEditRate: req.user.role === 'admin' });
+  res.json({ from, to, rows, totals, mayEditRate: hasFullAccess(req.user) });
 }));
 
 /**

@@ -2,7 +2,7 @@
 const express = require('express');
 const { db } = require('../db');
 const { wrap, badRequest, forbidden } = require('../lib/http');
-const { requireAuth, requireRole, MONEY_ROLES, seesMoney, seesPrices } = require('../lib/auth');
+const { requireAuth, requireRole, MONEY_ROLES, seesMoney, seesPrices, hasFullAccess } = require('../lib/auth');
 const scheduling = require('../services/scheduling');
 const { str, int } = require('../lib/validate');
 
@@ -105,6 +105,19 @@ router.get('/dashboard', requireAuth, wrap((req, res) => {
       currentInPatients: db.prepare("SELECT COUNT(*) AS c FROM admissions WHERE status = 'admitted'").get().c,
       beds: { ...beds, occupancyPct: beds.total ? Math.round((beds.occupied / beds.total) * 1000) / 10 : 0 },
     },
+    /*
+     * Equipment the clinic should not be relying on today. Counted here so it
+     * reaches the board everybody lands on rather than waiting for somebody
+     * to open the asset register — which is exactly what nobody does until an
+     * inspection. "Due soon" is the sixty days the asset route works to.
+     */
+    calibration: db.prepare(
+      `SELECT SUM(CASE WHEN date(calibration_due) < date('now') THEN 1 ELSE 0 END) AS expired,
+              SUM(CASE WHEN date(calibration_due) >= date('now')
+                        AND date(calibration_due) <= date('now', '+60 days') THEN 1 ELSE 0 END) AS due_soon,
+              SUM(CASE WHEN calibration_due IS NULL THEN 1 ELSE 0 END) AS unset
+         FROM assets WHERE active = 1 AND needs_calibration = 1`
+    ).get(),
     lab: db.prepare(
       `SELECT COUNT(*) AS ordered_today,
               SUM(CASE WHEN status IN ('ordered','sample_collected','in_process') THEN 1 ELSE 0 END) AS pending
@@ -647,7 +660,7 @@ router.get('/dashboard/detail', requireAuth, wrap((req, res) => {
   const spec = Object.prototype.hasOwnProperty.call(DETAILS, metric) ? DETAILS[metric] : null;
   if (!spec) throw badRequest(`Unknown dashboard metric: ${metric || '(none)'}`);
 
-  if (req.user.role !== 'admin' && !spec.roles.includes(req.user.role)) {
+  if (!hasFullAccess(req.user) && !spec.roles.includes(req.user.role)) {
     throw forbidden(`These details are restricted to: ${spec.roles.join(', ')}`);
   }
 
@@ -938,7 +951,7 @@ router.get('/detail', requireAuth, wrap((req, res) => {
     ? REPORT_DETAILS[metric] : null;
   if (!spec) throw badRequest(`Unknown report metric: ${metric || '(none)'}`);
 
-  if (spec.roles && req.user.role !== 'admin' && !spec.roles.includes(req.user.role)) {
+  if (spec.roles && !hasFullAccess(req.user) && !spec.roles.includes(req.user.role)) {
     throw forbidden(`This report is restricted to: ${spec.roles.join(', ')}`);
   }
 

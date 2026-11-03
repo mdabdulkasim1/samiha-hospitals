@@ -41,6 +41,7 @@ function sync({ quiet = false } = {}) {
   };
 
   const before = {
+    assets: db.prepare('SELECT COUNT(*) AS c FROM assets').get().c,
     departments: db.prepare('SELECT COUNT(*) AS c FROM departments').get().c,
     services: db.prepare('SELECT COUNT(*) AS c FROM services').get().c,
     tests: db.prepare('SELECT COUNT(*) AS c FROM lab_tests').get().c,
@@ -63,6 +64,14 @@ function sync({ quiet = false } = {}) {
   for (const [code, name, kind, sort_order] of require('./departments').DEPARTMENTS) {
     upsert('departments', 'code', { code, name, kind, sort_order });
   }
+
+  // ------------------------------------------------------------------- assets
+  /*
+   * The equipment the clinic bought, from its purchase orders. Matched on the
+   * PO number and the item, so a restart never writes over a serial number or
+   * a calibration date somebody has entered since.
+   */
+  require('./assets').seedAssets(db, { generate: require('../lib/ids').generate, quiet });
 
   // ------------------------------------------------------------------ services
   /*
@@ -369,6 +378,7 @@ function sync({ quiet = false } = {}) {
       .run(TARIFF_KEY, new Date().toISOString());
   }
   const added = {
+    assets: db.prepare('SELECT COUNT(*) AS c FROM assets').get().c - before.assets,
     departments: db.prepare('SELECT COUNT(*) AS c FROM departments').get().c - before.departments,
     services: db.prepare('SELECT COUNT(*) AS c FROM services').get().c - before.services,
     tests: db.prepare('SELECT COUNT(*) AS c FROM lab_tests').get().c - before.tests,

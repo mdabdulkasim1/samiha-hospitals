@@ -1,6 +1,6 @@
 'use strict';
 const { db } = require('../db');
-const { seesMoney, seesPrices } = require('../lib/auth');
+const { seesMoney, seesPrices, hasFullAccess } = require('../lib/auth');
 
 /**
  * The clinic's data, as a spreadsheet a department can actually work with.
@@ -349,7 +349,7 @@ const ADMIN_EXTRA = [
 const canOpen = (key, user) => {
   const dept = DEPARTMENTS[key];
   if (!dept || !user) return false;
-  return user.role === 'admin' || dept.roles.includes(user.role);
+  return hasFullAccess(user) || dept.roles.includes(user.role);
 };
 
 /** What this user is offered on their own screen. */

@@ -3,7 +3,7 @@ const express = require('express');
 const crypto = require('crypto');
 const { db } = require('../db');
 const { wrap, notFound, conflict, badRequest } = require('../lib/http');
-const { requireRole, seesPrices } = require('../lib/auth');
+const { requireRole, seesPrices, hasFullAccess } = require('../lib/auth');
 const { required, str, num, int, bool } = require('../lib/validate');
 const audit = require('../lib/audit');
 const { generate, doctorCode } = require('../lib/ids');
@@ -611,7 +611,7 @@ router.delete('/staff/:id', adminOnly, wrap((req, res) => {
       + 'Sign in as another administrator first.');
   }
   // The clinic must never be left without a way in.
-  if (user.role === 'admin') {
+  if (hasFullAccess(user)) {
     const { n } = db.prepare(
       "SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND active = 1 AND id != ?"
     ).get(id);

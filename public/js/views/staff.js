@@ -17,6 +17,7 @@
     { value: 'cashier', label: 'Cashier — billing, payments, insurance' },
     { value: 'ward', label: 'Ward sister — beds, admissions, rounds' },
     { value: 'admin', label: 'Administrator — full access' },
+    { value: 'owner', label: 'Owner — full access, and sets what others see' },
   ];
 
   APP.register('staff', {

@@ -1,7 +1,7 @@
 'use strict';
 const express = require('express');
 const { wrap, notFound, forbidden } = require('../lib/http');
-const { requireAuth, requireRole } = require('../lib/auth');
+const { requireAuth, requireRole, hasFullAccess } = require('../lib/auth');
 const { str } = require('../lib/validate');
 const xlsx = require('../lib/xlsx');
 const exports_ = require('../services/exports');
@@ -45,7 +45,7 @@ function send(res, req, filename, sheets, what) {
 router.get('/', requireAuth, wrap((req, res) => {
   res.json({
     departments: exports_.menuFor(req.user),
-    full: req.user.role === 'admin',
+    full: hasFullAccess(req.user),
   });
 }));
 

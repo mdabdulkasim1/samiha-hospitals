@@ -72,15 +72,38 @@ function requireAuth(req, _res, next) {
   next();
 }
 
-/**
- * Role gate. Admin always passes — a single admin account can operate every
- * desk, which matters for a small polyclinic running short-staffed shifts.
+/*
+ * The two roles that pass every gate.
+ *
+ * Admin, because a single admin account can operate every desk, which matters
+ * for a small polyclinic running short-staffed shifts. Owner, because the
+ * clinic belongs to them: there is no screen in it they are not entitled to,
+ * and they are the one who decides what everybody else may see.
  */
+const FULL_ACCESS = ['owner', 'admin'];
+const hasFullAccess = (user) => Boolean(user) && FULL_ACCESS.includes(user.role);
+
+/**
+ * The owner, and nobody standing in for them.
+ *
+ * Deliberately not requireRole('owner'), because that lets an administrator
+ * through — admin bypasses every role gate, which is right for running a
+ * desk and wrong for this. What the owner sets here includes what the
+ * administrator is shown, so an administrator who could edit it could simply
+ * switch their own screens back on, and the setting would mean nothing.
+ */
+function requireOwner(req, _res, next) {
+  if (!req.user) return next(unauthorized());
+  if (req.user.role === 'owner') return next();
+  next(forbidden('Only the owner can change this.'));
+}
+
+/** Role gate. Owner and admin always pass. */
 function requireRole(...roles) {
   const allowed = new Set(roles.flat());
   return (req, _res, next) => {
     if (!req.user) return next(unauthorized());
-    if (req.user.role === 'admin' || allowed.has(req.user.role)) return next();
+    if (hasFullAccess(req.user) || allowed.has(req.user.role)) return next();
     next(forbidden(`This action is restricted to: ${[...allowed].join(', ')}`));
   };
 }
@@ -149,7 +172,7 @@ function purgeExpiredResets() {
  * One list, exported once, so a screen and its endpoint cannot disagree about
  * who is allowed to see a figure.
  */
-const MONEY_ROLES = ['admin', 'cashier', 'counselor'];
+const MONEY_ROLES = ['owner', 'admin', 'cashier', 'counselor'];
 const seesMoney = (user) => Boolean(user) && MONEY_ROLES.includes(user.role);
 
 /*
@@ -168,13 +191,14 @@ const seesMoney = (user) => Boolean(user) && MONEY_ROLES.includes(user.role);
  * it, and a rate on the screen while a treatment is being chosen is a thumb
  * on that scale.
  */
-const PRICE_ROLES = ['admin', 'cashier', 'counselor', 'pharmacy', 'ward', 'nurse', 'reception'];
+const PRICE_ROLES = ['owner', 'admin', 'cashier', 'counselor', 'pharmacy', 'ward', 'nurse', 'reception'];
 const seesPrices = (user) => Boolean(user) && PRICE_ROLES.includes(user.role);
 
 module.exports = {
+  FULL_ACCESS, hasFullAccess,
   MONEY_ROLES, seesMoney, PRICE_ROLES, seesPrices,
   hashPassword, verifyPassword, passwordProblems,
   createResetToken, userForResetToken, consumeResetToken, purgeExpiredResets, hashToken,
   createSession, destroySession, purgeExpiredSessions, userForToken,
-  attachUser, requireAuth, requireRole, readToken,
+  attachUser, requireAuth, requireRole, requireOwner, readToken,
 };

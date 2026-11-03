@@ -234,4 +234,18 @@ The clinic's own cash book, as against the patients' bills.
 | GET/POST | `/accounts/entries` | cashier, counselor, admin |
 | PATCH | `/accounts/entries/:id` | cashier, counselor, admin |
 | POST | `/accounts/entries/:id/void` | cashier, counselor, admin — never deleted |
-| GET | `/accounts/summary?by=day\|week&from=&to=` | **admin, counselor** — cash flow |
+| GET | `/accounts/summary?by=day\|week\|month&from=&to=` | **owner, admin, counselor** — cash flow |
+
+## Assets & calibration
+| Method | Path | Roles |
+|---|---|---|
+| GET | `/assets` · `/assets/:id` · `/assets/meta` · `/assets/summary` | any signed-in user |
+| POST/PATCH | `/assets[/:id]` | owner, admin, lab, pharmacy, ward, nurse |
+| POST | `/assets/:id/events` | the same — a calibration, service, repair or move |
+| POST | `/assets/:id/retire` | the same — never a delete |
+
+## Screen access
+What each role is shown. Visibility only: every endpoint keeps its own role rules.
+| Method | Path | Roles |
+|---|---|---|
+| GET/PUT | `/access` | **owner only** — not the administrator, who would otherwise re-enable their own |

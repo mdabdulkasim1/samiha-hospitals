@@ -69,6 +69,12 @@ router.get('/me', wrap((req, res) => {
     },
     clinic: clinic.profile(),
     whatsappProvider: config.whatsapp.provider,
+    /*
+     * Screens the owner has taken off this role's menu. A convenience, not a
+     * control: the endpoints behind every screen still enforce their own
+     * roles, which is what actually keeps anybody out of anything.
+     */
+    hiddenScreens: require('./access').hiddenFor(req.user),
   });
 }));
 

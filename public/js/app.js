@@ -28,6 +28,13 @@
     ]},
     { group: 'In-patient', items: [
       { id: 'ipd',         label: 'Wards & Beds',     icon: '⌸', roles: ['admin','ward','nurse','doctor','reception','cashier'] },
+      /*
+       * What the clinic owns and when each machine is next due. Readable by
+       * everybody, because the technician at the bench has as much business
+       * knowing the analyser is out of calibration as the owner does;
+       * entering and editing belongs to the departments that run the kit.
+       */
+      { id: 'assets',      label: 'Assets & Calibration', icon: '⚙', roles: '*' },
     ]},
     { group: 'Money', items: [
       { id: 'billing',     label: 'Billing & Payments', icon: '₹', roles: ['admin','cashier','counselor'] },
@@ -57,6 +64,8 @@
       { id: 'reports',     label: 'Reports',          icon: '◔', roles: '*' },
       { id: 'workflow',    label: 'Workflow Map',     icon: '⇄', roles: '*' },
       { id: 'staff',       label: 'Staff & Doctors',  icon: '⚕', roles: ['admin'] },
+      // The owner's own: which screens each of the other roles is shown.
+      { id: 'access',      label: 'Screen access',    icon: '◪', roles: ['owner'] },
       { id: 'account',     label: 'Account & System', icon: '⚙', roles: '*' },
     ]},
   ];
@@ -72,7 +81,9 @@
     can(roles) {
       if (roles === '*') return true;
       if (!APP.user) return false;
-      return APP.user.role === 'admin' || roles.includes(APP.user.role);
+      // Owner and admin pass every gate; see FULL_ACCESS in src/lib/auth.js,
+      // which is where it is actually enforced.
+      return ['owner', 'admin'].includes(APP.user.role) || roles.includes(APP.user.role);
     },
 
     /*
@@ -84,8 +95,16 @@
      * seesMoney  — what was collected: takings, balances, ledgers.
      * seesPrices — what a thing costs: a rate card, a bed tariff, an MRP.
      */
-    /** Whether this user's nav carries a given screen at all. */
+    /**
+     * Whether this user's nav carries a given screen at all.
+     *
+     * Two separate questions, and both have to say yes: does the role qualify
+     * for the screen, and has the owner left it on this role's menu. The
+     * first is the real gate and is enforced again on the server; the second
+     * only decides what is put in front of somebody.
+     */
     canOpen(route) {
+      if ((APP.hiddenScreens || []).includes(route)) return false;
       const item = NAV.flatMap((g) => g.items).find((i) => i.id === route);
       return item ? APP.can(item.roles) : true;
     },
@@ -113,6 +132,9 @@
         APP.user = me.user;
         APP.clinic = me.clinic;
         APP.whatsappProvider = me.whatsappProvider;
+        // Screens the owner has taken off this role's menu. Visibility only:
+        // see src/routes/access.js for why that is not the same as access.
+        APP.hiddenScreens = me.hiddenScreens || [];
         renderShell();
         await router();
         refreshBadges();
@@ -450,7 +472,8 @@
 
   function renderNav() {
     document.getElementById('nav').innerHTML = NAV.map((g) => {
-      const items = g.items.filter((i) => APP.can(i.roles));
+      // canOpen, not can: the menu also drops whatever the owner has hidden.
+      const items = g.items.filter((i) => APP.canOpen(i.id));
       if (!items.length) return '';
       return `<div class="nav-group"><h5>${UI.esc(g.group)}</h5>` + items.map((i) =>
         `<a href="#/${i.id}" data-nav="${i.id}"><span class="ico">${i.icon}</span>${UI.esc(i.label)}` +
@@ -514,6 +537,15 @@
     if (navItem && !APP.can(navItem.roles)) {
       document.getElementById('view').innerHTML =
         `<div class="alert danger">Your role (<b>${UI.esc(APP.user.role)}</b>) does not have access to ${UI.esc(navItem.label)}.</div>`;
+      return;
+    }
+    // A screen the owner has taken off this role's menu is not reachable by
+    // typing its address either. The role still qualifies for it — this is a
+    // decision about the menu, so it says so rather than crying forbidden.
+    if (navItem && (APP.hiddenScreens || []).includes(route)) {
+      document.getElementById('view').innerHTML =
+        `<div class="alert info">${UI.esc(navItem.label)} has been taken off the menu for
+          <b>${UI.esc(APP.user.role)}</b>. Ask the owner if you need it back.</div>`;
       return;
     }
 

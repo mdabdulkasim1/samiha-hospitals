@@ -510,6 +510,21 @@ function attentionList(d) {
       ? ['danger', `${d.pharmacy.lowStockCount} medicine(s) at or below reorder level`, 'pharmacy']
       : ['info', `${d.pharmacy.lowStockCount} medicine(s) are running low at the pharmacy`, null]);
   }
+  /*
+   * A machine out of calibration is not a maintenance chore — it is an
+   * analyser still printing numbers onto reports, or an X-ray unit whose
+   * licence check has lapsed. It goes at the top of what needs attention,
+   * and everybody sees it, because everybody uses the equipment.
+   */
+  if (d.calibration) {
+    const c = d.calibration;
+    if (c.expired) items.push(['danger',
+      `${c.expired} piece(s) of equipment are past their calibration date`, 'assets']);
+    if (c.due_soon) items.push(['warn',
+      `${c.due_soon} due for calibration within two months`, 'assets']);
+    if (c.unset) items.push(['orange',
+      `${c.unset} need calibrating and have no date on file yet`, 'assets']);
+  }
   if (d.enquiries.open) items.push(['info', `${d.enquiries.open} open enquiry/enquiries to follow up`, 'enquiries']);
   if (d.patients && d.patients.enquiry) {
     items.push(['orange', `${d.patients.enquiry} enquiry patient(s) not yet registered`, 'patients']);

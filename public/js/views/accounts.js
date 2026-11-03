@@ -273,6 +273,7 @@
             <div class="tabs inline" id="ov-by">
               <button data-by="day" class="${by === 'day' ? 'active' : ''}">Day by day</button>
               <button data-by="week" class="${by === 'week' ? 'active' : ''}">Week by week</button>
+              <button data-by="month" class="${by === 'month' ? 'active' : ''}">Month by month</button>
             </div>
             <input type="date" id="ov-from" value="${d.from}" style="max-width:160px">
             <input type="date" id="ov-to" value="${d.to}" style="max-width:160px">
@@ -283,7 +284,7 @@
           </div>
         </div>
 
-        <div class="card mb"><div class="card-head"><h3>What was left each ${by === 'week' ? 'week' : 'day'}</h3>
+        <div class="card mb"><div class="card-head"><h3>What was left each ${PERIOD[by]}</h3>
           <span class="muted small">Above the line is a surplus, below it a shortfall</span></div>
           <div class="card-body">${netColumns(d.points, by)}</div></div>
 
@@ -344,8 +345,13 @@
   const compact = (n) => (Math.abs(n) >= 1e5 ? `${Math.round(n / 1e3)}K`
     : Math.abs(n) >= 1e3 ? `${Math.round(n / 100) / 10}K` : String(Math.round(n)));
 
-  const bucketLabel = (at, by) => (by === 'week'
-    ? `w/c ${UI.dateShort(at)}` : UI.dateShort(at));
+  const PERIOD = { day: 'day', week: 'week', month: 'month' };
+  const bucketLabel = (at, by) => {
+    if (by === 'week') return `w/c ${UI.dateShort(at)}`;
+    if (by === 'month') return new Date(`${at}T00:00:00`)
+      .toLocaleDateString('en-GB', { month: 'short', year: '2-digit' });
+    return UI.dateShort(at);
+  };
 
   function legend(pairs) {
     return `<div class="chart-legend">${pairs.map(([label, hue]) =>
@@ -395,7 +401,7 @@
     };
 
     return `<div class="chart-wrap"><svg viewBox="0 0 ${w} ${h}" class="chart" preserveAspectRatio="xMidYMid meet"
-        role="img" aria-label="Money in against money out, ${by === 'week' ? 'week by week' : 'day by day'}">
+        role="img" aria-label="Money in against money out, ${PERIOD[by]} by ${PERIOD[by]}">
       ${marks.map((m) => `<line x1="0" x2="${w}" y1="${y(m)}" y2="${y(m)}" class="c-grid"/>`).join('')}
       ${points.map((p, i) => column(p, i, p.income, IN_HUE, 'left')).join('')}
       ${points.map((p, i) => column(p, i, p.expense, OUT_HUE, 'right')).join('')}
@@ -432,7 +438,7 @@
     const netTicks = [top, 0, -top];
 
     return `<div class="chart-wrap"><svg viewBox="0 0 ${w} ${h}" class="chart" preserveAspectRatio="xMidYMid meet"
-        role="img" aria-label="What was left each ${by === 'week' ? 'week' : 'day'}">
+        role="img" aria-label="What was left each ${PERIOD[by]}">
       <line x1="0" x2="${w}" y1="${zero}" y2="${zero}" class="c-zero"/>
       ${points.map((p, i) => {
         if (!p.net) return '';
@@ -464,7 +470,8 @@
 
   /** Everything the charts show, as rows — so no figure is reachable only by hovering. */
   const flowTable = (points, by) => UI.table([
-    { label: by === 'week' ? 'Week beginning' : 'Date', render: (p) => UI.esc(UI.date(p.at)) },
+    { label: { week: 'Week beginning', month: 'Month', day: 'Date' }[by],
+      render: (p) => UI.esc(by === 'month' ? bucketLabel(p.at, by) : UI.date(p.at)) },
     { label: 'Billed to patients', num: true, render: (p) => money(p.billed) },
     { label: 'Pharmacy counter', num: true, render: (p) => money(p.counter) },
     { label: 'Other income', num: true, render: (p) => money(p.otherIncome) },

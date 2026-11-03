@@ -16,8 +16,10 @@ CREATE TABLE IF NOT EXISTS users (
   email          TEXT UNIQUE,
   phone          TEXT,
   password_hash  TEXT NOT NULL,
+  -- 'owner' sits above 'admin': full access to everything, and the only role
+  -- that decides what the other roles may see.
   role           TEXT NOT NULL CHECK (role IN
-                   ('admin','reception','counselor','nurse','doctor','lab','pharmacy','cashier','ward')),
+                   ('owner','admin','reception','counselor','nurse','doctor','lab','pharmacy','cashier','ward')),
   department_id  INTEGER REFERENCES departments(id),
   active         INTEGER NOT NULL DEFAULT 1,
   last_login_at  TEXT,
@@ -1287,3 +1289,76 @@ CREATE TABLE IF NOT EXISTS cash_book (
 );
 CREATE INDEX IF NOT EXISTS idx_cash_book_date ON cash_book(entry_date);
 CREATE INDEX IF NOT EXISTS idx_cash_book_dir ON cash_book(direction, entry_date);
+
+-- -------------------------------------------------------------- asset register
+-- Every machine, instrument and piece of furniture the clinic owns: what it is,
+-- where it stands, what it cost, who supplied it, and — for the ones it matters
+-- on — when its calibration runs out.
+--
+-- Calibration is the reason this table earns its keep. A biochemistry analyser
+-- or an X-ray unit past its calibration date is not a maintenance nuisance, it
+-- is a machine reporting numbers nobody should act on, and the clinic finds out
+-- on inspection rather than in advance. So the due date is a column of its own,
+-- the screen sorts by it, and anything expired or close to it is flagged.
+--
+-- Almost every field is optional on purpose. An asset is entered the day it
+-- arrives, from a delivery note that says little more than a name and a model;
+-- the serial number, the location and the calibration dates follow as they
+-- become known. Demanding them up front just means they are invented.
+CREATE TABLE IF NOT EXISTS assets (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  asset_no        TEXT NOT NULL UNIQUE,
+  name            TEXT NOT NULL,
+  category        TEXT,
+  make            TEXT,
+  model           TEXT,
+  serial_no       TEXT,
+  quantity        INTEGER NOT NULL DEFAULT 1,
+  location        TEXT,
+  department_id   INTEGER REFERENCES departments(id),
+  status          TEXT NOT NULL DEFAULT 'in_use'
+                    CHECK (status IN ('in_use','standby','under_repair','condemned','disposed')),
+  -- Where it came from.
+  supplier        TEXT,
+  po_no           TEXT,
+  invoice_no      TEXT,
+  purchase_date   TEXT,
+  unit_cost       REAL,
+  warranty_until  TEXT,
+  amc_until       TEXT,
+  -- Calibration. `calibration_months` is how often it is due; the clinic sets
+  -- the dates themselves as certificates come in.
+  needs_calibration  INTEGER NOT NULL DEFAULT 0,
+  calibration_months INTEGER,
+  last_calibrated    TEXT,
+  calibration_due    TEXT,
+  calibration_by     TEXT,
+  certificate_no     TEXT,
+  notes           TEXT,
+  active          INTEGER NOT NULL DEFAULT 1,
+  created_by      INTEGER REFERENCES users(id),
+  created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at      TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_assets_due ON assets(calibration_due);
+CREATE INDEX IF NOT EXISTS idx_assets_cat ON assets(category);
+
+-- What was done to an asset and when: a calibration, a service, a repair, a
+-- move. Kept as its own log because "when was this last calibrated" is a
+-- question with a history, not a single date — and the certificate that
+-- answers it is a document an inspector asks to see.
+CREATE TABLE IF NOT EXISTS asset_events (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  asset_id    INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+  kind        TEXT NOT NULL
+                CHECK (kind IN ('calibration','service','repair','moved','status','note')),
+  happened_on TEXT NOT NULL,
+  detail      TEXT,
+  done_by     TEXT,
+  reference   TEXT,
+  cost        REAL,
+  next_due    TEXT,
+  created_by  INTEGER REFERENCES users(id),
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_asset_events ON asset_events(asset_id, happened_on);

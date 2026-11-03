@@ -261,6 +261,55 @@ function migrate() {
    * at a glance whose sign-in has never been set up, and when each was last
    * handed out.
    */
+  /*
+   * Letting an owner exist on a database created before the role did.
+   *
+   * `role` carries a CHECK constraint, and SQLite cannot alter one — the table
+   * has to be rebuilt. That is worth doing carefully here, because fifty-odd
+   * tables point at users(id): a patient's visits, a doctor's consultations,
+   * every receipt. So the rebuild runs inside one transaction with foreign
+   * keys suspended, and ends with a foreign_key_check that rolls the whole
+   * thing back if a single reference failed to survive. Either the table comes
+   * out whole or the database is exactly as it was.
+   *
+   * It runs once: after the first pass the constraint names 'owner' and the
+   * guard below sees it and does nothing.
+   */
+  const usersSql = db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'"
+  ).get();
+  if (usersSql && !/'owner'/.test(usersSql.sql)) {
+    const columns = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
+    const rebuilt = usersSql.sql
+      .replace(/CREATE TABLE\s+(?:IF NOT EXISTS\s+)?["`]?users["`]?/i, 'CREATE TABLE users_rebuild')
+      .replace("role IN\n                   ('admin'", "role IN\n                   ('owner','admin'")
+      .replace("role IN ('admin'", "role IN ('owner','admin'");
+
+    if (!/'owner'/.test(rebuilt)) {
+      console.error('[migrate] could not add the owner role — users table left untouched.');
+    } else {
+      const wasOn = db.pragma('foreign_keys', { simple: true });
+      db.pragma('foreign_keys = OFF');
+      try {
+        db.exec('BEGIN');
+        db.exec(rebuilt);
+        const cols = columns.map((c) => `"${c}"`).join(', ');
+        db.exec(`INSERT INTO users_rebuild (${cols}) SELECT ${cols} FROM users`);
+        db.exec('DROP TABLE users');
+        db.exec('ALTER TABLE users_rebuild RENAME TO users');
+        const broken = db.pragma('foreign_key_check');
+        if (broken.length) throw new Error(`${broken.length} reference(s) would be orphaned`);
+        db.exec('COMMIT');
+        console.log('[migrate] users table rebuilt — the owner role is now allowed.');
+      } catch (err) {
+        try { db.exec('ROLLBACK'); } catch { /* already rolled back */ }
+        console.error('[migrate] owner role migration failed, nothing changed:', err.message);
+      } finally {
+        if (wasOn) db.pragma('foreign_keys = ON');
+      }
+    }
+  }
+
   ensureColumn('users', 'password_set_at', 'TEXT');
   ensureColumn('users', 'password_set_by', 'INTEGER REFERENCES users(id)');
   ensureColumn('lab_tests', 'component_of', 'TEXT');
