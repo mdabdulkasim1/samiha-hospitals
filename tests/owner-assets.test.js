@@ -148,6 +148,56 @@ test('the settings refuse what would lock somebody out or mean nothing', async (
   assert.strictEqual((await api('PUT', '/api/access', { hidden: 'everything' }, 'owner')).status, 400);
 });
 
+// ------------------------------------------------- who may put a person on
+/*
+ * Adding staff is how access is granted at all, so it belongs to the owner —
+ * from the moment there is one. Before that the administrator carries on as
+ * before, because a clinic with no owner still has to run, and somebody has
+ * to be able to create the first owner.
+ */
+test('once an owner exists, only the owner adds people', async () => {
+  const mine = await api('POST', '/api/masters/staff',
+    { name: 'Added by the owner', role: 'nurse', password: 'Samiha#2026' }, 'owner');
+  assert.strictEqual(mine.status, 201, JSON.stringify(mine.body));
+
+  const theirs = await api('POST', '/api/masters/staff',
+    { name: 'Added by the admin', role: 'nurse', password: 'Samiha#2026' }, 'admin');
+  assert.strictEqual(theirs.status, 403);
+  assert.match(theirs.body.error, /Only the owner can add people/);
+
+  // Not even another owner: the hand-over is complete.
+  assert.strictEqual((await api('POST', '/api/masters/staff',
+    { name: 'A second owner', role: 'owner', password: 'Samiha#2026' }, 'admin')).status, 403);
+});
+
+test('an administrator cannot take over the owner\'s account', async () => {
+  const staff = (await api('GET', '/api/masters/staff', undefined, 'admin')).body;
+  const owner = staff.find((u) => u.role === 'owner');
+  assert.ok(owner);
+
+  /*
+   * The hole this closes: an administrator who could set the owner's password
+   * could sign in as the owner, and every rule above it would be decoration.
+   */
+  for (const [method, p, body] of [
+    ['POST', `/api/masters/staff/${owner.id}/password`, {}],
+    ['PATCH', `/api/masters/staff/${owner.id}`, { password: 'Hijack#2026' }],
+    ['DELETE', `/api/masters/staff/${owner.id}`, undefined],
+  ]) {
+    const r = await api(method, p, body, 'admin');
+    assert.strictEqual(r.status, 403, `${method} ${p}`);
+    assert.match(r.body.error, /Only the owner/);
+  }
+
+  // The owner's own password still works, which is the point of all three.
+  assert.strictEqual((await api('POST', '/api/auth/login',
+    { username: 'owner@samiha.local', password: 'Samiha#2026' }, null)).status, 200);
+
+  // And the owner may still do all three to anybody else.
+  const other = staff.find((u) => u.role === 'pharmacy');
+  assert.strictEqual((await api('POST', `/api/masters/staff/${other.id}/password`, {}, 'owner')).status, 200);
+});
+
 // --------------------------------------------------------------- the register
 test('the purchase orders are on the register, with the blanks left blank', async () => {
   const { status, body } = await api('GET', '/api/assets?limit=500', undefined, 'admin');

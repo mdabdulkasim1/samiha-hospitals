@@ -7,6 +7,21 @@
   // Which of the three tabs is showing, kept across a refresh of the view.
   let openTab = 'doctors';
 
+  /*
+   * Who is offered the add buttons.
+   *
+   * Putting a person on the system is how access is granted at all, so once
+   * there is an owner it is theirs. Until then the administrator carries on
+   * as before — a clinic that has not set an owner up yet still has to be
+   * able to run, and somebody has to be able to create the owner. The server
+   * enforces the same rule; this only decides whether a button is drawn.
+   */
+  let ownerOnFile = true;
+  const isOwner = () => APP.user && APP.user.role === 'owner';
+  const mayAdd = () => isOwner() || (APP.user && APP.user.role === 'admin' && !ownerOnFile);
+  /** An owner's account is not something an administrator may take over. */
+  const mayTouch = (u) => u.role !== 'owner' || isOwner();
+
   const ROLES = [
     { value: 'doctor', label: 'Doctor — consults, prescribes, orders' },
     { value: 'reception', label: 'Front desk — enquiries, registration, check-in' },
@@ -27,17 +42,22 @@
     async render(el, params) {
       if (params.id) return renderStaffMember(el, Number(params.id));
 
-      APP.actions([
-        { id: 'doctor', label: '+ Add doctor', kind: '', onClick: () => openStaffForm('doctor') },
-        { id: 'staff', label: '+ Add other staff', onClick: () => openStaffForm(null) },
-      ]);
-
       const [staff, departments] = await Promise.all([
         API.get('/api/masters/staff'),
         API.get('/api/masters/departments'),
       ]);
       const doctors = staff.filter((s) => s.role === 'doctor');
       const others = staff.filter((s) => s.role !== 'doctor');
+      // Read before the buttons are drawn: whether an owner exists is what
+      // decides whether an administrator is offered the one they may add.
+      ownerOnFile = staff.some((s) => s.role === 'owner' && s.active);
+
+      APP.actions(mayAdd()
+        ? [
+          { id: 'doctor', label: '+ Add doctor', kind: '', onClick: () => openStaffForm('doctor') },
+          { id: 'staff', label: '+ Add other staff', onClick: () => openStaffForm(null) },
+        ]
+        : []);
 
       el.innerHTML = `
         <div class="grid c4 mb">
@@ -75,7 +95,7 @@
           body.innerHTML = `<div class="card">
             <div class="card-head"><h3>Consulting doctors</h3>
               <span class="muted small">Open one to set OPD sessions and leave</span>
-              ${APP.can(['admin']) ? '<button class="btn sm" id="add-doctor">+ Add doctor</button>' : ''}</div>
+              ${mayAdd() ? '<button class="btn sm" id="add-doctor">+ Add doctor</button>' : ''}</div>
             <div class="card-body tight" id="d-list"></div></div>`;
           const addDoc = body.querySelector('#add-doctor');
           if (addDoc) addDoc.addEventListener('click', () => openStaffForm('doctor'));
@@ -101,7 +121,7 @@
         staff() {
           body.innerHTML = `<div class="card">
             <div class="card-head"><h3>Other staff</h3>
-              ${APP.can(['admin']) ? '<button class="btn sm" id="add-staff">+ Add staff member</button>' : ''}</div>
+              ${mayAdd() ? '<button class="btn sm" id="add-staff">+ Add staff member</button>' : ''}</div>
             <div class="card-body tight" id="o-list"></div></div>`;
           const addStaff = body.querySelector('#add-staff');
           if (addStaff) addStaff.addEventListener('click', () => openStaffForm(null));
@@ -185,13 +205,19 @@
       },
       {
         label: '',
-        render: (u) => `<div class="btn-row nowrap">`
-          + `<button class="btn ghost sm" data-pw="${u.id}">Set password</button>`
-          // Not on your own row: deleting the account you are signed in with is
-          // refused anyway, and offering it is just a button that cannot work.
-          + (u.id === (APP.user && APP.user.id) ? ''
-            : `<button class="btn ghost sm danger" data-del="${u.id}">Delete</button>`)
-          + '</div>',
+        // The owner's own row carries nothing for anybody else. An
+        // administrator who could set the owner's password could sign in as
+        // them, which would undo the whole arrangement — so the server
+        // refuses it, and there is no button here pretending otherwise.
+        render: (u) => (!mayTouch(u)
+          ? '<span class="muted small">the owner\'s own</span>'
+          : `<div class="btn-row nowrap">`
+            + `<button class="btn ghost sm" data-pw="${u.id}">Set password</button>`
+            // Not on your own row: deleting the account you are signed in with
+            // is refused anyway, and offering it is a button that cannot work.
+            + (u.id === (APP.user && APP.user.id) ? ''
+              : `<button class="btn ghost sm danger" data-del="${u.id}">Delete</button>`)
+            + '</div>'),
       },
     ];
   }

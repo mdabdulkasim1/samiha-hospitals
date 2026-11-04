@@ -2,7 +2,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const { db } = require('../db');
-const { wrap, notFound, conflict, badRequest } = require('../lib/http');
+const { wrap, notFound, conflict, badRequest, forbidden } = require('../lib/http');
 const { requireRole, seesPrices, hasFullAccess } = require('../lib/auth');
 const { required, str, num, int, bool } = require('../lib/validate');
 const audit = require('../lib/audit');
@@ -13,6 +13,38 @@ const config = require('../config');
 
 const router = express.Router();
 const adminOnly = requireRole('admin');
+
+/*
+ * Who may put a person on the system, and who may take over an account.
+ *
+ * Both belong to the owner. Adding staff is how access is granted at all, and
+ * an administrator who could also set an owner's password could simply sign
+ * in as them — which would make the whole arrangement decoration.
+ *
+ * It takes effect the moment there is an owner, and not before. A clinic that
+ * has not set one up yet carries on as it always has, with the administrator
+ * adding people — otherwise the rule would strand every install that has been
+ * running without an owner, including the one that has to create the first
+ * one. The hand-over happens by itself: make the owner, and from that moment
+ * adding staff is theirs.
+ */
+const isOwner = (user) => Boolean(user) && user.role === 'owner';
+const ownerExists = () =>
+  Boolean(db.prepare("SELECT 1 FROM users WHERE role = 'owner' AND active = 1").get());
+
+function mayAddStaff(req, _res, next) {
+  if (isOwner(req.user)) return next();
+  if (req.user && req.user.role === 'admin' && !ownerExists()) return next();
+  next(forbidden('Only the owner can add people to the system.'));
+}
+
+/** An owner's account is not something an administrator may take over. */
+function guardOwnerTarget(req, targetId) {
+  const target = db.prepare('SELECT role FROM users WHERE id = ?').get(targetId);
+  if (target && target.role === 'owner' && !isOwner(req.user)) {
+    throw forbidden('Only the owner can change the owner\'s account.');
+  }
+}
 
 // ------------------------------------------------------------- departments
 router.get('/departments', wrap((req, res) => {
@@ -91,7 +123,7 @@ router.get('/staff/:id', requireRole('admin', 'reception'), wrap((req, res) => {
   res.json(user);
 }));
 
-router.post('/staff', adminOnly, wrap((req, res) => {
+router.post('/staff', mayAddStaff, wrap((req, res) => {
   required(req.body, ['name', 'role', 'password']);
   const staffCode = str(req.body.staffCode) || generate('staff');
   const info = db.prepare(
@@ -127,6 +159,7 @@ router.patch('/staff/:id', adminOnly, wrap((req, res) => {
   const id = int(req.params.id);
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
   if (!user) throw notFound('Staff member not found');
+  guardOwnerTarget(req, id);
   db.prepare(
     `UPDATE users SET name = COALESCE(?, name), email = COALESCE(?, email), phone = COALESCE(?, phone),
             department_id = COALESCE(?, department_id), active = COALESCE(?, active)
@@ -509,6 +542,7 @@ router.post('/staff/:id/password', adminOnly, wrap((req, res) => {
   const id = int(req.params.id);
   const user = db.prepare('SELECT id, name, staff_code, email, role FROM users WHERE id = ?').get(id);
   if (!user) throw notFound('Staff member not found');
+  guardOwnerTarget(req, id);
 
   /*
    * Made of unambiguous characters when we make it: this gets read off a
@@ -604,6 +638,7 @@ router.delete('/staff/:id', adminOnly, wrap((req, res) => {
   const id = int(req.params.id);
   const user = db.prepare('SELECT id, name, staff_code, role, active FROM users WHERE id = ?').get(id);
   if (!user) throw notFound('Staff member not found');
+  guardOwnerTarget(req, id);
 
   // Signing yourself out of existence mid-click.
   if (id === req.user.id) {
