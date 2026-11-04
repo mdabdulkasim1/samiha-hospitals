@@ -65,13 +65,27 @@ const priceOf = (code) => {
 
 test('a fresh install arrives at exactly the rates on the marked-up sheet', () => {
   /*
-   * The seed above ran the September card and then the November revision.
-   * Every line of the sheet is checked, including the ones that did not
-   * move — a revision that quietly drags an untouched price along with it is
-   * the failure nobody notices until a patient is charged for it.
+   * The seed above ran the September card and then both November revisions.
+   * Every line the owner wrote a figure against is checked here — a
+   * revision that quietly drags a marked price somewhere else is the failure
+   * nobody notices until a patient is charged for it.
+   *
+   * The lines left blank are deliberately not checked against the sheet:
+   * the second revision priced some of them from the referral lab's trade
+   * list, which is what it was for. The test above holds those.
    */
-  for (const [code, [, want]] of Object.entries(SHEET)) {
+  const marked = Object.entries(SHEET).filter(([, [was, now]]) => was !== now);
+  assert.strictEqual(marked.length, 33, 'the owner marked 33 lines');
+  for (const [code, [, want]] of marked) {
     assert.strictEqual(priceOf(code), want, `${code} should be ${want}`);
+  }
+
+  /*
+   * And the four the trade list could not settle keep exactly what the sheet
+   * left them at, rather than being quietly assigned one of the options.
+   */
+  for (const code of ['WIDAL', 'MP', 'PAP', 'LFT-ADV']) {
+    assert.strictEqual(priceOf(code), SHEET[code][1], `${code} was not guessed at`);
   }
 });
 
@@ -156,14 +170,75 @@ test('repricing a test does not disturb bills already raised', () => {
   db.prepare('UPDATE lab_tests SET price = 200 WHERE code = ?').run('CBC');
 });
 
+/*
+ * The second November revision: the tests the sheet left unmarked, priced at
+ * twice the referral laboratory's trade rate.
+ *
+ * The instruction that came with it was "whatever was already updated, keep
+ * the same rate" — so the thing worth testing is not the arithmetic but the
+ * restraint. Doubling the trade rate would have moved almost every price the
+ * owner had just set by hand, and in both directions: the sheet puts TSH at
+ * 150 where twice trade is 120, and Vitamin D at 800 where twice trade is
+ * 1200. A revision that quietly overwrote those would have undone the
+ * owner's own decisions a day after they were made.
+ */
+const X2 = {
+  CL: 200, NA: 200, PREG: 500, PSA: 500, TESTO: 600, URIC: 160, SEMEN: 300,
+};
+const UNTOUCHED = {
+  // Marked on the sheet, so twice-trade does not apply however much it differs.
+  TSH: 150, VITD: 800, CBC: 200, HBA1C: 300, URINE: 50, CREAT: 70,
+  // Nothing on the B2B list corresponds to these at all.
+  ESR: 35, 'RFT-GFR': 250,
+  // The B2B list offers a choice here, so the clinic has to say which it sells.
+  WIDAL: 180, MP: 200, PAP: 450, 'LFT-ADV': 350,
+};
+
+test('the tests the sheet left unmarked are priced at twice the trade rate', () => {
+  for (const [code, want] of Object.entries(X2)) {
+    assert.strictEqual(priceOf(code), want, `${code} should be ${want}`);
+  }
+});
+
+test('a price the owner set last week is not overwritten by a trade list', () => {
+  for (const [code, want] of Object.entries(UNTOUCHED)) {
+    assert.strictEqual(priceOf(code), want,
+      `${code} should still be ${want} — the sheet or the absence of a match decides it`);
+  }
+
+  /*
+   * Spelled out for the two that would have moved furthest, because this is
+   * the whole point of the restraint and a future edit could quietly lose it.
+   */
+  const rev = rates.REVISIONS.find((r) => r.key === 'tariff.2026_11_sendout_x2');
+  const codes = rev.rates.map(([c]) => c);
+  assert.ok(!codes.includes('TSH'), 'TSH is not in the twice-trade list (would be 120, is 150)');
+  assert.ok(!codes.includes('VITD'), 'Vitamin D is not in it either (would be 1200, is 800)');
+});
+
+test('a match that only looks right is left out', () => {
+  /*
+   * Matching on names alone put "SERUM BILIRUBIN" onto the urine bilirubin
+   * analyte and "Total Protein" onto urine protein — both blood tests
+   * mapped onto a dipstick reading. Nothing in the revision rests on a
+   * matched name: every line names the B2B row it came from in a comment,
+   * and anything that needed judgement was left for the clinic.
+   */
+  const rev = rates.REVISIONS.find((r) => r.key === 'tariff.2026_11_sendout_x2');
+  assert.strictEqual(rev.rates.length, Object.keys(X2).length,
+    'only the exact matches are in the list');
+  for (const [, was, now] of rev.rates) {
+    assert.ok(was > 0 && now > 0, 'every line carries both figures');
+  }
+});
+
 test('the revision touches diagnostics only, and leaves the rest of the card alone', () => {
   /*
    * The sheet was two pages of a seven-page list. Everything not on those
    * pages — consultations, procedures, the other four pages of diagnostics —
    * must be exactly where the September card left it.
    */
-  const rev = rates.REVISIONS.find((r) => r.key === 'tariff.2026_11_diagnostics');
-  const touched = new Set(rev.rates.map(([code]) => code));
+  const touched = new Set(rates.REVISIONS.flatMap((r) => r.rates.map(([code]) => code)));
 
   for (const [code, was] of rates.TARIFF.map(([c, , now]) => [c, now])) {
     if (touched.has(code)) continue;

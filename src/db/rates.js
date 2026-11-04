@@ -461,6 +461,30 @@ const REVISIONS = [
       ['UPREG',     100,    50],  // Urine pregnancy test
     ],
   },
+  {
+    key: 'tariff.2026_11_sendout_x2',
+    dated: '2026-11',
+    note: 'The tests the November sheet left unmarked, priced from the referral '
+      + "laboratory's B2B list at twice the trade rate, as the owner instructed. "
+      + 'Only exact matches are here; where the B2B list offers a choice of '
+      + 'method or panel the clinic has to say which it sells, and those are '
+      + 'left where they are rather than guessed at.',
+    rates: [
+      // code          was    now   <- B2B rate x 2
+      ['CL',          120,   200],  // Chloride, serum        <- Chloride 100
+      ['NA',          120,   200],  // Sodium, serum          <- Sodium 100
+      ['PREG',        450,   500],  // Pregnancy (beta hCG)   <- Beta-HCG (Vidas) 250
+      ['PSA',         550,   500],  // PSA, total             <- Total PSA 250
+      ['TESTO',       550,   600],  // Testosterone, total    <- Total Testosterone 300
+      ['URIC',         90,   160],  // Serum uric acid        <- Uric Acid 80
+      /*
+       * Semen analysis lands on exactly what it already charges — 150 x 2 is
+       * the 300 on the card. Listed so the match is on the record, and
+       * reported as "already there" rather than as a change.
+       */
+      ['SEMEN',       300,   300],  // Semen analysis         <- Semen analysis 150
+    ],
+  },
 ];
 
 /**
