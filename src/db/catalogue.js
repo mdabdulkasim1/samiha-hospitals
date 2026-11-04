@@ -342,6 +342,14 @@ function sync({ quiet = false } = {}) {
   const tariff = rates.apply(db, { revalue: !published });
 
   /*
+   * Then any revision the clinic has published since that card, each applied
+   * once and never again. A fresh install runs the card and then the
+   * revisions in order, arriving at the same prices a clinic that has been
+   * open all along is charging.
+   */
+  const revisions = rates.applyRevisions(db);
+
+  /*
    * Now that every test and every panel parameter is on the catalogue, give
    * the ones whose range is written out a pair of numbers to be flagged
    * against. Here rather than with the migrations, which run before any of
@@ -384,6 +392,23 @@ function sync({ quiet = false } = {}) {
     tests: db.prepare('SELECT COUNT(*) AS c FROM lab_tests').get().c - before.tests,
   };
 
+  /*
+   * A revision is reported line by line rather than as a count. A price
+   * change is the clinic's own decision arriving in its system, and the
+   * boot log is where somebody looks when the front desk says the bill
+   * printed a figure they did not expect.
+   */
+  if (!quiet) {
+    for (const rev of revisions) {
+      console.log(`[rates] revision ${rev.key}: ${rev.updated} moved, `
+        + `${rev.already} already there, ${rev.kept.length} left as the clinic set them.`);
+      for (const k of rev.kept) {
+        console.log(`[rates]   kept ${k.code} at ${k.at} — the revision says ${k.wanted}`);
+      }
+      for (const m of rev.missing) console.log(`[rates]   no such code: ${m}`);
+    }
+  }
+
   if (!quiet && (added.departments || added.services || added.tests
       || tariff.updated || tariff.kept.length || fees)) {
     const bits = [];
@@ -398,7 +423,7 @@ function sync({ quiet = false } = {}) {
       console.log(`[catalogue]   kept ${k.code} at ${k.at} — the tariff says ${k.wanted}`);
     }
   }
-  return { added, tariff };
+  return { added, tariff, revisions };
 }
 
 module.exports = { sync };

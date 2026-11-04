@@ -350,11 +350,33 @@ function apply(db, { revalue = true } = {}) {
   const setService = db.prepare('UPDATE services SET price = ? WHERE id = ?');
   const setTest = db.prepare('UPDATE lab_tests SET price = ? WHERE id = ?');
 
-  const report = { updated: 0, already: 0, kept: [], missing: [] };
+  const report = { updated: 0, already: 0, kept: [], missing: [], superseded: [] };
   const near = (a, b) => Math.abs(Number(a) - Number(b)) < 0.005;
+
+  /*
+   * A price a later revision has already decided is not this card's to move.
+   *
+   * Without this the three-way merge has a blind spot that bites exactly
+   * once and is very hard to see: if a revision's new price happens to equal
+   * the figure this card was written against, re-publishing the card reads
+   * that as "untouched since publication" and quietly reverts it. Serum
+   * electrolytes is the live example — the September card moved it 450 to
+   * 300, and the November revision put it back to 450, which the old card
+   * would then read as its own starting figure.
+   *
+   * So the newest published decision about a price wins, and an older card
+   * cannot reach back over it.
+   */
+  const owned = new Set();
+  const seen = db.prepare('SELECT value FROM settings WHERE key = ?');
+  for (const rev of REVISIONS) {
+    if (!seen.get(rev.key)) continue;
+    for (const [code] of rev.rates) owned.add(code);
+  }
 
   db.transaction(() => {
     for (const [code, was, now] of TARIFF) {
+      if (owned.has(code)) { report.superseded.push(code); continue; }
       const rows = find.all(code, code);
       if (!rows.length) { report.missing.push(code); continue; }
       for (const row of rows) {
@@ -377,4 +399,110 @@ function apply(db, { revalue = true } = {}) {
   return report;
 }
 
-module.exports = { TARIFF, apply };
+/* =========================================================== revisions
+ *
+ * A rate card is published once and then revised. The September card above
+ * stays exactly as it was published, because it is the record of what the
+ * clinic was charging; a revision is a separate, dated list applied on top
+ * of it.
+ *
+ * Each revision is the same three-way merge and for the same reason. A rate
+ * moves only if it is still standing at the figure the revision was written
+ * against — so a price an administrator has since set by hand is left where
+ * they put it and reported as kept, never silently overwritten by a sheet
+ * that was marked up before they changed it.
+ *
+ * Only the lines that changed are listed. A test the owner left blank on the
+ * sheet keeps what it has, and is not restated here as moving from its own
+ * price to its own price — a no-op in a tariff is a line somebody will later
+ * read as a decision.
+ */
+const REVISIONS = [
+  {
+    key: 'tariff.2026_11_diagnostics',
+    dated: '2026-11',
+    note: 'Diagnostic price revision marked up by the owner on the printed list '
+      + '(pages 1-2: blood tests, urine and stool). ECG and heart left unchanged.',
+    rates: [
+      // ---- Blood tests
+      ['HCV',       400,   200],  // Anti-HCV (screening)
+      ['BLGRP',      90,    30],  // Blood group & Rh typing
+      ['UREA',       55,    70],  // Blood urea
+      ['CRP',       225,   250],  // C-Reactive Protein
+      ['CBC',       110,   200],  // Complete Blood Count
+      ['DENGUE',    700,  1200],  // Dengue NS1 / IgM / IgG
+      ['FBS',        60,    30],  // Fasting Blood Sugar
+      ['HBA1C',     400,   300],  // Glycated Haemoglobin (HbA1c)
+      ['HBSAG',     250,   200],  // HBsAg (screening)
+      ['HIV',       300,   200],  // HIV I & II (screening)
+      ['HB',         60,    50],  // Haemoglobin
+      ['IRONPROF',  650,   500],  // Iron Deficiency Profile
+      ['LIPID',     145,   300],  // Lipid Profile
+      ['LFT',       200,   350],  // Liver Function Test
+      ['PLT',        80,   100],  // Platelet count
+      ['PPBS',       60,    30],  // Post-Prandial Blood Sugar
+      ['PT',        300,   250],  // Prothrombin time / INR
+      ['RBS',        50,    30],  // Random Blood Sugar
+      ['RFT',       135,   200],  // Renal Function Test
+      ['CALC',       90,   200],  // Serum calcium
+      ['CREAT',     110,    70],  // Serum creatinine
+      ['ELEC',      300,   450],  // Serum electrolytes
+      ['TSH',        90,   150],  // Thyroid Stimulating Hormone
+      ['THYP',      135,   350],  // Thyroid profile (T3 T4 TSH)
+      ['VDRL',      150,   250],  // VDRL / RPR (syphilis screening)
+      ['VITB12',    675,   500],  // Vitamin B12
+      ['VITD',      720,   800],  // Vitamin D (25-OH)
+      // ---- Urine & stool
+      ['SPUTUM',    150,   200],  // Sputum AFB
+      ['STOCC',     150,   250],  // Stool occult blood
+      ['STOOL',     120,   200],  // Stool routine
+      ['URINE',      90,    50],  // Urine Routine
+      ['URCULT',    450,   250],  // Urine culture & sensitivity
+      ['UPREG',     100,    50],  // Urine pregnancy test
+    ],
+  },
+];
+
+/**
+ * Apply any revision this database has not seen.
+ *
+ * Unlike the card itself, a revision is never re-run: once its key is in
+ * settings it is history, and re-applying it would undo whatever the clinic
+ * has decided since. Each returns its own report so the boot log can say
+ * what moved and, more usefully, what it left alone.
+ */
+function applyRevisions(db) {
+  const seen = db.prepare('SELECT value FROM settings WHERE key = ?');
+  const mark = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
+  const find = db.prepare(
+    `SELECT 'services' AS tbl, id, price FROM services WHERE code = ?
+     UNION ALL
+     SELECT 'lab_tests', id, price FROM lab_tests WHERE code = ?`
+  );
+  const setService = db.prepare('UPDATE services SET price = ? WHERE id = ?');
+  const setTest = db.prepare('UPDATE lab_tests SET price = ? WHERE id = ?');
+  const near = (a, b) => Math.abs(Number(a) - Number(b)) < 0.005;
+
+  const done = [];
+  for (const rev of REVISIONS) {
+    if (seen.get(rev.key)) continue;
+    const report = { key: rev.key, dated: rev.dated, updated: 0, already: 0, kept: [], missing: [] };
+    db.transaction(() => {
+      for (const [code, was, now] of rev.rates) {
+        const rows = find.all(code, code);
+        if (!rows.length) { report.missing.push(code); continue; }
+        for (const row of rows) {
+          if (near(row.price, now)) { report.already += 1; continue; }
+          if (!near(row.price, was)) { report.kept.push({ code, at: row.price, wanted: now }); continue; }
+          (row.tbl === 'services' ? setService : setTest).run(now, row.id);
+          report.updated += 1;
+        }
+      }
+      mark.run(rev.key, new Date().toISOString());
+    })();
+    done.push(report);
+  }
+  return done;
+}
+
+module.exports = { TARIFF, REVISIONS, apply, applyRevisions };

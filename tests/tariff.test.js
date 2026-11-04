@@ -61,8 +61,14 @@ test('seeding leaves nothing in the catalogue unpriced', () => {
   // Spot-checks against the printed card, so a mangled import is caught.
   assert.strictEqual(priceOf('CONS-NEW'), 150);
   assert.strictEqual(priceOf('CONS-FU'), 100);
-  assert.strictEqual(priceOf('CBC'), 110);
   assert.strictEqual(priceOf('XR-CHEST'), 225);
+  /*
+   * CBC is checked at 200, not at the 110 the September card set: the
+   * November revision moved it. The spot-check follows the latest published
+   * decision rather than the card, because that is what the clinic charges.
+   * tests/rate-revision.test.js checks the revision line by line.
+   */
+  assert.strictEqual(priceOf('CBC'), 200);
   // A health-check package is advertised at a fixed price and carries it from
   // the catalogue rather than the card.
   assert.strictEqual(priceOf('PKG-LIFESTYLE'), 1499);
@@ -76,10 +82,36 @@ test('a rate the clinic set by hand survives the tariff being applied again', ()
   // Re-publishing the card revalues what is untouched and keeps what is not.
   const report = apply(db, { revalue: true });
   assert.strictEqual(priceOf('CBC'), 999, 'the clinic\'s own figure stands');
-  assert.ok(report.kept.some((k) => k.code === 'CBC'), 'and is reported as kept, not lost');
   assert.strictEqual(report.updated, 0, 'nothing else moved — it was all already right');
 
+  /*
+   * CBC is now reported as superseded rather than kept: a later revision
+   * owns that price, so this card does not get as far as comparing it. Both
+   * outcomes mean "left alone", and the distinction is the point — one is
+   * the clinic having edited a price, the other is a newer decision
+   * outranking an older card.
+   */
+  assert.ok(report.superseded.includes('CBC'));
+  assert.ok(!report.kept.some((k) => k.code === 'CBC'));
+
   db.prepare('UPDATE lab_tests SET price = ? WHERE code = ?').run(before, 'CBC');
+});
+
+test('an old card cannot undo a newer revision, even where the figures collide', () => {
+  /*
+   * Serum electrolytes is the case that would have slipped through. The
+   * September card moved it from 450 to 300; the November revision put it
+   * back to 450. Re-publishing the old card would read 450 as its own
+   * starting figure and revert it to 300 — a price change silently undone
+   * by a card nobody meant to re-run.
+   */
+  assert.strictEqual(priceOf('ELEC'), 450, 'the November figure');
+  const sept = TARIFF.find(([code]) => code === 'ELEC');
+  assert.strictEqual(sept[1], 450, 'which is exactly what the old card was written against');
+
+  const report = apply(db, { revalue: true });
+  assert.strictEqual(priceOf('ELEC'), 450, 'and it stays there');
+  assert.ok(report.superseded.includes('ELEC'));
 });
 
 test('once published, the card only fills in what has no rate at all', () => {
