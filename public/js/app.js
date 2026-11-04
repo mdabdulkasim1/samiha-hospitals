@@ -3,6 +3,17 @@
   'use strict';
 
   const NAV = [
+    /*
+     * The owner's own board, and it sits first because it is the only screen
+     * the owner opens before anything else. Like Screen access it carries
+     * ownerOnly rather than a role list: APP.can waves an administrator
+     * through every role gate, and an administrator must not see this one.
+     * The whole group disappears for everybody else, so nobody is shown a
+     * door they cannot open.
+     */
+    { group: 'Owner', items: [
+      { id: 'owner',       label: "Owner's board",    icon: '◈', roles: [], ownerOnly: true },
+    ]},
     { group: 'Front office', items: [
       { id: 'dashboard',   label: 'Dashboard',        icon: '▦', roles: '*' },
       { id: 'queue',       label: 'Patient Queue',    icon: '⛭', roles: '*' },
@@ -544,7 +555,9 @@
     const navItem = NAV.flatMap((g) => g.items).find((i) => i.id === route);
     if (navItem && navItem.ownerOnly && (!APP.user || APP.user.role !== 'owner')) {
       document.getElementById('view').innerHTML =
-        `<div class="alert danger">${UI.esc(navItem.label)} is the owner's to set.</div>`;
+        `<div class="alert danger">${UI.esc(navItem.label)} is the owner's alone.
+           The server refuses it to every other role, including an
+           administrator, so there is nothing to be let into here.</div>`;
       return;
     }
     if (navItem && !navItem.ownerOnly && !APP.can(navItem.roles)) {

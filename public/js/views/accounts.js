@@ -28,9 +28,8 @@
    * and 25 under tritan, and the legend and the table carry the identity
    * besides, so nothing rests on colour alone.
    */
-  const IN_HUE = '#1C6FB5';
-  const OUT_HUE = '#A8500C';
 
+  const PERIOD = { day: 'day', week: 'week', month: 'month' };
   const money = (n) => UI.money(Number(n) || 0);
   const isEntry = () => APP.can(ENTRY);
   const isOverview = () => APP.can(OVERVIEW);
@@ -279,14 +278,17 @@
             <input type="date" id="ov-to" value="${d.to}" style="max-width:160px">
           </div>
           <div class="card-body">
-            ${legend([['Money in', IN_HUE], ['Money out', OUT_HUE]])}
-            ${pairedColumns(d.points, by)}
+            ${CHARTS.pairedColumns(d.points, by)}
           </div>
         </div>
 
         <div class="card mb"><div class="card-head"><h3>What was left each ${PERIOD[by]}</h3>
           <span class="muted small">Above the line is a surplus, below it a shortfall</span></div>
-          <div class="card-body">${netColumns(d.points, by)}</div></div>
+          <div class="card-body">${CHARTS.divergingColumns(d.points, by, {
+            label: 'Left over', tip: (p) => [
+              [p.net < 0 ? 'Shortfall' : 'Surplus', money(p.net)],
+              ['Money in', money(p.income)], ['Money out', money(p.expense)]],
+          })}</div></div>
 
         <div class="grid c2">
           <div class="card"><div class="card-head"><h3>Where the money went</h3>
@@ -312,7 +314,7 @@
         draw();
       }));
       ['#ov-from', '#ov-to'].forEach((s) => body.querySelector(s).addEventListener('change', draw));
-      wireChartHovers(body);
+      CHARTS.wireHovers(body);
     };
 
     await draw();
@@ -320,158 +322,15 @@
 
   // ------------------------------------------------------------------- charts
   /*
-   * A fixed canvas, scaled as a whole rather than stretched.
-   *
-   * Stretching an SVG to its container (preserveAspectRatio="none") distorts
-   * everything in it — a 22-unit column becomes an 80px slab when there are
-   * four of them, and the labels come out wide and wrong with it. A constant
-   * viewBox scaled uniformly keeps a column a column: thin, capped, with the
-   * rest of its band left as air.
+   * The drawing lives in public/js/charts.js, shared with the owner's board
+   * so a column means the same thing on both and there is one place to fix
+   * when it does not. What stays here is the one table that belongs to this
+   * screen: the same figures as rows, so no value is reachable only by
+   * hovering over a chart.
    */
-  const CHART = { w: 1200, h: 190, pad: 26, gap: 2, maxBar: 22 };
-
-  /** A tick scale that lands on round numbers, and reads 1K rather than 1000. */
-  function ticks(max) {
-    if (max <= 0) return { top: 1, marks: [0, 1] };
-    const raw = max / 4;
-    const mag = 10 ** Math.floor(Math.log10(raw));
-    const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => s >= raw) || mag * 10;
-    const top = Math.ceil(max / step) * step;
-    const marks = [];
-    for (let v = 0; v <= top + 0.0001; v += step) marks.push(v);
-    return { top, marks };
-  }
-
-  const compact = (n) => (Math.abs(n) >= 1e5 ? `${Math.round(n / 1e3)}K`
-    : Math.abs(n) >= 1e3 ? `${Math.round(n / 100) / 10}K` : String(Math.round(n)));
-
-  const PERIOD = { day: 'day', week: 'week', month: 'month' };
-  const bucketLabel = (at, by) => {
-    if (by === 'week') return `w/c ${UI.dateShort(at)}`;
-    if (by === 'month') return new Date(`${at}T00:00:00`)
-      .toLocaleDateString('en-GB', { month: 'short', year: '2-digit' });
-    return UI.dateShort(at);
-  };
-
-  function legend(pairs) {
-    return `<div class="chart-legend">${pairs.map(([label, hue]) =>
-      `<span><i style="background:${hue}"></i>${UI.esc(label)}</span>`).join('')}</div>`;
-  }
-
-  /**
-   * Money in against money out, one pair of columns per day or week.
-   *
-   * Two series on one scale, which is the only honest way to put them side by
-   * side: a second y-axis would let any pair of numbers be drawn as whatever
-   * story the axes were chosen to tell. They are both rupees, so they share
-   * the axis and the comparison is the reader's to make.
-   *
-   * Labelled sparingly — the best day and the worst — because a number on
-   * every column is noise nobody reads. The rest are on hover and in the
-   * table underneath, so no value is only reachable by pointing at it.
-   */
-  function pairedColumns(points, by) {
-    if (!points.length) return UI.empty('Nothing moved in this period.', '📊');
-    const { w, h, pad, gap, maxBar } = CHART;
-    const { top, marks } = ticks(Math.max(...points.map((p) => Math.max(p.income, p.expense)), 0));
-    const band = w / points.length;
-    const bar = Math.min(maxBar, Math.max(6, (band - gap - 10) / 2));
-    const y = (v) => (h - pad) - (v / top) * (h - pad - 10);
-
-    const peakIn = points.reduce((a, p) => (p.income > a.income ? p : a), points[0]);
-    const peakOut = points.reduce((a, p) => (p.expense > a.expense ? p : a), points[0]);
-
-    const column = (p, i, value, hue, side) => {
-      if (!(value > 0)) return '';
-      const x = i * band + band / 2 + (side === 'left' ? -(bar + gap / 2) : gap / 2);
-      const top_ = y(value);
-      // Rounded at the data end, square on the baseline: a column grows from
-      // the axis and should not look detached from it.
-      const r = Math.min(4, (h - pad - top_) / 2);
-      return `<path d="M${x} ${h - pad} L${x} ${top_ + r} Q${x} ${top_} ${x + r} ${top_}
-        L${x + bar - r} ${top_} Q${x + bar} ${top_} ${x + bar} ${top_ + r} L${x + bar} ${h - pad} Z"
-        fill="${hue}"/>`;
-    };
-
-    const labelFor = (p, i, value, side, hue) => {
-      if (!(value > 0)) return '';
-      const x = i * band + band / 2 + (side === 'left' ? -(bar / 2 + gap / 2) : bar / 2 + gap / 2);
-      return `<text x="${x}" y="${y(value) - 6}" class="c-tip-label" text-anchor="middle">${
-        UI.esc(compact(value))}</text>`;
-    };
-
-    return `<div class="chart-wrap"><svg viewBox="0 0 ${w} ${h}" class="chart" preserveAspectRatio="xMidYMid meet"
-        role="img" aria-label="Money in against money out, ${PERIOD[by]} by ${PERIOD[by]}">
-      ${marks.map((m) => `<line x1="0" x2="${w}" y1="${y(m)}" y2="${y(m)}" class="c-grid"/>`).join('')}
-      ${points.map((p, i) => column(p, i, p.income, IN_HUE, 'left')).join('')}
-      ${points.map((p, i) => column(p, i, p.expense, OUT_HUE, 'right')).join('')}
-      ${labelFor(peakIn, points.indexOf(peakIn), peakIn.income, 'left', IN_HUE)}
-      ${labelFor(peakOut, points.indexOf(peakOut), peakOut.expense, 'right', OUT_HUE)}
-      ${points.map((p, i) => `<rect x="${i * band}" y="0" width="${band}" height="${h - pad}"
-          class="c-hit" tabindex="0" data-tip="${UI.esc(JSON.stringify({
-            at: bucketLabel(p.at, by),
-            rows: [['Money in', money(p.income)], ['Money out', money(p.expense)],
-                   [p.net < 0 ? 'Shortfall' : 'Surplus', money(p.net)]],
-          }))}"/>`).join('')}
-    </svg>
-    <div class="chart-axis" style="--n:${points.length}">${points.map((p, i) =>
-      `<span>${points.length > 16 && i % 2 ? '' : UI.esc(bucketLabel(p.at, by))}</span>`).join('')}</div>
-    <div class="chart-ticks">${marks.slice().reverse().map((m) =>
-      `<span style="top:${y(m) / h * 100}%">${UI.esc(compact(m))}</span>`).join('')}</div>
-    </div>`;
-  }
-
-  /** What was left: above the line a surplus, below it a shortfall. */
-  function netColumns(points, by) {
-    if (!points.length) return UI.empty('Nothing moved in this period.', '📊');
-    const h = 150;
-    const pad = 24;
-    const w = CHART.w;
-    const peak = Math.max(...points.map((p) => Math.abs(p.net)), 1);
-    const { top } = ticks(peak);
-    const band = w / points.length;
-    const bar = Math.min(CHART.maxBar, Math.max(6, band - 12));
-    const zero = (h - pad) / 2 + 4;
-    const y = (v) => zero - (v / top) * (zero - 8);
-    // A tick above and below the line, so the size of a shortfall can be read
-    // off the chart rather than only out of the tooltip.
-    const netTicks = [top, 0, -top];
-
-    return `<div class="chart-wrap"><svg viewBox="0 0 ${w} ${h}" class="chart" preserveAspectRatio="xMidYMid meet"
-        role="img" aria-label="What was left each ${PERIOD[by]}">
-      <line x1="0" x2="${w}" y1="${zero}" y2="${zero}" class="c-zero"/>
-      ${points.map((p, i) => {
-        if (!p.net) return '';
-        const x = i * band + (band - bar) / 2;
-        const up = p.net > 0;
-        const edge = y(p.net);
-        const r = Math.min(4, Math.abs(edge - zero) / 2);
-        return up
-          ? `<path d="M${x} ${zero} L${x} ${edge + r} Q${x} ${edge} ${x + r} ${edge}
-               L${x + bar - r} ${edge} Q${x + bar} ${edge} ${x + bar} ${edge + r} L${x + bar} ${zero} Z"
-               fill="${IN_HUE}"/>`
-          : `<path d="M${x} ${zero} L${x} ${edge - r} Q${x} ${edge} ${x + r} ${edge}
-               L${x + bar - r} ${edge} Q${x + bar} ${edge} ${x + bar} ${edge - r} L${x + bar} ${zero} Z"
-               fill="${OUT_HUE}"/>`;
-      }).join('')}
-      ${points.map((p, i) => `<rect x="${i * band}" y="0" width="${band}" height="${h - pad}"
-          class="c-hit" tabindex="0" data-tip="${UI.esc(JSON.stringify({
-            at: bucketLabel(p.at, by),
-            rows: [[p.net < 0 ? 'Shortfall' : 'Surplus', money(p.net)],
-                   ['Money in', money(p.income)], ['Money out', money(p.expense)]],
-          }))}"/>`).join('')}
-    </svg>
-    <div class="chart-axis" style="--n:${points.length}">${points.map((p, i) =>
-      `<span>${points.length > 16 && i % 2 ? '' : UI.esc(bucketLabel(p.at, by))}</span>`).join('')}</div>
-    <div class="chart-ticks">${netTicks.map((m) =>
-      `<span style="top:${y(m) / h * 100}%">${UI.esc(m > 0 ? `+${compact(m)}` : compact(m))}</span>`).join('')}</div>
-    </div>`;
-  }
-
-  /** Everything the charts show, as rows — so no figure is reachable only by hovering. */
   const flowTable = (points, by) => UI.table([
     { label: { week: 'Week beginning', month: 'Month', day: 'Date' }[by],
-      render: (p) => UI.esc(by === 'month' ? bucketLabel(p.at, by) : UI.date(p.at)) },
+      render: (p) => UI.esc(by === 'month' ? CHARTS.bucketLabel(p.at, by) : UI.date(p.at)) },
     { label: 'Billed to patients', num: true, render: (p) => money(p.billed) },
     { label: 'Pharmacy counter', num: true, render: (p) => money(p.counter) },
     { label: 'Other income', num: true, render: (p) => money(p.otherIncome) },
@@ -481,57 +340,4 @@
       p.net < 0 ? 'var(--danger)' : 'var(--ok)'}">${money(p.net)}</b>` },
   ], points.slice().reverse(), { emptyText: 'Nothing in this period.' });
 
-  /*
-   * The hover layer. Every column answers for its whole bucket rather than for
-   * the one series the pointer happens to be over — somebody comparing two
-   * days wants both numbers at once — and the hit area is the full band, not
-   * the painted pixels, so the figure does not depend on aim. Keyboard focus
-   * shows the same thing.
-   */
-  function wireChartHovers(scope) {
-    let tip = document.getElementById('chart-tip');
-    if (!tip) {
-      tip = document.createElement('div');
-      tip.id = 'chart-tip';
-      tip.className = 'chart-tip';
-      tip.hidden = true;
-      document.body.appendChild(tip);
-    }
-
-    const show = (target, x, y) => {
-      let data;
-      try { data = JSON.parse(target.dataset.tip); } catch { return; }
-      tip.textContent = '';
-      const head = document.createElement('div');
-      head.className = 'tip-head';
-      // The labels come back from the server; they go in as text, never markup.
-      head.textContent = data.at;
-      tip.appendChild(head);
-      for (const [label, value] of data.rows) {
-        const row = document.createElement('div');
-        row.className = 'tip-row';
-        const v = document.createElement('b');
-        v.textContent = value;
-        const l = document.createElement('span');
-        l.textContent = label;
-        row.append(v, l);
-        tip.appendChild(row);
-      }
-      tip.hidden = false;
-      const box = tip.getBoundingClientRect();
-      tip.style.left = `${Math.min(Math.max(x - box.width / 2, 8), window.innerWidth - box.width - 8)}px`;
-      tip.style.top = `${Math.max(y - box.height - 14, 8)}px`;
-    };
-    const hide = () => { tip.hidden = true; };
-
-    scope.querySelectorAll('.c-hit').forEach((hit) => {
-      hit.addEventListener('pointermove', (e) => show(hit, e.clientX, e.clientY));
-      hit.addEventListener('pointerleave', hide);
-      hit.addEventListener('focus', () => {
-        const b = hit.getBoundingClientRect();
-        show(hit, b.left + b.width / 2, b.top);
-      });
-      hit.addEventListener('blur', hide);
-    });
-  }
 })();
