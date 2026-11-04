@@ -26,6 +26,8 @@ const DEPARTMENTS = [
   ['DER', 'Dermatology',        'specialist', 6],
   ['ORT', 'Orthopedics',        'specialist', 7],
   ['ONC', 'Oncology',           'specialist', 8],
+  ['NEU', 'Neurology',          'specialist', 9],
+  ['SUR', 'General Surgeon',    'specialist', 10],
   // Service counters rather than consulting rooms.
   ['LAB', 'Diagnostics / Lab',  'diagnostic', 11],
   ['PHA', 'Pharmacy',           'diagnostic', 12],

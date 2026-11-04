@@ -75,7 +75,8 @@ test('the service board carries every department the clinic consults in', async 
   const specialist = depts.filter((d) => d.kind === 'specialist').map((d) => d.name);
 
   for (const name of ['General Practitioner (GP)', 'Internal Medicine', 'Pediatrics', 'Gynecology',
-    'Cardiology', 'Dentist', 'Dermatology', 'Orthopedics', 'Oncology']) {
+    'Cardiology', 'Dentist', 'Dermatology', 'Orthopedics', 'Oncology',
+    'Neurology', 'General Surgeon']) {
     assert.ok(specialist.includes(name), `${name} should be a specialist department`);
   }
   // The general practitioner is where most patients start, so it leads the list.
@@ -86,16 +87,19 @@ test('a department added to the app reaches a clinic that was set up before it',
   const { sync } = require('../src/db/catalogue');
 
   // An install from before these existed, with the clinic's own edits on top.
-  db.prepare("DELETE FROM departments WHERE code IN ('GP', 'ONC')").run();
+  db.prepare("DELETE FROM departments WHERE code IN ('GP', 'ONC', 'NEU', 'SUR')").run();
   db.prepare("UPDATE departments SET name = 'Cardiology & Echo', sort_order = 2 WHERE code = 'CAR'").run();
   db.prepare("UPDATE departments SET active = 0 WHERE code = 'DEN'").run();
 
   const { added } = sync({ quiet: true });
-  assert.strictEqual(added.departments, 2, 'the two missing departments should arrive');
+  assert.strictEqual(added.departments, 4, 'the four missing departments should arrive');
 
   const row = (code) => db.prepare('SELECT * FROM departments WHERE code = ?').get(code);
   assert.strictEqual(row('GP').kind, 'specialist');
   assert.strictEqual(row('ONC').name, 'Oncology');
+  assert.strictEqual(row('NEU').name, 'Neurology');
+  assert.strictEqual(row('SUR').name, 'General Surgeon');
+  assert.strictEqual(row('SUR').kind, 'specialist');
 
   // And nothing the clinic decided is undone by a restart.
   assert.strictEqual(row('CAR').name, 'Cardiology & Echo', 'a rename must survive');
