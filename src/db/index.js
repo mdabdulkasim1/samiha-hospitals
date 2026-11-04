@@ -337,6 +337,15 @@ function migrate() {
   )`);
   backfillBillGroups();
 
+  /*
+   * How long a machine is expected to earn its keep, for the depreciation
+   * line in the owner's monthly comparison. Per asset rather than per
+   * category because a category default is a guess and the invoice in the
+   * clinic's file is not; where it is left blank the owner's report falls
+   * back to a default by category and says which assets it had to guess for.
+   */
+  ensureColumn('assets', 'life_years', 'INTEGER');
+
   // Medicaments sit under HSN 3004 unless the formulary says otherwise; a GST
   // invoice must show a code, so nothing is left without one.
   db.exec("UPDATE drugs SET hsn = '3004' WHERE hsn IS NULL OR hsn = ''");

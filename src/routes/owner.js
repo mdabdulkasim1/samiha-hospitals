@@ -24,9 +24,11 @@
  */
 const express = require('express');
 const { db } = require('../db');
-const { wrap } = require('../lib/http');
+const { wrap, badRequest, notFound } = require('../lib/http');
 const { requireOwner } = require('../lib/auth');
-const { str, oneOf } = require('../lib/validate');
+const { str, oneOf, num, int, required } = require('../lib/validate');
+const commercial = require('../lib/commercial');
+const audit = require('../lib/audit');
 
 const router = express.Router();
 
@@ -218,6 +220,158 @@ router.get('/overview', requireOwner, wrap((req, res) => {
         "SELECT COALESCE(SUM(net - paid), 0) AS s FROM stock_purchases WHERE status != 'cancelled'").get().s,
     },
   });
+}));
+
+/* ========================================================= the commercial eye
+ *
+ * The headline board above answers "what came in". These four answer whether
+ * it was worth doing — department by department, against the budget, as
+ * ratios, and against the revenue the month had to reach before the clinic
+ * earned anything at all.
+ *
+ * The arithmetic lives in src/lib/commercial.js, which carries the three
+ * distinctions the whole thing rests on: billed is not collected, purchased
+ * is not consumed, and direct is not overhead.
+ */
+
+const THIS_MONTH = () => new Date().toISOString().slice(0, 7);
+const isPeriod = (p) => /^\d{4}-(0[1-9]|1[0-2])$/.test(p || '');
+
+function periodOf(req) {
+  const period = str(req.query.period) || THIS_MONTH();
+  if (!isPeriod(period)) throw badRequest('Give the month as YYYY-MM.');
+  return period;
+}
+
+router.get('/commercial', requireOwner, wrap((req, res) => {
+  const period = periodOf(req);
+  // A month is the unit the owner's own report is written in, so the window
+  // follows the month unless they have asked for something else outright.
+  const from = str(req.query.from) || commercial.monthStart(period);
+  const to = str(req.query.to) || commercial.monthEnd(period);
+
+  res.json({
+    period,
+    from,
+    to,
+    departments: commercial.departmentBoard(from, to),
+    comparison: commercial.comparison(period),
+    indicators: commercial.indicators(from, to, period),
+    breakEven: commercial.breakEven(from, to),
+    slipping: commercial.slipping(from, to),
+    actions: db.prepare(
+      `SELECT a.*, u.name AS raised_by FROM owner_actions a
+         LEFT JOIN users u ON u.id = a.created_by
+        WHERE a.status IN ('open','in_progress')
+           OR date(COALESCE(a.closed_at, a.created_at)) >= date(?)
+        ORDER BY CASE a.status WHEN 'open' THEN 0 WHEN 'in_progress' THEN 1 ELSE 2 END,
+                 a.due_date IS NULL, a.due_date, a.id DESC`).all(from),
+    lines: commercial.COMPARISON_LINES,
+    budgetable: commercial.BUDGETABLE,
+  });
+}));
+
+// ------------------------------------------------------------------ budget
+router.get('/budget/:period', requireOwner, wrap((req, res) => {
+  const period = req.params.period;
+  if (!isPeriod(period)) throw badRequest('Give the month as YYYY-MM.');
+  res.json({
+    period,
+    lines: commercial.COMPARISON_LINES.filter((l) => commercial.BUDGETABLE.includes(l.key)),
+    budget: db.prepare('SELECT line, amount, note FROM budgets WHERE period = ?').all(period),
+    /*
+     * Last month's actuals, offered as a starting point. A budget built from
+     * nothing is a wish; a budget built from what actually happened is a
+     * decision about what should change.
+     */
+    previous: commercial.actuals(commercial.prevPeriod(period)).values,
+  });
+}));
+
+router.put('/budget/:period', requireOwner, wrap((req, res) => {
+  const period = req.params.period;
+  if (!isPeriod(period)) throw badRequest('Give the month as YYYY-MM.');
+  const incoming = req.body && typeof req.body.budget === 'object' ? req.body.budget : null;
+  if (!incoming) throw badRequest('Send the budget as { budget: { line: amount } }.');
+
+  const set = db.prepare(
+    `INSERT INTO budgets (period, line, amount, set_by, set_at)
+     VALUES (?, ?, ?, ?, datetime('now'))
+     ON CONFLICT (period, line) DO UPDATE SET
+       amount = excluded.amount, set_by = excluded.set_by, set_at = excluded.set_at`);
+  const clear = db.prepare('DELETE FROM budgets WHERE period = ? AND line = ?');
+
+  db.transaction(() => {
+    for (const [line, value] of Object.entries(incoming)) {
+      if (!commercial.BUDGETABLE.includes(line)) continue;
+      // An empty box removes the budget rather than setting it to zero. A
+      // line with no budget reads "not budgeted"; a line budgeted at zero
+      // says the owner expected to spend nothing, and the variance column
+      // has to be able to tell those apart.
+      if (value === '' || value === null || value === undefined) clear.run(period, line);
+      else set.run(period, line, num(value), req.user.id);
+    }
+  })();
+
+  audit.log(req, 'budget_set', 'budget', null, { period });
+  res.json({ period, budget: db.prepare('SELECT line, amount FROM budgets WHERE period = ?').all(period) });
+}));
+
+// ------------------------------------------------------------ what is being done
+const CAUSES = ['volume', 'price', 'discount', 'mix', 'purchase_cost', 'wastage', 'other'];
+const ACTION_STATUS = ['open', 'in_progress', 'done', 'dropped'];
+
+router.get('/actions', requireOwner, wrap((req, res) => {
+  const status = oneOf(req.query.status, ACTION_STATUS, 'status');
+  res.json({
+    causes: CAUSES,
+    statuses: ACTION_STATUS,
+    rows: db.prepare(
+      `SELECT a.*, u.name AS raised_by FROM owner_actions a
+         LEFT JOIN users u ON u.id = a.created_by
+        ${status ? 'WHERE a.status = ?' : ''}
+        ORDER BY CASE a.status WHEN 'open' THEN 0 WHEN 'in_progress' THEN 1 ELSE 2 END,
+                 a.due_date IS NULL, a.due_date, a.id DESC`).all(...(status ? [status] : [])),
+  });
+}));
+
+router.post('/actions', requireOwner, wrap((req, res) => {
+  required(req.body, ['finding', 'action', 'responsible']);
+  const info = db.prepare(
+    `INSERT INTO owner_actions (period, area, finding, cause, action, responsible,
+       due_date, status, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?)`
+  ).run(
+    str(req.body.period) || THIS_MONTH(), str(req.body.area),
+    str(req.body.finding), oneOf(req.body.cause, CAUSES, 'cause'),
+    str(req.body.action), str(req.body.responsible),
+    str(req.body.dueDate), req.user.id
+  );
+  audit.log(req, 'owner_action_add', 'owner_action', info.lastInsertRowid, {});
+  res.status(201).json(db.prepare('SELECT * FROM owner_actions WHERE id = ?').get(info.lastInsertRowid));
+}));
+
+router.patch('/actions/:id', requireOwner, wrap((req, res) => {
+  const id = int(req.params.id);
+  const existing = db.prepare('SELECT * FROM owner_actions WHERE id = ?').get(id);
+  if (!existing) throw notFound('No such action.');
+  const status = req.body.status === undefined
+    ? existing.status : oneOf(req.body.status, ACTION_STATUS, 'status');
+  const closed = ['done', 'dropped'].includes(status);
+
+  db.prepare(
+    `UPDATE owner_actions SET
+       action = COALESCE(?, action), responsible = COALESCE(?, responsible),
+       due_date = COALESCE(?, due_date), cause = COALESCE(?, cause),
+       outcome = COALESCE(?, outcome), status = ?,
+       closed_at = CASE WHEN ? THEN COALESCE(closed_at, datetime('now')) ELSE NULL END
+     WHERE id = ?`
+  ).run(str(req.body.action), str(req.body.responsible), str(req.body.dueDate),
+    req.body.cause === undefined ? null : oneOf(req.body.cause, CAUSES, 'cause'),
+    str(req.body.outcome), status, closed ? 1 : 0, id);
+
+  audit.log(req, 'owner_action_edit', 'owner_action', id, { status });
+  res.json(db.prepare('SELECT * FROM owner_actions WHERE id = ?').get(id));
 }));
 
 module.exports = router;

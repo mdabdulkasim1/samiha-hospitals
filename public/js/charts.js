@@ -71,12 +71,21 @@
     return String(Math.round(n));
   };
 
-  /** The period a bucket stands for, however the series was cut. */
-  const bucketLabel = (at, by) => {
+  /**
+   * What a column stands for, however the series was cut.
+   *
+   * A point may carry its own label — a department, a category — in which
+   * case nothing is derived: these charts are used for things that are not
+   * time, and parsing "consultation" as a date produces "Invalid Date" on
+   * every axis tick.
+   */
+  const bucketLabel = (at, by, point) => {
+    if (point && point.label) return point.label;
     if (by === 'week') return `w/c ${UI.dateShort(at)}`;
     if (by === 'month') return new Date(`${at}T00:00:00`)
       .toLocaleDateString('en-GB', { month: 'short', year: '2-digit' });
-    return UI.dateShort(at);
+    if (by === 'day' || !by) return UI.dateShort(at);
+    return String(at);
   };
 
   const legend = (pairs) => `<div class="chart-legend">${pairs.map(([label, hue]) =>
@@ -109,7 +118,7 @@
   const axis = (points, by) => {
     const stride = points.length <= 12 ? 1 : Math.ceil(points.length / 8);
     return `<div class="chart-axis" style="--n:${points.length}">${points.map((p, i) =>
-      `<span>${i % stride ? '' : UI.esc(bucketLabel(p.at, by))}</span>`).join('')}</div>`;
+      `<span>${i % stride ? '' : UI.esc(bucketLabel(p.at, by, p))}</span>`).join('')}</div>`;
   };
 
   const tickRail = (marks, y, h, fmt = compact) =>
@@ -159,7 +168,7 @@
         ${tag(pa, points.indexOf(pa), a, 'left')}
         ${tag(pb, points.indexOf(pb), b, 'right')}
         ${points.map((p, i) => hit(i, band, h, pad, {
-    at: bucketLabel(p.at, by),
+    at: bucketLabel(p.at, by, p),
     rows: (opts.tip ? opts.tip(p) : [
       [a.label, UI.money(p[a.key])], [b.label, UI.money(p[b.key])],
       [p[a.key] - p[b.key] < 0 ? 'Shortfall' : 'Surplus', UI.money(p[a.key] - p[b.key])],
@@ -191,7 +200,7 @@
     ? `<path d="${columnPath(i * band + (band - bar) / 2, bar, y(p[key]), zero)}"
          fill="${p[key] > 0 ? IN_HUE : OUT_HUE}"/>` : '')).join('')}
       ${points.map((p, i) => hit(i, band, h, pad, {
-    at: bucketLabel(p.at, by),
+    at: bucketLabel(p.at, by, p),
     rows: (opts.tip ? opts.tip(p) : [[opts.label || 'Net', UI.money(p[key])]]),
   })).join('')}
     </svg>
@@ -232,7 +241,7 @@
       ${points.map((p, i) => `<rect x="${x(i) - (W / points.length) / 2}" y="0"
         width="${W / points.length}" height="${h - pad}" class="c-hit" tabindex="0"
         data-tip="${UI.esc(JSON.stringify({
-    at: bucketLabel(p.at, by),
+    at: bucketLabel(p.at, by, p),
     rows: (opts.tip ? opts.tip(p)
       : [[opts.label || 'Value', opts.format ? opts.format(p[key]) : compact(p[key])]]),
   }))}"/>`).join('')}

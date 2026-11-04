@@ -1362,3 +1362,46 @@ CREATE TABLE IF NOT EXISTS asset_events (
   created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_asset_events ON asset_events(asset_id, happened_on);
+
+-- ---------------------------------------------------------------- the budget
+-- What the owner expected each line to come to, month by month.
+--
+-- A budget cannot be derived from anything the clinic records — it is a
+-- decision, not a measurement — so it is the one part of the commercial
+-- analysis that has to be typed in. One row per line per month; a line with
+-- no row is reported as "not budgeted" rather than as zero, because a blank
+-- budget and a budget of nothing mean very different things when the variance
+-- column is read.
+CREATE TABLE IF NOT EXISTS budgets (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  period     TEXT NOT NULL,              -- YYYY-MM
+  line       TEXT NOT NULL,              -- a key from COMPARISON_LINES
+  amount     REAL NOT NULL DEFAULT 0,
+  note       TEXT,
+  set_by     INTEGER REFERENCES users(id),
+  set_at     TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (period, line)
+);
+CREATE INDEX IF NOT EXISTS idx_budgets_period ON budgets(period);
+
+-- ------------------------------------------------------- what is being done
+-- A margin that moved is a question, not a finding. This is where the answer
+-- goes: what was seen, what is being done, who is doing it and by when.
+-- Without the last two a review meeting produces observations and no change.
+CREATE TABLE IF NOT EXISTS owner_actions (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  period      TEXT,                      -- YYYY-MM this came out of
+  area        TEXT,                      -- a department key, or a line
+  finding     TEXT NOT NULL,             -- what the numbers showed
+  cause       TEXT,                      -- volume | price | discount | mix | purchase_cost | wastage | other
+  action      TEXT NOT NULL,             -- what is being done about it
+  responsible TEXT NOT NULL,             -- who is doing it
+  due_date    TEXT,
+  status      TEXT NOT NULL DEFAULT 'open'
+                CHECK (status IN ('open','in_progress','done','dropped')),
+  outcome     TEXT,
+  created_by  INTEGER REFERENCES users(id),
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  closed_at   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_owner_actions ON owner_actions(status, due_date);

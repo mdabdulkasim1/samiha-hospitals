@@ -26,12 +26,43 @@
     title: 'Owner\'s board',
     subtitle: 'Sale against cost, and what the clinic is worth',
 
-    async render(el) {
+    /*
+     * Two boards, not one page.
+     *
+     * The overview is what the owner opens every morning: what came in, what
+     * went out, how busy it was. The commercial eye is the monthly sit-down
+     * — department margins, the budget, the ratios, break-even — and it is
+     * long. Putting them on one scroll would bury the daily board under the
+     * monthly one; tabs keep each at the top of its own page.
+     */
+    async render(el, params) {
       let by = 'month';
       let from = '';
       let to = '';
+      let period = (params && params.period) || new Date().toISOString().slice(0, 7);
+
+      const tab = params && params.tab === 'commercial' ? 'commercial' : 'overview';
+      el.innerHTML = `
+        <div class="tabs" id="o-tabs">
+          <button data-tab="overview" class="${tab === 'overview' ? 'active' : ''}">Overview</button>
+          <button data-tab="commercial" class="${tab === 'commercial' ? 'active' : ''}">Commercial eye</button>
+        </div>
+        <div id="o-body">${UI.loading()}</div>`;
+      const body = el.querySelector('#o-body');
+
+      const commercial = (p) => {
+        period = p;
+        return OWNER_COMMERCIAL.render(body, period, commercial);
+      };
+      el.querySelectorAll('#o-tabs button').forEach((b) => b.addEventListener('click', () => {
+        el.querySelectorAll('#o-tabs button').forEach((x) => x.classList.toggle('active', x === b));
+        body.innerHTML = UI.loading();
+        if (b.dataset.tab === 'commercial') commercial(period);
+        else draw();
+      }));
 
       const draw = async () => {
+        const el = body;
         el.innerHTML = UI.loading();
         const d = await API.get('/api/owner/overview' + API.qs({ by, from, to }));
         from = d.from; to = d.to;
@@ -147,7 +178,8 @@
         CHARTS.wireHovers(el);
       };
 
-      await draw();
+      if (tab === 'commercial') await commercial(period);
+      else await draw();
     },
   });
 

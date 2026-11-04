@@ -866,3 +866,50 @@ tbody tr.panel-head.panel-sub td { background: transparent; border-top: 1px soli
 /* The owner's role-by-screen grid. */
 .access-grid th.num, .access-grid td.num { text-align: center; }
 .access-grid input[type=checkbox] { width: 16px; height: 16px; cursor: pointer; accent-color: var(--teal); }
+
+/* ------------------------------------------------------- the commercial eye */
+
+/* Revenue against the break-even line: one rail, filled to how far the month
+   got, with a marker at the line itself. A bar that can exceed its own track
+   needs the marker, or "well past break-even" and "exactly at it" look alike. */
+.be-rail {
+  position: relative; height: 14px; border-radius: 20px;
+  background: var(--line-2); overflow: hidden; margin-top: 4px;
+}
+.be-rail i { display: block; height: 100%; border-radius: 20px; }
+.be-rail i.ok { background: #1C6FB5; }
+.be-rail i.short { background: #A8500C; }
+.be-rail b {
+  position: absolute; top: -3px; width: 2px; height: 20px;
+  background: var(--ink-2); transform: translateX(-1px);
+}
+.be-legend { display: flex; justify-content: space-between; margin-top: 3px; }
+
+/* An indicator card: the number, the two figures behind it, and what it is
+   for. The figures are there so the ratio can be argued with rather than
+   merely believed. */
+.ind {
+  border: 1px solid var(--line); border-radius: 10px; padding: 12px 13px;
+  background: var(--surface-2, #FBFCFD); display: flex; flex-direction: column; gap: 5px;
+}
+.ind-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.ind-head .label { font-size: 12px; color: var(--ink-2); font-weight: 600; }
+.ind-head .value { font-size: 21px; font-weight: 680; letter-spacing: -.01em; }
+.kv.tiny { font-size: 12px; gap: 2px 10px; }
+.kv.tiny dt { font-size: 11.5px; }
+.ind-why { line-height: 1.35; }
+.ind-formula code { font-size: 10.5px; }
+.ind-caveat {
+  font-size: 11.5px; line-height: 1.35; color: #7A4A00;
+  background: var(--warn-soft); border-radius: 6px; padding: 6px 8px;
+}
+
+.budget-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.budget-table th, .budget-table td { padding: 6px 8px; border-bottom: 1px solid var(--line-2); }
+.budget-table th.num, .budget-table td.num { text-align: right; }
+.budget-table input { width: 130px; text-align: right; }
+
+.tight-list { margin: 6px 0 0; padding-left: 18px; }
+.tight-list li { margin-bottom: 3px; line-height: 1.4; }
+.inline-label { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--ink-2); }
+.alert.ok-soft { background: var(--ok-soft); border-color: #C9E7D6; color: var(--ok); }
