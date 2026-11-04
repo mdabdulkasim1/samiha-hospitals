@@ -540,8 +540,11 @@ test('the bill and the discharge summary carry the code, not the doctor', async 
 
 test('an X-ray or scan is reported in words, and still carries the code', async () => {
   const tests = (await api('GET', '/api/masters/lab-tests')).body;
-  const xray = tests.find((t) => t.code === 'XR-CHEST');
-  const usg = tests.find((t) => t.code === 'USG-ABD');
+  // The codes are the Manitham card's; the point of the test is that a film
+  // reports in words while a blood test reports in numbers, whoever's card
+  // the clinic is working from.
+  const xray = tests.find((t) => t.code === 'XR-CHESTPA');
+  const usg = tests.find((t) => t.code === 'USG-USABDOMENPE');
   assert.strictEqual(xray.category, 'radiology');
   assert.strictEqual(usg.category, 'radiology');
 

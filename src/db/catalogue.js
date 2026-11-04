@@ -357,6 +357,13 @@ function sync({ quiet = false } = {}) {
   const sendout = require('./sendout').load(db);
 
   /*
+   * And the imaging card the clinic adopted, which replaces the X-ray and
+   * ultrasound list rather than adding to it. Runs after the send-out menu
+   * because both insert by code and neither may half-apply.
+   */
+  const imaging = require('./imaging').load(db);
+
+  /*
    * Now that every test and every panel parameter is on the catalogue, give
    * the ones whose range is written out a pair of numbers to be flagged
    * against. Here rather than with the migrations, which run before any of
@@ -417,6 +424,11 @@ function sync({ quiet = false } = {}) {
     if (sendout.added || sendout.repriced) {
       console.log(`[rates] send-out menu: ${sendout.added} test(s) added of ${sendout.total}, `
         + `${sendout.repriced} analyte(s) repriced.`);
+    }
+    if (imaging.added || imaging.switchedOff) {
+      console.log(`[rates] imaging card: ${imaging.added} study(s) added of ${imaging.total}, `
+        + `${imaging.switchedOff} old study(s) switched off, `
+        + `${imaging.remapped} package line(s) repointed.`);
     }
   }
 

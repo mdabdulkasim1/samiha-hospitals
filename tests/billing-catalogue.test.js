@@ -132,7 +132,9 @@ test('the catalogue offers every billable item, filed where a cashier looks', as
 
   // An X-ray is filed under X-ray, not lumped in with the scans.
   const xray = groups.find((g) => g.group === 'X-ray').items;
-  assert.ok(xray.some((i) => /X-Ray Chest/.test(i.name)));
+  // The Manitham card spells it "X-RAY Chest PA", so the study is what is
+  // checked rather than one house's capitalisation of it.
+  assert.ok(xray.some((i) => /x-?\s?ray chest/i.test(i.name)));
   assert.ok(!xray.some((i) => /Ultrasound/.test(i.name)), 'an ultrasound is not an X-ray');
 });
 
@@ -145,7 +147,8 @@ test('a bill group is for the cashier and does not disturb the clinical category
     'clinical categories must stay within the set the reports understand');
   assert.ok(rows.every((r) => r.bill_group), 'every test is filed somewhere for billing');
 
-  const usg = rows.find((r) => /Ultrasound — Abdomen/.test(r.name));
+  const usg = rows.find((r) => /abdomen/i.test(r.name) && /Ultrasound/.test(r.bill_group));
+  assert.ok(usg, 'the catalogue still carries an abdominal scan');
   assert.strictEqual(usg.category, 'radiology', 'still reported as imaging');
   assert.strictEqual(usg.bill_group, 'Ultrasound & Doppler', 'but billed under its own heading');
 });
@@ -819,58 +822,93 @@ test('the lab can record the tests it ran, priced or not', async () => {
 });
 
 test('the radiology catalogue covers the views a request actually names', async () => {
-  const { IMAGING } = require('../src/db/diagnostics');
+  /*
+   * The clinic has adopted the Manitham card, so the studies on offer are
+   * its 167 rather than the list this system shipped with. What has to
+   * survive the swap is everything about how the list behaves.
+   */
+  const { IMAGING } = require('../src/db/imaging');
   assert.ok(IMAGING.length >= 80, `expected a real department's list, got ${IMAGING.length}`);
 
-  for (const [code, name, billGroup, category] of IMAGING) {
-    const row = db.prepare('SELECT * FROM lab_tests WHERE code = ?').get(code);
-    assert.ok(row, `${code} reached the catalogue`);
-    assert.strictEqual(row.bill_group, billGroup);
-    assert.strictEqual(row.category, category);
-    assert.ok(row.sort_order > 0, `${code} has a place in the list`);
+  for (const t of IMAGING) {
+    const row = db.prepare('SELECT * FROM lab_tests WHERE code = ?').get(t.code);
+    assert.ok(row, `${t.code} reached the catalogue`);
+    assert.strictEqual(row.bill_group, t.group);
+    assert.strictEqual(row.category, 'radiology');
+    assert.ok(row.sort_order > 0, `${t.code} has a place in the list`);
     assert.strictEqual(row.component_of, null, 'a view is not part of a panel');
-    void name;
   }
 
-  // Ordered down the body, not down the alphabet: the chest before the ankle,
-  // and the contrast studies last.
+  /*
+   * Ordered down the body, not down the alphabet: the chest before the
+   * ankle, and the contrast studies last. The card arrives in no order at
+   * all, so this is the clinic's ordering imposed on it — and the first
+   * thing that would be lost by regenerating the list carelessly.
+   */
   const xray = (await api('GET', '/api/masters/lab-tests', undefined, 'imran')).body
     .filter((t) => t.bill_group === 'X-ray');
   const at = (code) => xray.findIndex((t) => t.code === code);
-  assert.ok(at('XR-CHEST') < at('XR-ANKLE'), 'chest before ankle');
-  assert.ok(at('XR-ANKLE') < at('XR-BAENEMA'), 'plain films before the contrast studies');
-  assert.ok(at('XR-CHEST') >= 0 && at('XR-CHEST') < 4, 'the list opens on the chest');
+  assert.ok(at('XR-CHESTPA') < at('XR-ANKLEAPLAT'), 'chest before ankle');
+  assert.ok(at('XR-ANKLEAPLAT') < at('XR-BARIUMENEMA'),
+    'plain films before the contrast studies');
+  assert.ok(at('XR-CHESTPA') >= 0 && at('XR-CHESTPA') < 8, 'the list opens on the chest');
 
   // Both halves of "X-ray and scan" are stocked.
   const scans = (await api('GET', '/api/masters/lab-tests', undefined, 'imran')).body
     .filter((t) => t.bill_group === 'Ultrasound & Doppler');
   assert.ok(xray.length >= 50, `X-ray views: ${xray.length}`);
   assert.ok(scans.length >= 25, `ultrasound studies: ${scans.length}`);
-  for (const code of ['XR-OPG', 'XR-PNS', 'XR-HSG', 'USG-TVS', 'USG-ANOM', 'USG-DOPCAR']) {
+  /*
+   * Studies a request actually names, each still orderable after the card
+   * replaced the list. XR-OPG is the one that matters most here: the card
+   * carries no orthopantomogram and no dental film at all, and the clinic
+   * has a dentist — so it is kept on rather than switched off with the rest.
+   */
+  for (const code of ['XR-OPG', 'XR-PNS2', 'XR-HSG2', 'USG-TVS2',
+    'USG-USANOMALYSC', 'DOP-CAROTIDANDV']) {
     assert.ok([...xray, ...scans].some((t) => t.code === code), `${code} is orderable`);
   }
 });
 
+test('adopting the card does not take a service off the board', async () => {
+  /*
+   * The card is a radiology network's menu and does not carry everything a
+   * polyclinic does. Switching those off would have been a decision to stop
+   * doing them, which is not what repricing means.
+   */
+  const { KEPT_CODES: KEPT } = require('../src/db/imaging');
+  const orderable = (await api('GET', '/api/masters/lab-tests', undefined, 'imran')).body;
+  for (const code of KEPT) {
+    const row = db.prepare('SELECT * FROM lab_tests WHERE code = ?').get(code);
+    assert.ok(row, `${code} is still on the catalogue`);
+    assert.strictEqual(row.active, 1, `${code} is still offered`);
+    assert.ok(orderable.some((t) => t.code === code), `${code} is still orderable`);
+  }
+  // The dental pair is the point of the exception.
+  assert.ok(KEPT.includes('XR-OPG') && KEPT.includes('XR-DENT'),
+    'a clinic with a dentist keeps its dental films');
+});
+
 test('a clinic switches off what it does not do, without erasing it', async () => {
-  const barium = db.prepare("SELECT * FROM lab_tests WHERE code = 'XR-BAENEMA'").get();
+  const barium = db.prepare("SELECT * FROM lab_tests WHERE code = 'XR-BARIUMENEMA'").get();
   assert.strictEqual(barium.active, 1);
 
   const off = await api('PATCH', `/api/masters/lab-tests/${barium.id}`, { active: false }, 'admin');
   assert.strictEqual(off.status, 200, JSON.stringify(off.body));
 
   const orderable = (await api('GET', '/api/masters/lab-tests', undefined, 'imran')).body;
-  assert.ok(!orderable.some((t) => t.code === 'XR-BAENEMA'), 'off the order form');
+  assert.ok(!orderable.some((t) => t.code === 'XR-BARIUMENEMA'), 'off the order form');
   const board = (await api('GET', '/api/masters/catalogue', undefined, 'cashier')).body;
-  assert.ok(!board.some((g) => g.items.some((i) => i.code === 'XR-BAENEMA')), 'off the charge board');
+  assert.ok(!board.some((g) => g.items.some((i) => i.code === 'XR-BARIUMENEMA')), 'off the charge board');
 
   // Still on the rates screen, which is where it is switched back on.
   const all = (await api('GET', '/api/masters/catalogue?all=1', undefined, 'admin')).body;
-  const row = all.flatMap((g) => g.items).find((i) => i.code === 'XR-BAENEMA');
+  const row = all.flatMap((g) => g.items).find((i) => i.code === 'XR-BARIUMENEMA');
   assert.ok(row, 'still in the catalogue');
   assert.strictEqual(row.active, 0);
 
   // And the row itself is untouched, so a bill already raised still reads right.
-  const kept = db.prepare("SELECT * FROM lab_tests WHERE code = 'XR-BAENEMA'").get();
+  const kept = db.prepare("SELECT * FROM lab_tests WHERE code = 'XR-BARIUMENEMA'").get();
   assert.strictEqual(kept.name, barium.name);
 
   await api('PATCH', `/api/masters/lab-tests/${barium.id}`, { active: true }, 'admin');
