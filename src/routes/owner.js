@@ -28,6 +28,7 @@ const { wrap, badRequest, notFound } = require('../lib/http');
 const { requireOwner } = require('../lib/auth');
 const { str, oneOf, num, int, required } = require('../lib/validate');
 const commercial = require('../lib/commercial');
+const reports = require('../lib/reports');
 const audit = require('../lib/audit');
 
 const router = express.Router();
@@ -372,6 +373,75 @@ router.patch('/actions/:id', requireOwner, wrap((req, res) => {
 
   audit.log(req, 'owner_action_edit', 'owner_action', id, { status });
   res.json(db.prepare('SELECT * FROM owner_actions WHERE id = ?').get(id));
+}));
+
+/* ============================================================== the shelf
+ *
+ * Every report the owner asked for, behind one index and one runner. The
+ * screen that draws them is written once; a report added to the registry
+ * appears without any new route or any new screen.
+ */
+const REPORT_SPAN = 29;
+
+router.get('/reports', requireOwner, wrap((req, res) => {
+  res.json({ groups: reports.index() });
+}));
+
+router.get('/reports/:key', requireOwner, wrap((req, res) => {
+  const to = str(req.query.to) || today();
+  const from = str(req.query.from)
+    || new Date(Date.now() - REPORT_SPAN * 86400000).toISOString().slice(0, 10);
+  const period = str(req.query.period) || to.slice(0, 7);
+  if (!isPeriod(period)) throw badRequest('Give the month as YYYY-MM.');
+
+  const out = reports.run(req.params.key, { from, to, period });
+  if (!out) throw notFound('No such report.');
+  res.json(out);
+}));
+
+/* ---------------------------------------------------- the opening position
+ *
+ * The handful of figures a balance sheet needs and this system cannot see.
+ * Dated, because a bank balance is only true on the day it was read, and the
+ * statement shows how old the figures are rather than presenting them as
+ * current.
+ */
+router.get('/position', requireOwner, wrap((req, res) => {
+  const asOn = db.prepare('SELECT MAX(as_on) AS d FROM ledger_positions').get().d;
+  res.json({
+    lines: reports.POSITION_LINES,
+    asOn,
+    values: asOn
+      ? db.prepare('SELECT line, amount, note FROM ledger_positions WHERE as_on = ?').all(asOn)
+      : [],
+  });
+}));
+
+router.put('/position', requireOwner, wrap((req, res) => {
+  const asOn = str(req.body.asOn) || today();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(asOn)) throw badRequest('Give the date as YYYY-MM-DD.');
+  if (asOn > today()) throw badRequest('That date is in the future.');
+  const incoming = req.body && typeof req.body.values === 'object' ? req.body.values : null;
+  if (!incoming) throw badRequest('Send the figures as { values: { line: amount } }.');
+
+  const allowed = reports.POSITION_LINES.map((l) => l.key);
+  const set = db.prepare(
+    `INSERT INTO ledger_positions (as_on, line, amount, set_by, set_at)
+     VALUES (?, ?, ?, ?, datetime('now'))
+     ON CONFLICT (as_on, line) DO UPDATE SET
+       amount = excluded.amount, set_by = excluded.set_by, set_at = excluded.set_at`);
+  const clear = db.prepare('DELETE FROM ledger_positions WHERE as_on = ? AND line = ?');
+
+  db.transaction(() => {
+    for (const [line, value] of Object.entries(incoming)) {
+      if (!allowed.includes(line)) continue;
+      if (value === '' || value === null || value === undefined) clear.run(asOn, line);
+      else set.run(asOn, line, num(value), req.user.id);
+    }
+  })();
+
+  audit.log(req, 'position_set', 'position', null, { asOn });
+  res.json({ asOn, values: db.prepare('SELECT line, amount FROM ledger_positions WHERE as_on = ?').all(asOn) });
 }));
 
 module.exports = router;

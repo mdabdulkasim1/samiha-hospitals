@@ -1405,3 +1405,193 @@ CREATE TABLE IF NOT EXISTS owner_actions (
   closed_at   TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_owner_actions ON owner_actions(status, due_date);
+
+-- ===================================================== what was not recorded
+-- Seven of the owner's reports had no data behind them at all. These are the
+-- books that make them real. Each is deliberately small: the clinic will only
+-- keep a register it can fill in during a working day, and a form with thirty
+-- boxes gets filled in with nothing.
+
+-- Who was in, for how long, and whether the shift was covered. Doctors have
+-- schedules and leave already; everybody else had nothing, so overtime and a
+-- short-staffed shift were invisible until the payroll came in.
+CREATE TABLE IF NOT EXISTS staff_attendance (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id     INTEGER NOT NULL REFERENCES users(id),
+  on_date     TEXT NOT NULL,
+  shift       TEXT NOT NULL DEFAULT 'general'
+                CHECK (shift IN ('general','morning','evening','night','on_call')),
+  status      TEXT NOT NULL DEFAULT 'present'
+                CHECK (status IN ('present','absent','leave','week_off','holiday','half_day')),
+  in_at       TEXT,
+  out_at      TEXT,
+  -- Hours, not a clock time: a night shift's out_at is the next morning and
+  -- subtracting two times across midnight is where attendance systems go wrong.
+  worked_hours    REAL,
+  overtime_hours  REAL NOT NULL DEFAULT 0,
+  notes       TEXT,
+  recorded_by INTEGER REFERENCES users(id),
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (user_id, on_date, shift)
+);
+CREATE INDEX IF NOT EXISTS idx_attendance_date ON staff_attendance(on_date);
+
+-- What a patient or family said went wrong, and what was done. Kept apart
+-- from safety incidents on purpose: a complaint is somebody's experience and
+-- is answered; an incident is a thing that happened to a patient and is
+-- investigated. Running them in one register buries the second in the first.
+CREATE TABLE IF NOT EXISTS complaints (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  ref_no        TEXT NOT NULL UNIQUE,
+  patient_id    INTEGER REFERENCES patients(id),
+  complainant   TEXT,
+  contact       TEXT,
+  received_on   TEXT NOT NULL DEFAULT (date('now')),
+  channel       TEXT NOT NULL DEFAULT 'in_person'
+                  CHECK (channel IN ('in_person','phone','whatsapp','email','letter','online','box')),
+  category      TEXT NOT NULL DEFAULT 'other'
+                  CHECK (category IN ('waiting_time','staff_conduct','clinical_care','billing',
+                                      'cleanliness','facilities','pharmacy','diagnostics','other')),
+  department_id INTEGER REFERENCES departments(id),
+  severity      TEXT NOT NULL DEFAULT 'minor'
+                  CHECK (severity IN ('minor','moderate','serious')),
+  detail        TEXT NOT NULL,
+  action_taken  TEXT,
+  owner_name    TEXT,
+  due_date      TEXT,
+  status        TEXT NOT NULL DEFAULT 'open'
+                  CHECK (status IN ('open','investigating','resolved','closed','withdrawn')),
+  resolved_on   TEXT,
+  resolution    TEXT,
+  satisfied     INTEGER,
+  created_by    INTEGER REFERENCES users(id),
+  created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_complaints ON complaints(status, received_on);
+
+-- Something that reached a patient, or very nearly did. The near miss matters
+-- as much as the harm: it is the same failure with better luck, and a clinic
+-- that only records harm learns nothing until somebody is hurt.
+CREATE TABLE IF NOT EXISTS safety_incidents (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  ref_no        TEXT NOT NULL UNIQUE,
+  happened_on   TEXT NOT NULL DEFAULT (date('now')),
+  happened_at   TEXT,
+  patient_id    INTEGER REFERENCES patients(id),
+  department_id INTEGER REFERENCES departments(id),
+  location      TEXT,
+  kind          TEXT NOT NULL DEFAULT 'other'
+                  CHECK (kind IN ('medication','fall','identification','procedure','specimen',
+                                  'equipment','infection','documentation','delay','other')),
+  harm          TEXT NOT NULL DEFAULT 'near_miss'
+                  CHECK (harm IN ('near_miss','no_harm','minor','moderate','severe','death')),
+  detail        TEXT NOT NULL,
+  immediate_action TEXT,
+  root_cause    TEXT,
+  corrective_action TEXT,
+  owner_name    TEXT,
+  due_date      TEXT,
+  status        TEXT NOT NULL DEFAULT 'open'
+                  CHECK (status IN ('open','investigating','action_agreed','closed')),
+  closed_on     TEXT,
+  reported_by   INTEGER REFERENCES users(id),
+  created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_incidents ON safety_incidents(status, happened_on);
+
+-- The cleaning round and the infection-control check, as a signed-off log.
+-- An area that was never checked and an area that failed its check are
+-- different problems, so a missing round is counted rather than assumed clean.
+CREATE TABLE IF NOT EXISTS hygiene_rounds (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  on_date       TEXT NOT NULL DEFAULT (date('now')),
+  shift         TEXT NOT NULL DEFAULT 'morning'
+                  CHECK (shift IN ('morning','afternoon','evening','night')),
+  area          TEXT NOT NULL,
+  kind          TEXT NOT NULL DEFAULT 'housekeeping'
+                  CHECK (kind IN ('housekeeping','disinfection','biomedical_waste',
+                                  'hand_hygiene_audit','sterilisation','water_quality','pest_control')),
+  score         REAL,                   -- out of 100, where the check is scored
+  passed        INTEGER,
+  issues        TEXT,
+  action_taken  TEXT,
+  done_by       TEXT,
+  verified_by   INTEGER REFERENCES users(id),
+  created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_hygiene ON hygiene_rounds(on_date, area);
+
+-- Everything that expires and would stop the clinic if it lapsed: the
+-- pharmacy licence, the biomedical-waste authorisation, the AERB registration
+-- for the X-ray, the fire NOC, the indemnity policy. The asset register
+-- already carries calibration and AMC; this is the paperwork, not the kit.
+CREATE TABLE IF NOT EXISTS compliance_items (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  name          TEXT NOT NULL,
+  kind          TEXT NOT NULL DEFAULT 'licence'
+                  CHECK (kind IN ('licence','registration','insurance','contract','certification','tax','other')),
+  authority     TEXT,
+  reference_no  TEXT,
+  issued_on     TEXT,
+  valid_till    TEXT,
+  renewal_notice_days INTEGER NOT NULL DEFAULT 60,
+  owner_name    TEXT,
+  cost          REAL,
+  status        TEXT NOT NULL DEFAULT 'active'
+                  CHECK (status IN ('active','applied','lapsed','not_required','superseded')),
+  notes         TEXT,
+  active        INTEGER NOT NULL DEFAULT 1,
+  created_by    INTEGER REFERENCES users(id),
+  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_compliance ON compliance_items(valid_till);
+
+-- What each person was actually paid, month by month. The cash book has the
+-- total that left the bank; this is the only thing that can say whether one
+-- department's wage bill is growing, or who the overtime is going to.
+CREATE TABLE IF NOT EXISTS payroll_lines (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  period        TEXT NOT NULL,               -- YYYY-MM
+  user_id       INTEGER REFERENCES users(id),
+  person        TEXT NOT NULL,               -- kept as text too: people leave, the record stays
+  role          TEXT,
+  department_id INTEGER REFERENCES departments(id),
+  -- A consultant's share is not a salary and is reported separately, but it
+  -- is paid through the same run and belongs in the same book.
+  kind          TEXT NOT NULL DEFAULT 'salary'
+                  CHECK (kind IN ('salary','doctor_payout','contract','stipend')),
+  basic         REAL NOT NULL DEFAULT 0,
+  allowances    REAL NOT NULL DEFAULT 0,
+  overtime      REAL NOT NULL DEFAULT 0,
+  deductions    REAL NOT NULL DEFAULT 0,
+  net_pay       REAL NOT NULL DEFAULT 0,
+  paid_on       TEXT,
+  mode          TEXT,
+  notes         TEXT,
+  created_by    INTEGER REFERENCES users(id),
+  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (period, person, kind)
+);
+CREATE INDEX IF NOT EXISTS idx_payroll ON payroll_lines(period);
+
+-- The parts of a balance sheet that cannot be computed from trading.
+--
+-- Everything else on the owner's board is derived from what the clinic
+-- recorded. A balance sheet cannot be: what the bank holds, what the owner
+-- put in, what is still owed on a loan and what the assets were already worn
+-- down by on the day this system started are facts from outside it. They are
+-- entered as a dated position, and the statement carries the date it was
+-- last trued up — a balance sheet resting on a year-old opening figure is
+-- worth knowing about before anybody acts on it.
+CREATE TABLE IF NOT EXISTS ledger_positions (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  as_on       TEXT NOT NULL,
+  line        TEXT NOT NULL,
+  amount      REAL NOT NULL DEFAULT 0,
+  note        TEXT,
+  set_by      INTEGER REFERENCES users(id),
+  set_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (as_on, line)
+);
+CREATE INDEX IF NOT EXISTS idx_positions ON ledger_positions(as_on);

@@ -66,6 +66,13 @@ app.use('/api/accounts', require('./routes/accounts'));
 app.use('/api/assets', require('./routes/assets'));
 app.use('/api/access', require('./routes/access'));
 app.use('/api/owner', require('./routes/owner'));
+/*
+ * The six registers the owner's reports read from. Not under /api/owner,
+ * because the owner reads them and the clinic writes them — the nurse who
+ * saw the near miss, the housekeeper who did the round. A safety register
+ * only a director can write to is a safety register with nothing in it.
+ */
+app.use('/api/registers', require('./routes/registers'));
 app.use('/api/ipd', require('./routes/ipd'));
 app.use('/api/insurance', require('./routes/insurance'));
 app.use('/api/reports', require('./routes/reports'));

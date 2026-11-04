@@ -830,6 +830,7 @@ function slipping(from, to) {
 
 module.exports = {
   DEPARTMENTS, DEPT_KEYS, COMPARISON_LINES, BUDGETABLE, COST_BOOK, DEFAULT_LIFE,
+  DEPT_OF_LINE, NET_LINE, OUTSOURCED,
   revenueByDepartment, medicinesSoldCost, spending, wastage, depreciation,
   departmentBoard, actuals, comparison, indicators, breakEven, slipping,
   monthStart, monthEnd, prevPeriod,

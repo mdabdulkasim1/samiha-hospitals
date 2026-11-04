@@ -41,11 +41,13 @@
       let to = '';
       let period = (params && params.period) || new Date().toISOString().slice(0, 7);
 
-      const tab = params && params.tab === 'commercial' ? 'commercial' : 'overview';
+      const TABS = ['overview', 'commercial', 'reports'];
+      const tab = params && TABS.includes(params.tab) ? params.tab : 'overview';
       el.innerHTML = `
         <div class="tabs" id="o-tabs">
           <button data-tab="overview" class="${tab === 'overview' ? 'active' : ''}">Overview</button>
           <button data-tab="commercial" class="${tab === 'commercial' ? 'active' : ''}">Commercial eye</button>
+          <button data-tab="reports" class="${tab === 'reports' ? 'active' : ''}">Reports</button>
         </div>
         <div id="o-body">${UI.loading()}</div>`;
       const body = el.querySelector('#o-body');
@@ -54,11 +56,29 @@
         period = p;
         return OWNER_COMMERCIAL.render(body, period, commercial);
       };
+
+      // The shelf keeps its own little state — which window, which report is
+      // open — and hands it back on every change, so the back button out of a
+      // report returns to the index rather than to the top of the app.
+      let shelf = {
+        from: new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10),
+        to: new Date().toISOString().slice(0, 10),
+        report: (params && params.report) || null,
+      };
+      const reports = (next) => {
+        shelf = next || shelf;
+        return OWNER_REPORTS.render(body, shelf, reports);
+      };
+
+      const show = (name) => {
+        body.innerHTML = UI.loading();
+        if (name === 'commercial') return commercial(period);
+        if (name === 'reports') return reports(shelf);
+        return draw();
+      };
       el.querySelectorAll('#o-tabs button').forEach((b) => b.addEventListener('click', () => {
         el.querySelectorAll('#o-tabs button').forEach((x) => x.classList.toggle('active', x === b));
-        body.innerHTML = UI.loading();
-        if (b.dataset.tab === 'commercial') commercial(period);
-        else draw();
+        show(b.dataset.tab);
       }));
 
       const draw = async () => {
@@ -178,8 +198,7 @@
         CHARTS.wireHovers(el);
       };
 
-      if (tab === 'commercial') await commercial(period);
-      else await draw();
+      await show(tab);
     },
   });
 
