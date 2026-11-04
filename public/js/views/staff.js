@@ -64,10 +64,21 @@
       const body = el.querySelector('#s-body');
       const tabs = {
         doctors() {
+          /*
+           * The add button sits on the card as well as in the top bar.
+           *
+           * One copy in a corner of the page furniture is a single point of
+           * failure for the only action that puts a person on this screen —
+           * and it is a long way from the list it adds to. Two copies cost a
+           * line and mean the job can always be done.
+           */
           body.innerHTML = `<div class="card">
             <div class="card-head"><h3>Consulting doctors</h3>
-              <span class="muted small">Open one to set OPD sessions and leave</span></div>
+              <span class="muted small">Open one to set OPD sessions and leave</span>
+              ${APP.can(['admin']) ? '<button class="btn sm" id="add-doctor">+ Add doctor</button>' : ''}</div>
             <div class="card-body tight" id="d-list"></div></div>`;
+          const addDoc = body.querySelector('#add-doctor');
+          if (addDoc) addDoc.addEventListener('click', () => openStaffForm('doctor'));
           const host = body.querySelector('#d-list');
           host.innerHTML = UI.table([
             { label: 'Doctor', render: (d) => `<b>${UI.esc(d.name)}</b>` +
@@ -89,8 +100,11 @@
 
         staff() {
           body.innerHTML = `<div class="card">
-            <div class="card-head"><h3>Other staff</h3></div>
+            <div class="card-head"><h3>Other staff</h3>
+              ${APP.can(['admin']) ? '<button class="btn sm" id="add-staff">+ Add staff member</button>' : ''}</div>
             <div class="card-body tight" id="o-list"></div></div>`;
+          const addStaff = body.querySelector('#add-staff');
+          if (addStaff) addStaff.addEventListener('click', () => openStaffForm(null));
           const host = body.querySelector('#o-list');
           host.innerHTML = UI.table([
             { label: 'Name', render: (u) => `<b>${UI.esc(u.name)}</b>` +

@@ -64,8 +64,14 @@
       { id: 'reports',     label: 'Reports',          icon: '◔', roles: '*' },
       { id: 'workflow',    label: 'Workflow Map',     icon: '⇄', roles: '*' },
       { id: 'staff',       label: 'Staff & Doctors',  icon: '⚕', roles: ['admin'] },
-      // The owner's own: which screens each of the other roles is shown.
-      { id: 'access',      label: 'Screen access',    icon: '◪', roles: ['owner'] },
+      /*
+       * The owner's own, and this one really is theirs alone — so it carries
+       * ownerOnly rather than a role list. APP.can waves an administrator
+       * through every role gate, which would have put this in their menu and
+       * then refused them at the door, because the endpoint behind it is the
+       * one place admin does not bypass (src/lib/auth.js, requireOwner).
+       */
+      { id: 'access',      label: 'Screen access',    icon: '◪', roles: [], ownerOnly: true },
       { id: 'account',     label: 'Account & System', icon: '⚙', roles: '*' },
     ]},
   ];
@@ -106,7 +112,9 @@
     canOpen(route) {
       if ((APP.hiddenScreens || []).includes(route)) return false;
       const item = NAV.flatMap((g) => g.items).find((i) => i.id === route);
-      return item ? APP.can(item.roles) : true;
+      if (!item) return true;
+      if (item.ownerOnly) return APP.user && APP.user.role === 'owner';
+      return APP.can(item.roles);
     },
 
     seesMoney() { return APP.can(['cashier', 'counselor']); },
@@ -534,7 +542,12 @@
     }
 
     const navItem = NAV.flatMap((g) => g.items).find((i) => i.id === route);
-    if (navItem && !APP.can(navItem.roles)) {
+    if (navItem && navItem.ownerOnly && (!APP.user || APP.user.role !== 'owner')) {
+      document.getElementById('view').innerHTML =
+        `<div class="alert danger">${UI.esc(navItem.label)} is the owner's to set.</div>`;
+      return;
+    }
+    if (navItem && !navItem.ownerOnly && !APP.can(navItem.roles)) {
       document.getElementById('view').innerHTML =
         `<div class="alert danger">Your role (<b>${UI.esc(APP.user.role)}</b>) does not have access to ${UI.esc(navItem.label)}.</div>`;
       return;
