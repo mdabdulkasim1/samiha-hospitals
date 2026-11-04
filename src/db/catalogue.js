@@ -350,6 +350,13 @@ function sync({ quiet = false } = {}) {
   const revisions = rates.applyRevisions(db);
 
   /*
+   * And the referral laboratory's menu, which the clinic sends out to. Added
+   * by code and never re-touched, so a price the clinic has since changed on
+   * one of these is its own.
+   */
+  const sendout = require('./sendout').load(db);
+
+  /*
    * Now that every test and every panel parameter is on the catalogue, give
    * the ones whose range is written out a pair of numbers to be flagged
    * against. Here rather than with the migrations, which run before any of
@@ -406,6 +413,10 @@ function sync({ quiet = false } = {}) {
         console.log(`[rates]   kept ${k.code} at ${k.at} — the revision says ${k.wanted}`);
       }
       for (const m of rev.missing) console.log(`[rates]   no such code: ${m}`);
+    }
+    if (sendout.added || sendout.repriced) {
+      console.log(`[rates] send-out menu: ${sendout.added} test(s) added of ${sendout.total}, `
+        + `${sendout.repriced} analyte(s) repriced.`);
     }
   }
 

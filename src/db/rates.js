@@ -485,6 +485,42 @@ const REVISIONS = [
       ['SEMEN',       300,   300],  // Semen analysis         <- Semen analysis 150
     ],
   },
+  {
+    key: 'tariff.2026_11_methods',
+    dated: '2026-11',
+    note: 'The four the trade list could not settle on its own, because it '
+      + 'offered a choice of method or of panel. The clinic said which it '
+      + 'sells; these are those answers, at twice the trade rate.',
+    rates: [
+      /*
+       * Widal by the tube method, not the slide. The slide is a rapid screen
+       * and the tube is the quantitative titre — a different test, charged
+       * differently, and the trade list prices both.
+       */
+      ['WIDAL',       180,   300],  // <- Widal tube method 150
+      /*
+       * Malaria by microscopy of a stained smear, which is what "malaria
+       * parasite" means at the bench. The antibody test on the trade list is
+       * a different question clinically and is not what this line is.
+       */
+      ['MP',          200,   400],  // <- MP of smear 200
+      /*
+       * The trade list prices a Pap twice: 450 on the test list and 400 in
+       * the pathology section. They are not the same thing — the second is
+       * the pathologist reading a slide somebody else prepared. This line is
+       * the whole test, so it takes the test-list figure; the slide-reading
+       * fee is loaded separately on the send-out menu.
+       */
+      ['PAP',         450,   900],  // <- Pap smear 450
+      /*
+       * The advanced liver panel above the plain one. The trade list has a
+       * single liver panel at 300 and it is the comprehensive one, so it
+       * prices the advanced line; the plain LFT keeps the 350 the owner set
+       * by hand, which is the point of the two being separate.
+       */
+      ['LFT-ADV',     350,   600],  // <- Liver function test 300
+    ],
+  },
 ];
 
 /**

@@ -81,11 +81,14 @@ test('a fresh install arrives at exactly the rates on the marked-up sheet', () =
   }
 
   /*
-   * And the four the trade list could not settle keep exactly what the sheet
-   * left them at, rather than being quietly assigned one of the options.
+   * The four the trade list could not settle were not guessed at: they were
+   * put to the clinic and answered, and the answers are checked in their own
+   * test below. What matters here is that they moved by a decision and not
+   * by a default.
    */
   for (const code of ['WIDAL', 'MP', 'PAP', 'LFT-ADV']) {
-    assert.strictEqual(priceOf(code), SHEET[code][1], `${code} was not guessed at`);
+    assert.notStrictEqual(priceOf(code), SHEET[code][1],
+      `${code} was settled by the clinic, not left at the sheet's figure`);
   }
 });
 
@@ -190,8 +193,6 @@ const UNTOUCHED = {
   TSH: 150, VITD: 800, CBC: 200, HBA1C: 300, URINE: 50, CREAT: 70,
   // Nothing on the B2B list corresponds to these at all.
   ESR: 35, 'RFT-GFR': 250,
-  // The B2B list offers a choice here, so the clinic has to say which it sells.
-  WIDAL: 180, MP: 200, PAP: 450, 'LFT-ADV': 350,
 };
 
 test('the tests the sheet left unmarked are priced at twice the trade rate', () => {
@@ -232,6 +233,93 @@ test('a match that only looks right is left out', () => {
   }
 });
 
+/* ------------------------------------------------ the send-out menu */
+
+test('the four the trade list could not settle are what the clinic chose', () => {
+  /*
+   * None of these could be inferred. The trade list priced Widal twice
+   * (slide and tube), malaria three ways, and a Pap in two different
+   * sections; the clinic said which it sells. The figures are here so that
+   * the answers are on the record rather than in a conversation.
+   */
+  assert.strictEqual(priceOf('WIDAL'), 300, 'tube method, 150 x 2');
+  assert.strictEqual(priceOf('MP'), 400, 'MP of smear, 200 x 2');
+  assert.strictEqual(priceOf('PAP'), 900, 'the whole test, 450 x 2');
+  assert.strictEqual(priceOf('LFT-ADV'), 600, 'the advanced panel, 300 x 2');
+
+  // And the advanced panel now sits above the plain one, which is the point
+  // of the clinic carrying both.
+  assert.ok(priceOf('LFT-ADV') > priceOf('LFT'));
+});
+
+test('the referral laboratory\'s menu is loaded, at twice trade throughout', () => {
+  const { SENDOUT } = require('../src/db/sendout');
+  assert.ok(SENDOUT.length > 150, `${SENDOUT.length} send-out tests`);
+
+  for (const t of SENDOUT) {
+    assert.strictEqual(t.price, t.trade * 2, `${t.code} is twice its trade rate`);
+    assert.ok(t.trade > 0, `${t.code} carries the trade rate it came from`);
+    assert.strictEqual(priceOf(t.code), t.price, `${t.code} is on the catalogue at ${t.price}`);
+  }
+});
+
+test('the send-out menu keeps the cost of every line it added', () => {
+  /*
+   * The trade rate is not kept for sentiment. It is the cost of sale for
+   * every one of these, and the only thing that makes the margin on
+   * send-out work knowable — the department board can read it the day
+   * somebody wires it up. A list of prices with no costs behind it would
+   * have made send-out work look like pure margin forever.
+   */
+  const { SENDOUT } = require('../src/db/sendout');
+  assert.ok(SENDOUT.every((t) => typeof t.trade === 'number' && t.trade > 0));
+});
+
+test('nothing was added twice under a second name', () => {
+  const codes = db.prepare('SELECT code FROM lab_tests').all().map((r) => r.code);
+  assert.strictEqual(new Set(codes).size, codes.length, 'codes are unique');
+
+  /*
+   * The real risk is not a duplicate code but a duplicate test: the same
+   * thing on the order form twice at two prices. Seven trade rows turned
+   * out to be analytes the clinic already reports, and were repriced where
+   * they stand rather than added beside themselves.
+   */
+  const { ANALYTE_REPRICE, SENDOUT } = require('../src/db/sendout');
+  const added = new Set(SENDOUT.map((t) => t.name.toLowerCase()));
+  for (const r of ANALYTE_REPRICE) {
+    const existing = db.prepare('SELECT name, price FROM lab_tests WHERE code = ?').get(r.code);
+    assert.ok(existing, `${r.code} is the row that was repriced`);
+    assert.strictEqual(existing.price, r.price);
+    assert.ok(!added.has(existing.name.toLowerCase()),
+      `${existing.name} was not also added as a new test`);
+  }
+});
+
+test('loading the menu again adds nothing', () => {
+  const sendout = require('../src/db/sendout');
+  const before = db.prepare('SELECT COUNT(*) AS c FROM lab_tests').get().c;
+  const again = sendout.load(db);
+  assert.strictEqual(again.added, 0, 'every one was already there');
+  assert.strictEqual(db.prepare('SELECT COUNT(*) AS c FROM lab_tests').get().c, before);
+
+  /*
+   * And a price the clinic has since changed on one of these is its own:
+   * the loader inserts, it does not restate.
+   */
+  db.prepare("UPDATE lab_tests SET price = 4321 WHERE code = 'SO-AMYLASE'").run();
+  sendout.load(db);
+  assert.strictEqual(priceOf('SO-AMYLASE'), 4321);
+  db.prepare("UPDATE lab_tests SET price = 200 WHERE code = 'SO-AMYLASE'").run();
+});
+
+test('every test the clinic offers carries a price', () => {
+  // A test on the order form with no rate is one the cashier cannot bill.
+  const unpriced = db.prepare(
+    'SELECT code, name FROM lab_tests WHERE COALESCE(price, 0) = 0').all();
+  assert.deepStrictEqual(unpriced, [], 'nothing on the catalogue is unpriced');
+});
+
 test('the revision touches diagnostics only, and leaves the rest of the card alone', () => {
   /*
    * The sheet was two pages of a seven-page list. Everything not on those
@@ -239,6 +327,8 @@ test('the revision touches diagnostics only, and leaves the rest of the card alo
    * must be exactly where the September card left it.
    */
   const touched = new Set(rates.REVISIONS.flatMap((r) => r.rates.map(([code]) => code)));
+  // and the analytes the referral list repriced where they stand
+  for (const r of require('../src/db/sendout').ANALYTE_REPRICE) touched.add(r.code);
 
   for (const [code, was] of rates.TARIFF.map(([c, , now]) => [c, now])) {
     if (touched.has(code)) continue;
