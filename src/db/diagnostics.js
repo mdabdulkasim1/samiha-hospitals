@@ -331,6 +331,26 @@ const IMAGING = [
  * Columns: code, name, price, strapline, [member test codes], [consults]
  */
 const PACKAGES = [
+  /*
+   * The imaging a package covers names the Manitham card's studies, because
+   * that is the card the clinic adopted and the old studies are switched
+   * off. This list is rewritten into lab_package_items on every boot, so a
+   * stale code here does not stay a one-time repair — it comes back on the
+   * next restart and the package quietly asks the bench for a film nobody
+   * offers any more.
+   */
+  /*
+   * The cheapest thing on the board, and the one most people need: am I
+   * diabetic, how long have I been, and what is my cholesterol doing. Three
+   * tests that come to 630 separately; the clinic sells them together for
+   * 500. The quarter off is the point — it is what makes somebody who came
+   * in for one of them take all three.
+   */
+  ['PKG-BASIC', 'Basic Health Check Up', 500,
+    'The three numbers worth knowing',
+    ['FBS', 'HBA1C', 'LIPID'],
+    []],
+
   ['PKG-LIFESTYLE', 'Lifestyle Screening — Annual Wellness Check', 1499,
     'Know your numbers early',
     ['CBC', 'FBS', 'UREA', 'CREAT', 'LIPID', 'TSH', 'URINE', 'ECG12'],
@@ -339,25 +359,25 @@ const PACKAGES = [
   ['PKG-EXEC-M', 'Executive Health Checkup — Male', 3999,
     'Built for working men',
     ['CBC', 'ESR', 'BLGRP', 'FBS', 'PPBS', 'HBA1C', 'LIPID', 'LFT', 'RFT', 'TSH',
-      'URINE', 'XR-CHEST', 'USG-ABD', 'ECG12'],
+      'URINE', 'XR-CHESTPA', 'USG-USABDOMENPE', 'ECG12'],
     ['Physician consult', 'Dietitian consult']],
 
   ['PKG-EXEC-F', 'Executive Health Checkup — Female', 4499,
     'Built for working women',
     ['CBC', 'ESR', 'BLGRP', 'FBS', 'PPBS', 'HBA1C', 'LIPID', 'LFT', 'RFT', 'TSH',
-      'URINE', 'XR-CHEST', 'ECG12', 'USG-ABD', 'USG-BRE'],
+      'URINE', 'XR-CHESTPA', 'ECG12', 'USG-USABDOMENPE', 'USG-BREAST'],
     ['Physician consult', 'Gynaecologist consult', 'Dietitian consult']],
 
   ['PKG-GERI-M', 'Geriatric Health Checkup — Male (60 and above)', 4799,
     'Care that respects age',
     ['CBC', 'ESR', 'BLGRP', 'FBS', 'PPBS', 'HBA1C', 'LIPID', 'LFT', 'RFT', 'TSH',
-      'PSA', 'URINE', 'XR-CHEST', 'ECG12', 'USG-ABD'],
+      'PSA', 'URINE', 'XR-CHESTPA', 'ECG12', 'USG-USABDOMENPE'],
     ['Physician consult', 'Dietitian consult']],
 
   ['PKG-GERI-F', 'Geriatric Health Checkup — Female (60 and above)', 4699,
     'Care that respects age',
     ['CBC', 'ESR', 'BLGRP', 'FBS', 'PPBS', 'HBA1C', 'LIPID', 'LFT', 'RFT', 'TSH',
-      'URINE', 'XR-CHEST', 'ECG12', 'USG-ABD', 'USG-BRE'],
+      'URINE', 'XR-CHESTPA', 'ECG12', 'USG-USABDOMENPE', 'USG-BREAST'],
     ['Physician consult', 'Dietitian consult']],
 
   ['PKG-CARD-EXEC', 'Executive Cardiac Check Up', 3699,
@@ -372,12 +392,12 @@ const PACKAGES = [
 
   ['PKG-WELLWOMAN', 'Well Women Check Up', 2899,
     'Her health comes first',
-    ['CBC', 'ESR', 'RBS', 'UREA', 'CREAT', 'URINE', 'XR-CHEST', 'USG-ABD', 'PAP'],
+    ['CBC', 'ESR', 'RBS', 'UREA', 'CREAT', 'URINE', 'XR-CHESTPA', 'USG-USABDOMENPE', 'PAP'],
     ['Gynaecologist consult']],
 
   ['PKG-PREMARITAL', 'Premarital Check Up', 2499,
     'Start married life informed',
-    ['CBC', 'ESR', 'BLGRP', 'RBS', 'HIV', 'HBSAG', 'VDRL', 'URINE', 'SEMEN', 'USG-PELVF'],
+    ['CBC', 'ESR', 'BLGRP', 'RBS', 'HIV', 'HBSAG', 'VDRL', 'URINE', 'SEMEN', 'USG-USPELVIS'],
     ['Physician consult', 'Gynaecologist consult']],
 ];
 

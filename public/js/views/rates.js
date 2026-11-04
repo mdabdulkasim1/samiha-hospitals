@@ -63,7 +63,10 @@
         host.innerHTML = shown.length ? shown.map((g) => `
           <div class="card">
             <div class="card-head"><h3>${UI.esc(g.group)}</h3>
-              <span class="muted small">${UI.num(g.items.length)} item(s)</span></div>
+              <span class="muted small">${UI.num(g.items.length)} item(s)</span>
+              ${mayEdit && g.group === 'Health packages'
+    ? '<button class="btn sm" id="rt-add-pkg" style="margin-left:auto">+ Build a package</button>'
+    : ''}</div>
             <div class="card-body tight">${UI.table([
               { label: 'Code', render: (i) => `<code>${UI.esc(i.code)}</code>` },
               { label: 'Item', render: (i) => `<b>${UI.esc(i.name)}</b>` +
@@ -105,6 +108,8 @@
           : UI.empty('Nothing matches that.', '🔍');
 
         if (mayEdit) { wireRates(host, groups); wireOffered(host, groups); wireRanges(host, groups); }
+        const addPkg = host.querySelector('#rt-add-pkg');
+        if (addPkg) addPkg.addEventListener('click', () => openPackage(null, () => APP.reload()));
       };
 
       el.querySelector('#rt-q').addEventListener('input', (e) => draw(e.target.value));
@@ -112,6 +117,117 @@
       if (mayEdit) drawReprice(el.querySelector('#rt-reprice'));
     },
   });
+
+  /**
+   * Building a health package.
+   *
+   * A package is two things and the form writes both: one line the counter
+   * presses, and the list of tests the bench is then asked to run. Getting
+   * only the first is how a package gets sold that nobody runs.
+   *
+   * The price is the clinic's decision, but it is not made in the dark: the
+   * form adds up what the chosen tests cost one at a time and offers three
+   * quarters of that, because a package nobody saves on is a package nobody
+   * buys. The figure is a suggestion sitting in an editable box, and the
+   * form says plainly when the price is above what the tests come to — a
+   * package a patient can beat by asking for the tests separately is worth
+   * knowing about before it goes on a poster.
+   */
+  async function openPackage(existing, onDone) {
+    const choices = await API.get('/api/masters/packages/choices');
+    const byGroup = {};
+    for (const c of choices) (byGroup[c.bill_group] = byGroup[c.bill_group] || []).push(c);
+    const chosen = new Set((existing && existing.members ? existing.members : []).map((m) => m.code));
+
+    UI.modal({
+      title: existing ? `Edit — ${existing.name}` : 'Build a health package',
+      size: 'wide',
+      body: `<form id="pk-form">
+        <div class="grid c2">
+          ${UI.field({ name: 'name', label: 'What it is called', required: true,
+            value: existing ? existing.name : '',
+            placeholder: 'e.g. Basic Health Check Up' })}
+          ${UI.field({ name: 'strapline', label: 'One line for the poster', value: '',
+            placeholder: 'e.g. The three numbers worth knowing' })}
+        </div>
+        <fieldset><legend>What it covers</legend>
+          <input type="search" id="pk-q" placeholder="Search the catalogue…" class="mb">
+          <div id="pk-list" class="pk-list">
+            ${Object.keys(byGroup).sort().map((grp) => `
+              <div class="pk-group" data-group="${UI.esc(grp)}">
+                <h5>${UI.esc(grp)}</h5>
+                ${byGroup[grp].map((c) => `
+                  <label class="pk-item" data-name="${UI.esc(c.name.toLowerCase())}">
+                    <input type="checkbox" value="${UI.esc(c.code)}" data-price="${c.price}"
+                      ${chosen.has(c.code) ? 'checked' : ''}>
+                    <span>${UI.esc(c.name)}</span>
+                    <b>${UI.money(c.price)}</b>
+                  </label>`).join('')}
+              </div>`).join('')}
+          </div>
+        </fieldset>
+        <div class="pk-sum" id="pk-sum"></div>
+        ${UI.field({ name: 'price', label: 'Package price (₹)', type: 'number', min: 1,
+          step: '1', required: true, value: existing ? existing.price : '' })}
+      </form>`,
+      footer: `<button class="btn ghost" data-act="__close">Cancel</button>
+               <button class="btn ghost" data-act="suggest">Use three quarters</button>
+               <button class="btn" data-act="save">${existing ? 'Save' : 'Create it'}</button>`,
+      onMount: (modal) => {
+        const priceBox = modal.querySelector('[name="price"]');
+        const sum = modal.querySelector('#pk-sum');
+        const boxes = () => [...modal.querySelectorAll('#pk-list input:checked')];
+        const total = () => boxes().reduce((t, b) => t + Number(b.dataset.price || 0), 0);
+
+        const refresh = () => {
+          const apart = total();
+          const n = boxes().length;
+          const price = Number(priceBox.value) || 0;
+          const suggested = Math.round(apart * 0.75);
+          const over = price > 0 && price > apart;
+          sum.innerHTML = !n
+            ? '<span class="muted">Nothing chosen yet.</span>'
+            : `<b>${UI.num(n)} test(s)</b> — ${UI.money(apart)} bought one at a time.
+               Three quarters of that is <b>${UI.money(suggested)}</b>.
+               ${price ? `At ${UI.money(price)} the patient
+                 ${over ? `<span style="color:var(--danger)">pays ${UI.money(price - apart)}
+                   <b>more</b> than buying them separately</span>`
+    : `saves ${UI.money(apart - price)} (${Math.round((1 - price / apart) * 100)}% off)`}.` : ''}`;
+        };
+        modal.querySelector('#pk-list').addEventListener('change', refresh);
+        priceBox.addEventListener('input', refresh);
+        modal.querySelector('#pk-q').addEventListener('input', (e) => {
+          const q = e.target.value.trim().toLowerCase();
+          modal.querySelectorAll('.pk-item').forEach((it) => {
+            it.hidden = Boolean(q) && !it.dataset.name.includes(q);
+          });
+          modal.querySelectorAll('.pk-group').forEach((grp) => {
+            grp.hidden = ![...grp.querySelectorAll('.pk-item')].some((i) => !i.hidden);
+          });
+        });
+        refresh();
+      },
+      onAction: async (act, modal) => {
+        const members = [...modal.querySelectorAll('#pk-list input:checked')].map((b) => b.value);
+        if (act === 'suggest') {
+          const apart = [...modal.querySelectorAll('#pk-list input:checked')]
+            .reduce((t, b) => t + Number(b.dataset.price || 0), 0);
+          if (!apart) { UI.err('Choose the tests first.'); return 'keep'; }
+          const box = modal.querySelector('[name="price"]');
+          box.value = Math.round(apart * 0.75);
+          box.dispatchEvent(new Event('input'));
+          return 'keep';
+        }
+        if (act !== 'save') return;
+        const v = UI.formValues(modal.querySelector('#pk-form'));
+        const body = { name: v.name, strapline: v.strapline, price: v.price, members };
+        if (existing) await API.patch(`/api/masters/packages/${existing.code}`, body);
+        else await API.post('/api/masters/packages', body);
+        UI.ok(existing ? 'Package saved.' : 'Package created.');
+        if (onDone) onDone();
+      },
+    });
+  }
 
   /**
    * Bringing bills that are still owing onto this card.

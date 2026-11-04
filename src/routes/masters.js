@@ -716,6 +716,145 @@ router.post('/lab-tests', requireRole('admin', 'lab'), wrap((req, res) => {
   res.status(201).json({ id: info.lastInsertRowid });
 }));
 
+/* ------------------------------------------------------- health packages
+ *
+ * A package is two things at once and both have to be written: one sellable
+ * line on the catalogue, which is what the counter presses and the patient
+ * is billed for, and a membership list, which is what turns that one press
+ * into the morning's work at the bench.
+ *
+ * The nine the system ships with are seed data and are rewritten on every
+ * boot. Anything the clinic builds here is its own and is never touched
+ * again — which is why a clinic-built package may not take one of the
+ * seeded codes.
+ */
+const SEEDED_PACKAGES = new Set(
+  require('../db/diagnostics').PACKAGES.map(([code]) => code)
+);
+
+router.get('/packages', wrap((req, res) => {
+  const rows = db.prepare(
+    `SELECT t.id, t.code, t.name, t.price, t.active, t.ref_text
+       FROM lab_tests t WHERE t.bill_group = 'Health packages' ORDER BY t.price`).all();
+  const members = db.prepare(
+    `SELECT i.package_code, i.test_code, t.name, t.price, t.active
+       FROM lab_package_items i LEFT JOIN lab_tests t ON t.code = i.test_code
+      ORDER BY i.package_code, i.sort_order`).all();
+
+  res.json(rows.map((p) => {
+    const mine = members.filter((m) => m.package_code === p.code);
+    const apart = Math.round(mine.reduce((t, m) => t + (m.price || 0), 0) * 100) / 100;
+    return {
+      ...p,
+      seeded: SEEDED_PACKAGES.has(p.code),
+      members: mine.map((m) => ({ code: m.test_code, name: m.name, price: m.price })),
+      /*
+       * What the tests come to bought one at a time, beside what the package
+       * sells for. A package priced above its own contents is one a patient
+       * can beat by asking for the tests separately, and the clinic should
+       * be able to see that without adding it up by hand.
+       */
+      apart,
+      saving: Math.round((apart - p.price) * 100) / 100,
+    };
+  }));
+}));
+
+/** The tests a package can be built from: anything the clinic actually offers. */
+router.get('/packages/choices', wrap((req, res) => {
+  res.json(db.prepare(
+    `SELECT code, name, price, bill_group FROM lab_tests
+      WHERE active = 1 AND bill_group != 'Health packages' AND price > 0
+      ORDER BY bill_group, sort_order, name`).all());
+}));
+
+function writePackage(code, body, res) {
+  const name = str(body.name);
+  if (!name) throw badRequest('A package needs a name.');
+  const members = Array.isArray(body.members) ? body.members.map((m) => str(m)).filter(Boolean) : [];
+  if (!members.length) throw badRequest('A package with no tests in it is not a package.');
+
+  const found = members.map((m) => db.prepare(
+    'SELECT code, name FROM lab_tests WHERE code = ? AND active = 1').get(m));
+  const missing = members.filter((m, i) => !found[i]);
+  if (missing.length) {
+    throw badRequest(`These are not tests the clinic offers: ${missing.join(', ')}`);
+  }
+
+  const price = num(body.price, 0);
+  if (price <= 0) throw badRequest('A package needs a price.');
+  const strapline = str(body.strapline) || 'Booked as one package';
+
+  db.transaction(() => {
+    db.prepare(
+      `INSERT INTO lab_tests (code, name, category, bill_group, sample_type, price, tat_hours, ref_text, active)
+       VALUES (?, ?, 'lab', 'Health packages', 'As per the tests covered', ?, 12, ?, 1)
+       ON CONFLICT (code) DO UPDATE SET
+         name = excluded.name, price = excluded.price, ref_text = excluded.ref_text`
+    ).run(code, name, price,
+      `${strapline}. Covers: ${found.map((f) => f.name).join(', ')}. Reported as one package.`);
+
+    db.prepare('DELETE FROM lab_package_items WHERE package_code = ?').run(code);
+    const add = db.prepare(
+      'INSERT INTO lab_package_items (package_code, test_code, sort_order) VALUES (?, ?, ?)');
+    members.forEach((m, i) => add.run(code, m, i + 1));
+  })();
+
+  res.status(201).json(db.prepare('SELECT * FROM lab_tests WHERE code = ?').get(code));
+}
+
+router.post('/packages', adminOnly, wrap((req, res) => {
+  required(req.body, ['name', 'members']);
+  /*
+   * The code is generated rather than asked for. Nobody at a counter should
+   * have to invent a unique key, and a clash with one of the seeded packages
+   * would see the clinic's own work overwritten on the next restart.
+   */
+  const base = 'PKG-' + (str(req.body.name).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10) || 'NEW');
+  let code = base;
+  let n = 2;
+  while (SEEDED_PACKAGES.has(code) || db.prepare('SELECT 1 FROM lab_tests WHERE code = ?').get(code)) {
+    code = `${base.slice(0, 12)}${n}`;
+    n += 1;
+  }
+  audit.log(req, 'package_add', 'package', null, { code, name: str(req.body.name) });
+  writePackage(code, req.body, res);
+}));
+
+router.patch('/packages/:code', adminOnly, wrap((req, res) => {
+  const code = str(req.params.code).toUpperCase();
+  const existing = db.prepare(
+    "SELECT * FROM lab_tests WHERE code = ? AND bill_group = 'Health packages'").get(code);
+  if (!existing) throw notFound('No such package.');
+  /*
+   * A seeded package's contents are rewritten from the shipped list on every
+   * boot, so editing them here would last until the next restart and then
+   * quietly revert. Its price is the clinic's and is edited on the rate card
+   * like any other.
+   */
+  if (SEEDED_PACKAGES.has(code)) {
+    throw badRequest('This package ships with the system; its contents are fixed. '
+      + 'Its price can be changed on the rate card, or build your own package beside it.');
+  }
+  audit.log(req, 'package_edit', 'package', existing.id, { code });
+  writePackage(code, { ...req.body, name: str(req.body.name) || existing.name }, res);
+}));
+
+router.delete('/packages/:code', adminOnly, wrap((req, res) => {
+  const code = str(req.params.code).toUpperCase();
+  const existing = db.prepare(
+    "SELECT * FROM lab_tests WHERE code = ? AND bill_group = 'Health packages'").get(code);
+  if (!existing) throw notFound('No such package.');
+  if (SEEDED_PACKAGES.has(code)) throw badRequest('This package ships with the system.');
+  /*
+   * Switched off rather than deleted, like everything else on the catalogue:
+   * a bill raised for it last month still names it.
+   */
+  db.prepare('UPDATE lab_tests SET active = 0 WHERE code = ?').run(code);
+  audit.log(req, 'package_retire', 'package', existing.id, { code });
+  res.json({ ok: true });
+}));
+
 router.get('/icd', wrap((req, res) => {
   const q = str(req.query.q, '');
   res.json(db.prepare(

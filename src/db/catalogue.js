@@ -270,6 +270,18 @@ function sync({ quiet = false } = {}) {
     });
   });
   /*
+   * The imaging card the clinic adopted, before the packages rather than
+   * after them.
+   *
+   * Three of the packages cover a chest film and a scan, and they name the
+   * card's studies. The packages block below refuses to write a package
+   * naming a test the catalogue does not have — rightly, since a package
+   * sold with a test missing from it is one the bench never gets asked to
+   * run — so the studies have to exist by the time it runs.
+   */
+  const imaging = require('./imaging').load(db);
+
+  /*
    * The screening packages.
    *
    * Two things are written here. The package itself goes on the catalogue as
@@ -355,13 +367,6 @@ function sync({ quiet = false } = {}) {
    * one of these is its own.
    */
   const sendout = require('./sendout').load(db);
-
-  /*
-   * And the imaging card the clinic adopted, which replaces the X-ray and
-   * ultrasound list rather than adding to it. Runs after the send-out menu
-   * because both insert by code and neither may half-apply.
-   */
-  const imaging = require('./imaging').load(db);
 
   /*
    * Now that every test and every panel parameter is on the catalogue, give

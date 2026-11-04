@@ -943,3 +943,15 @@ tbody tr.panel-head.panel-sub td { background: transparent; border-top: 1px soli
 .register-form { margin-bottom: 14px; }
 .register-list { border-top: 1px solid var(--line-2); padding-top: 10px; max-height: 300px; overflow: auto; }
 .register-list table { font-size: 12.4px; }
+
+/* --------------------------------------------------- the package builder */
+.pk-list { max-height: 290px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+.pk-group h5 { margin: 8px 0 4px; font-size: 10.5px; text-transform: uppercase;
+  letter-spacing: .07em; color: var(--ink-3); }
+.pk-group:first-child h5 { margin-top: 0; }
+.pk-item { display: grid; grid-template-columns: 18px 1fr auto; gap: 8px; align-items: center;
+  padding: 3px 4px; border-radius: 5px; font-size: 12.8px; cursor: pointer; }
+.pk-item:hover { background: var(--bg, #F7F9FA); }
+.pk-item b { font-variant-numeric: tabular-nums; color: var(--ink-2); font-weight: 600; }
+.pk-sum { margin: 9px 0 4px; font-size: 12.6px; line-height: 1.5;
+  background: var(--teal-soft); border: 1px solid #CFE4E8; border-radius: 7px; padding: 8px 10px; }
