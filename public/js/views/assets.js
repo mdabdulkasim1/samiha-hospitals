@@ -37,6 +37,14 @@
         ? [{ id: 'add', label: '+ Add an asset', kind: '', onClick: () => openAsset({}, () => APP.reload()) }]
         : []);
 
+      /*
+       * The add button is on the register as well as in the page furniture.
+       *
+       * One copy in the top bar, ghost-styled and sitting next to the alert
+       * bell, is a long way from the list it adds to and is routinely not
+       * found — a clinic that has just taken delivery of a machine should not
+       * have to hunt for where to write it down. Two copies cost a line.
+       */
       el.innerHTML = `
         <div id="a-tiles"></div>
         <div class="card"><div class="card-head"><h3>Asset register</h3>
@@ -50,8 +58,13 @@
             <option value="ok">In date</option></select>
           <select id="a-status" style="max-width:160px"><option value="">Any status</option>
             ${meta.statuses.map((s) => `<option value="${UI.esc(s)}">${UI.esc(UI.titleise(s))}</option>`).join('')}</select>
+          ${canKeep() ? '<button class="btn sm" id="a-add" style="margin-left:auto">' +
+    '+ Add a machine or tool</button>' : ''}
         </div>
           <div class="card-body tight" id="a-list">${UI.loading()}</div></div>`;
+
+      const add = el.querySelector('#a-add');
+      if (add) add.addEventListener('click', () => openAsset({}, () => APP.reload()));
 
       const load = async () => {
         const data = await API.get('/api/assets' + API.qs({
