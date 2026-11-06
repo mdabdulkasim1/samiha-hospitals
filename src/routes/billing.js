@@ -10,6 +10,7 @@ const whatsapp = require('../services/whatsapp');
 const audit = require('../lib/audit');
 const clinic = require('../services/clinic');
 const upi = require('../services/upi');
+const billShare = require('../services/billShare');
 const repricing = require('../services/repricing');
 
 const router = express.Router();
@@ -359,6 +360,59 @@ router.get('/invoices/:id/upi', viewRoles, wrap((req, res) => {
     uri,
     svg: uri ? upi.qrSvg(uri) : null,
   });
+}));
+
+/*
+ * ------------------------------------------------------- the bill, as a file
+ *
+ * A clinic this size prints two or three hundred bills a month and most are
+ * read once. These three endpoints are the other way out of the counter: the
+ * same invoice as a PDF, downloaded, or sent to the patient's own WhatsApp.
+ */
+
+/** The bill as a PDF — the identical document that would have been sent. */
+router.get('/invoices/:id/pdf', viewRoles, wrap((req, res) => {
+  const doc = billShare.build('invoice', int(req.params.id));
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="${doc.filename}"`);
+  res.end(doc.content);
+}));
+
+/**
+ * Send the bill to a WhatsApp number.
+ *
+ * The number is given by the counter rather than taken from the record: a
+ * patient often wants the bill on a relative's phone, and the one on file may
+ * be a landline. What is on file is offered as the suggestion and nothing
+ * more.
+ *
+ * A refusal by WhatsApp comes back as `sent: false` with the reason, not as
+ * an error — the bill was built and stored either way, and the cashier needs
+ * to be told now, while the patient is still at the counter and paper is
+ * still an option.
+ */
+router.post('/invoices/:id/whatsapp', deskRoles, wrap(async (req, res) => {
+  const id = int(req.params.id);
+  const out = await billShare.sendToWhatsApp({
+    kind: 'invoice', refId: id, to: str(req.body.to), userId: req.user.id,
+  });
+  audit.log(req, 'share', 'invoice', id, {
+    channel: 'whatsapp', to: out.to, sent: out.sent, docNo: out.docNo, error: out.error,
+  });
+  res.json(out);
+}));
+
+/** A link to the bill with nothing sent — shown on screen or copied. */
+router.post('/invoices/:id/share-link', deskRoles, wrap((req, res) => {
+  const id = int(req.params.id);
+  const out = billShare.linkOnly({ kind: 'invoice', refId: id, userId: req.user.id });
+  audit.log(req, 'share', 'invoice', id, { channel: 'link', docNo: out.docNo });
+  res.json(out);
+}));
+
+/** Every copy of this bill that has gone out, and whether it arrived. */
+router.get('/invoices/:id/shares', viewRoles, wrap((req, res) => {
+  res.json(billShare.history('invoice', int(req.params.id)));
 }));
 
 router.post('/invoices', cashRoles, wrap((req, res) => {

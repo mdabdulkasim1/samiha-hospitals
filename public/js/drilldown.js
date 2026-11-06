@@ -69,9 +69,11 @@
    * only allows a popup while it can still see the gesture that asked for it.
    */
   function wireDocuments(scope) {
+    // A bill is the exception: it asks whether to print or to send, and the
+    // dialog claims a print window only if paper is chosen.
     scope.querySelectorAll('[data-print-invoice]').forEach((b) => b.addEventListener('click', (e) => {
       e.stopPropagation();
-      APP.printInvoiceById(Number(b.dataset.printInvoice), UI.openPrintWindow());
+      APP.printInvoiceById(Number(b.dataset.printInvoice));
     }));
     scope.querySelectorAll('[data-print-receipt]').forEach((b) => b.addEventListener('click', (e) => {
       e.stopPropagation();

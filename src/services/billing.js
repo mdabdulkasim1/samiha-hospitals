@@ -160,7 +160,7 @@ function fullInvoice(invoiceId) {
    * to it as to a prescription or a report.
    */
   const invoice = db.prepare(
-    `SELECT i.*, p.uhid, p.first_name, p.last_name, p.phone, p.address,
+    `SELECT i.*, p.uhid, p.first_name, p.last_name, p.phone, p.whatsapp, p.address,
             p.age_years, p.gender, p.aadhaar_number,
             dp.doctor_code, u.name AS doctor_name, v.visit_no, adm.ip_no
        FROM invoices i

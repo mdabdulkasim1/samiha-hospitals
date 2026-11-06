@@ -233,7 +233,7 @@
               <div class="card-head"><h3>Bill</h3>
                 <button class="btn ghost sm" id="prepare">${invoice ? 'Re-check charges' : 'Assemble bill'}</button>
                 ${invoice ? '<button class="btn ghost sm" id="discount">Give a discount</button>' : ''}
-                ${invoice ? '<button class="btn ghost sm" id="print-inv">Print invoice</button>' : ''}
+                ${invoice ? '<button class="btn ghost sm" id="print-inv">Print or send</button>' : ''}
               </div>
               <div class="card-body" id="inv-body">
                 ${invoice ? '' : `<div class="alert info">Press <b>Assemble bill</b> to pull the
@@ -298,7 +298,7 @@
       });
 
       const printBtn = el.querySelector('#print-inv');
-      if (printBtn) printBtn.addEventListener('click', () => printInvoice(invoice, UI.openPrintWindow()));
+      if (printBtn) printBtn.addEventListener('click', () => deliverInvoice(invoice));
 
       const disc = el.querySelector('#discount');
       if (disc) disc.addEventListener('click', () => openBillDiscount(invoice, () => draw()));
@@ -659,9 +659,7 @@
             </div></div>`;
         // The window is claimed on the click itself: a browser only allows a
         // popup while it can still see the gesture, and the QR is fetched after.
-        body.querySelector('#cd-print').addEventListener('click', () => {
-          printInvoice(full, UI.openPrintWindow());
-        });
+        body.querySelector('#cd-print').addEventListener('click', () => deliverInvoice(full));
         body.querySelector('#cd-open').addEventListener('click', () =>
           APP.navigate('billing', { invoiceId: full.id }));
         body.querySelector('#cd-next').addEventListener('click', () => {
@@ -709,7 +707,7 @@
     APP.setSubtitle(`${inv.invoice_no} · ${who} · ${inv.uhid}`);
     APP.actions([
       { id: 'back', label: '← Billing', onClick: () => APP.navigate('billing') },
-      { id: 'print', label: 'Print invoice', onClick: () => printInvoice(inv, UI.openPrintWindow()) },
+      { id: 'print', label: 'Print or send', onClick: () => deliverInvoice(inv) },
     ]);
 
     const draw = async () => {
@@ -724,7 +722,7 @@
             <div class="card">
               <div class="card-head"><h3>Bill</h3>
                 ${open ? '<button class="btn ghost sm" id="b-discount">Give a discount</button>' : ''}
-                <button class="btn ghost sm" id="b-print">Print invoice</button>
+                <button class="btn ghost sm" id="b-print">Print or send</button>
               </div>
               <div class="card-body" id="b-inv">${invoiceBody(inv, { removable: open })}</div>
             </div>
@@ -747,7 +745,7 @@
                 ${inv.balance > 0.009
                   ? `<button class="btn block mt" id="b-pay">Accept payment</button>`
                   : '<div class="alert ok mt">Settled in full. Print the invoice for the patient.</div>'}
-                <button class="btn ghost block mt" id="b-print2">Print invoice</button>
+                <button class="btn ghost block mt" id="b-print2">Print or send the bill</button>
               </div></div>
 
             <div class="card"><div class="card-head"><h3>Patient</h3></div>
@@ -789,7 +787,7 @@
       const disc = el.querySelector('#b-discount');
       if (disc) disc.addEventListener('click', () => BillingTools.discount(inv, draw));
       el.querySelectorAll('#b-print, #b-print2').forEach((b) =>
-        b.addEventListener('click', () => printInvoice(inv, UI.openPrintWindow())));
+        b.addEventListener('click', () => deliverInvoice(inv)));
       const pay = el.querySelector('#b-pay');
       if (pay) pay.addEventListener('click', () => openPayment(inv, draw));
       const visit = el.querySelector('#b-visit');
@@ -1177,10 +1175,10 @@
       title: `${inv.invoice_no} — ${inv.first_name} ${inv.last_name || ''}`,
       size: 'wide',
       body: invoiceBody(inv),
-      footer: `<button class="btn ghost" data-act="print">Print invoice</button>
+      footer: `<button class="btn ghost" data-act="print">Print or send</button>
                <button class="btn ghost" data-act="__close">Close</button>`,
       onMount() { wireInvoiceActions(inv, () => { UI.closeAllModals(); openInvoice(id); }); },
-      onAction(act) { if (act === 'print') { printInvoice(inv, UI.openPrintWindow()); return 'keep'; } },
+      onAction(act) { if (act === 'print') { deliverInvoice(inv); return 'keep'; } },
     });
   }
   APP.openInvoice = openInvoice;
@@ -1194,15 +1192,42 @@
    * while it can still see the gesture that asked for it.
    */
   APP.printInvoiceById = async (id, windowRef = null) => {
-    const win = windowRef || UI.openPrintWindow();
     try {
-      printInvoice(await API.get(`/api/billing/invoices/${id}`), win);
+      const inv = await API.get(`/api/billing/invoices/${id}`);
+      // A window claimed by the caller is no longer wanted: the choice of
+      // paper or phone is made in the dialog, and printing claims its own.
+      if (windowRef) windowRef.close();
+      deliverInvoice(inv);
     } catch (err) {
       UI.err(err.message);
-      if (win) win.close();
+      if (windowRef) windowRef.close();
     }
   };
   APP.printReceipt = printReceipt;
+
+  /**
+   * How this bill leaves the counter.
+   *
+   * Every press that used to print now asks first. Paper is one button and
+   * still the default for anyone who wants it; the other sends the same bill
+   * as a PDF to a WhatsApp number, which is most of the clinic's paper gone
+   * for the patients who would rather have it on their phone.
+   *
+   * Printing is handed down as a callback rather than done here, because the
+   * print window has to be claimed inside the click that asks for it.
+   */
+  function deliverInvoice(inv) {
+    if (!inv || !inv.id) return;
+    BillDelivery.open({
+      kind: 'invoice',
+      id: inv.id,
+      docNo: inv.invoice_no,
+      patientName: `${inv.first_name || ''} ${inv.last_name || ''}`.trim(),
+      suggested: inv.whatsapp || inv.phone,
+      print: (win) => printInvoice(inv, win),
+    });
+  }
+  APP.deliverInvoice = deliverInvoice;
 
   // ---------------------------------------------------------- printable docs
   /**
@@ -1316,7 +1341,7 @@
           <div class="block"><div class="k">Payments received</div>
             <table><tbody>
               ${inv.payments.map((p) => `<tr>
-                <td>${UI.esc(UI.date(p.paid_at))} · ${UI.esc(UI.titleise(p.mode))}${
+                <td>${UI.esc(UI.date(p.paid_at))} · ${UI.esc(payMode(p.mode))}${
                   p.reference ? ' · ' + UI.esc(p.reference) : ''}</td>
                 <td class="num">${UI.money(p.amount)}</td>
                 <td class="num">${UI.esc(p.receipt_no)}</td></tr>`).join('')}
@@ -1334,6 +1359,13 @@
 
     UI.printSheet(html, 'Invoice ' + inv.invoice_no, win);
   }
+
+  /**
+   * How a payment was made, written the way it is said. Title case turns UPI
+   * into "Upi", which on a bill the patient keeps reads as a mistake.
+   */
+  const PAY_MODES = { upi: 'UPI', neft: 'NEFT', imps: 'IMPS', rtgs: 'RTGS', emi: 'EMI', tpa: 'TPA' };
+  const payMode = (s) => PAY_MODES[String(s || '').toLowerCase()] || UI.titleise(s);
 
   /** Aadhaar as it is written on the card: four, four, four. */
   function aadhaarDigits(value) {

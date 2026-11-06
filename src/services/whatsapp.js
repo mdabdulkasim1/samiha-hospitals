@@ -45,6 +45,69 @@ async function sendViaMeta(to, body) {
   return json?.messages?.[0]?.id || null;
 }
 
+/**
+ * Send a file — a bill, so far — as a WhatsApp document.
+ *
+ * Meta fetches the link itself rather than taking the bytes from us, so the
+ * URL has to be reachable from the public internet. That is why a shared bill
+ * is served from a tokenised address and not from behind the staff login.
+ *
+ * The caption is what shows above the attachment in the chat. The filename is
+ * what the patient sees when they save it, so it carries the bill number.
+ */
+async function sendDocumentViaMeta(to, { link, filename, caption }) {
+  const { token, phoneNumberId, apiVersion } = config.whatsapp;
+  if (!token || !phoneNumberId) {
+    throw new Error('WHATSAPP_TOKEN and WHATSAPP_PHONE_NUMBER_ID must be set for provider "meta".');
+  }
+  const res = await fetch(`https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to,
+      type: 'document',
+      document: { link, filename, caption },
+    }),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json?.error?.message || `Meta API responded ${res.status}`);
+  return json?.messages?.[0]?.id || null;
+}
+
+/**
+ * Send a document now.
+ *
+ * Returns the logged message either way. A send can fail for a reason the
+ * counter has to hear about rather than discover later — most often that
+ * WhatsApp only allows a free-form message within 24 hours of the patient's
+ * own last one — so the failure is recorded against the conversation and
+ * handed back, not swallowed.
+ */
+async function sendDocument(to, { link, filename, caption = '' } = {}) {
+  if (!to || !link) return null;
+  const payload = { link, filename };
+  if (config.whatsapp.provider === 'meta') {
+    try {
+      const id = await sendDocumentViaMeta(to, { link, filename, caption });
+      return logMessage({
+        waNumber: to, direction: 'out', body: caption, messageType: 'document',
+        payload, providerMessageId: id, status: 'sent',
+      });
+    } catch (err) {
+      return logMessage({
+        waNumber: to, direction: 'out', body: caption, messageType: 'document',
+        payload, status: 'failed', error: err.message,
+      });
+    }
+  }
+  return logMessage({
+    waNumber: to, direction: 'out', body: caption, messageType: 'document',
+    payload, status: 'sent',
+  });
+}
+
 /** Send one message now. Always logged, whichever provider is configured. */
 async function send(to, body) {
   if (!to) return null;
@@ -117,4 +180,6 @@ function recentNumbers(limit = 30) {
   ).all(limit);
 }
 
-module.exports = { send, logMessage, dispatchPending, notify, conversation, recentNumbers };
+module.exports = {
+  send, sendDocument, logMessage, dispatchPending, notify, conversation, recentNumbers,
+};

@@ -47,6 +47,13 @@ app.get('/api/health', (_req, res) => {
 
 // The WhatsApp webhook is called by Meta and must stay unauthenticated.
 app.use('/api/whatsapp', require('./routes/whatsapp'));
+
+/*
+ * A bill sent to a patient's phone. Unauthenticated on purpose: the people
+ * opening it are patients, and WhatsApp's own servers fetch the link to
+ * attach the document. The token is what guards it.
+ */
+app.use('/d', require('./routes/share'));
 app.use('/api/auth', require('./routes/auth'));
 
 app.use('/api', auth.requireAuth);

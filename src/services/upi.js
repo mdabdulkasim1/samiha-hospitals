@@ -75,4 +75,25 @@ function qrSvg(uri, { margin = 2 } = {}) {
     + `<path d="${runs.join('')}" fill="#000"/></svg>`;
 }
 
-module.exports = { link, qrSvg };
+/**
+ * The same square as a grid, for a renderer that draws its own rectangles —
+ * the PDF a bill is sent as. Returned rather than an SVG because a PDF has no
+ * notion of one, and rasterising it would lose the crisp module edges a
+ * scanner needs.
+ */
+function qrMatrix(uri) {
+  if (!uri) return null;
+  const qr = qrcode(0, 'M');
+  qr.addData(uri);
+  qr.make();
+  const count = qr.getModuleCount();
+  const dark = [];
+  for (let row = 0; row < count; row += 1) {
+    const line = [];
+    for (let col = 0; col < count; col += 1) line.push(qr.isDark(row, col));
+    dark.push(line);
+  }
+  return { count, dark, isDark: (r, c) => dark[r][c] };
+}
+
+module.exports = { link, qrSvg, qrMatrix };

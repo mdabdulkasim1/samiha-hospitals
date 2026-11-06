@@ -592,14 +592,18 @@ router.post('/staff/:id/password', adminOnly, wrap((req, res) => {
 /*
  * Removing a staff account.
  *
- * Two bookkeeping columns point at a user without being a record of anything
- * they did: who set somebody's password, and the actor on an audit row — and
- * the audit row keeps the person's name as plain text regardless. Those are
- * detached. Everything else that names a user is the clinic's own history —
- * a consultation, a prescription, a result, a bill — and must never be
- * quietly cut loose from the person who signed it.
+ * Three bookkeeping columns point at a user without being a record of
+ * anything they did: who set somebody's password, the actor on an audit row
+ * — which keeps the person's name as plain text regardless — and who pressed
+ * send on a copy of a bill, which the audit row records by name too and
+ * which is a clerical act rather than a signature. Those are detached, and
+ * the document itself stays where it is. Everything else that names a user
+ * is the clinic's own history — a consultation, a prescription, a result, a
+ * bill — and must never be quietly cut loose from the person who signed it.
  */
-const USER_FK_DETACHED = new Set(['audit_logs.user_id', 'users.password_set_by']);
+const USER_FK_DETACHED = new Set([
+  'audit_logs.user_id', 'users.password_set_by', 'document_shares.sent_by',
+]);
 
 const singular = (table) => table.replace(/_/g, ' ')
   .replace(/ies$/, 'y').replace(/ses$/, 's').replace(/s$/, '');

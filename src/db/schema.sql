@@ -1595,3 +1595,39 @@ CREATE TABLE IF NOT EXISTS ledger_positions (
   UNIQUE (as_on, line)
 );
 CREATE INDEX IF NOT EXISTS idx_positions ON ledger_positions(as_on);
+
+-- ------------------------------------------------------------ sent documents
+-- A bill sent to a patient's phone instead of handed to them on paper.
+--
+-- The file is kept, not rebuilt on demand. WhatsApp fetches the link once to
+-- attach the document, but the patient keeps the link and may open it months
+-- later, and what they see then has to be the bill that was sent — not the
+-- bill as the system would draw it today. A tax invoice that quietly changes
+-- after it has gone out is worse than no copy at all.
+--
+-- The token is the only thing guarding it, so it is long and random, and the
+-- row carries an expiry: a link that outlives the clinic's interest in it is
+-- a patient's medical spending sitting on the open internet forever.
+CREATE TABLE IF NOT EXISTS document_shares (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  token         TEXT NOT NULL UNIQUE,
+  kind          TEXT NOT NULL CHECK (kind IN ('invoice','pharmacy_sale')),
+  ref_id        INTEGER NOT NULL,
+  doc_no        TEXT,
+  filename      TEXT NOT NULL,
+  -- Emptied once the link expires: the record of the send is worth keeping,
+  -- the patient's bill sitting in the database afterwards is not.
+  content       BLOB,
+  bytes         INTEGER NOT NULL DEFAULT 0,
+  wa_number     TEXT,
+  channel       TEXT NOT NULL DEFAULT 'whatsapp'
+                  CHECK (channel IN ('whatsapp','link')),
+  message_id    INTEGER REFERENCES whatsapp_messages(id),
+  sent_by       INTEGER REFERENCES users(id),
+  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  expires_at    TEXT,
+  downloads     INTEGER NOT NULL DEFAULT 0,
+  last_seen_at  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_doc_shares_ref ON document_shares(kind, ref_id);
+CREATE INDEX IF NOT EXISTS idx_doc_shares_made ON document_shares(created_at);

@@ -10,6 +10,7 @@ const billing = require('../services/billing');
 const whatsapp = require('../services/whatsapp');
 const audit = require('../lib/audit');
 const config = require('../config');
+const billShare = require('../services/billShare');
 
 const router = express.Router();
 const rxRoles = requireRole('pharmacy', 'doctor', 'nurse', 'reception', 'cashier');
@@ -646,7 +647,7 @@ router.get('/sales', rxRoles, wrap((req, res) => {
 router.get('/sales/:id', rxRoles, wrap((req, res) => {
   const id = int(req.params.id);
   const sale = db.prepare(
-    `SELECT s.*, p.uhid, p.first_name, p.last_name, p.phone FROM pharmacy_sales s
+    `SELECT s.*, p.uhid, p.first_name, p.last_name, p.phone, p.whatsapp FROM pharmacy_sales s
        LEFT JOIN patients p ON p.id = s.patient_id WHERE s.id = ?`
   ).get(id);
   if (!sale) throw notFound('Pharmacy bill not found');
@@ -729,6 +730,55 @@ router.get('/sales/:id/invoice', rxRoles, wrap((req, res) => {
     reverseCharge: 'No',
     currencySymbol: config.clinic.currencySymbol,
   });
+}));
+
+/*
+ * ----------------------------------------------------- the bill, as a file
+ *
+ * The chemist's counter hands over a thermal roll. A patient who would rather
+ * have the bill on their phone — to claim it, to show a relative, or simply
+ * not to lose it — gets the same tax invoice as a PDF, with the batch numbers
+ * and the tax split the printed one carries.
+ *
+ * Who may send it: the pharmacist who raised it and the cashier who may be
+ * settling it, which is the counter either way.
+ */
+const billRoles = requireRole('pharmacy', 'cashier');
+
+router.get('/sales/:id/pdf', rxRoles, wrap((req, res) => {
+  const doc = billShare.build('pharmacy_sale', int(req.params.id));
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="${doc.filename}"`);
+  res.end(doc.content);
+}));
+
+/**
+ * Send the pharmacy bill to a WhatsApp number.
+ *
+ * As with the clinic's bill, a refusal comes back as `sent: false` and a
+ * reason rather than as an error: the counter has to hear it immediately,
+ * because the alternative is a printed roll and the patient is still there.
+ */
+router.post('/sales/:id/whatsapp', billRoles, wrap(async (req, res) => {
+  const id = int(req.params.id);
+  const out = await billShare.sendToWhatsApp({
+    kind: 'pharmacy_sale', refId: id, to: str(req.body.to), userId: req.user.id,
+  });
+  audit.log(req, 'share', 'pharmacy_sale', id, {
+    channel: 'whatsapp', to: out.to, sent: out.sent, docNo: out.docNo, error: out.error,
+  });
+  res.json(out);
+}));
+
+router.post('/sales/:id/share-link', billRoles, wrap((req, res) => {
+  const id = int(req.params.id);
+  const out = billShare.linkOnly({ kind: 'pharmacy_sale', refId: id, userId: req.user.id });
+  audit.log(req, 'share', 'pharmacy_sale', id, { channel: 'link', docNo: out.docNo });
+  res.json(out);
+}));
+
+router.get('/sales/:id/shares', rxRoles, wrap((req, res) => {
+  res.json(billShare.history('pharmacy_sale', int(req.params.id)));
 }));
 
 module.exports = router;

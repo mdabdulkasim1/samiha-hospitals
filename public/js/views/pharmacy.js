@@ -377,9 +377,13 @@
               body.querySelector('#cs-out').innerHTML = `<div class="alert ok mt">
                 <b>Bill ${UI.esc(res.sale.bill_no)}</b> — ${UI.money(res.sale.net)}
                 ${res.balance > 0 ? `· <b style="color:var(--danger)">${UI.money(res.balance)} still due</b>` : '· paid in full'}
-                <div class="mt"><button class="btn sm" id="cs-print">Print the bill</button></div></div>`;
+                <div class="mt"><button class="btn sm" id="cs-print">Print or send the bill</button></div></div>`;
               UI.ok('Sale completed.');
-              body.querySelector('#cs-print').addEventListener('click', () => printGstBill(res.sale.id));
+              body.querySelector('#cs-print').addEventListener('click', () => deliverGstBill(res.sale.id, {
+                billNo: res.sale.bill_no,
+                name: payload.customerName || '',
+                number: payload.customerPhone || '',
+              }));
               cart.length = 0;
               drawCart();
               body.querySelector('#cs-form').reset();
@@ -449,13 +453,13 @@
                   ? UI.money(r.paid_amount) : UI.badge('On the visit bill', 'teal') },
                 { label: 'By', render: (r) => UI.esc(r.by_name || '') },
                 { label: 'When', render: (r) => UI.esc(UI.dateTime(r.created_at)) },
-                { label: '', render: (r) => `<button class="btn ghost sm" data-bill="${r.id}">Print</button>` },
+                { label: '', render: (r) => `<button class="btn ghost sm" data-bill="${r.id}">Print / send</button>` },
               ], data.rows, { emptyText: 'No pharmacy bills yet.' })}</div></div>`;
 
           // A tax invoice has to be reproducible on demand, so any bill reprints
           // exactly as it was issued.
           body.querySelectorAll('[data-bill]').forEach((b) =>
-            b.addEventListener('click', () => printGstBill(Number(b.dataset.bill))));
+            b.addEventListener('click', () => deliverGstBill(Number(b.dataset.bill))));
         },
 
         /*
@@ -704,10 +708,12 @@
             : `added to the hospital bill ${UI.esc(res.invoice.invoice_no)}, settled at discharge.`}
           ${res.invoice.balance > 0.009
             ? `<div class="mt"><b style="color:var(--danger)">${UI.money(res.invoice.balance)} still to collect.</b></div>` : ''}
-          <div class="mt"><button class="btn sm" id="disp-print">Print the tax invoice</button>
+          <div class="mt"><button class="btn sm" id="disp-print">Print or send the tax invoice</button>
             <button class="btn ghost sm" id="disp-back">Back to the queue</button></div></div>`;
         UI.ok(res.receiptNo ? 'Medicines dispensed and paid for.' : 'Medicines dispensed and billed.');
-        el.querySelector('#disp-print').addEventListener('click', () => printGstBill(res.sale.id));
+        el.querySelector('#disp-print').addEventListener('click', () => deliverGstBill(res.sale.id, {
+          billNo: res.sale.bill_no,
+        }));
         el.querySelector('#disp-back').addEventListener('click', () => APP.navigate('pharmacy'));
       } catch (err) {
         UI.err(err.message);
@@ -728,6 +734,38 @@
    * MRP already includes GST, so the tax is shown extracted from it — the
    * patient pays the printed MRP and not a paisa more.
    */
+  /**
+   * How the chemist's bill leaves the counter.
+   *
+   * The thermal roll is still one press away. The other sends the same tax
+   * invoice — batch numbers, expiry dates, the rate-wise tax split and all —
+   * as a PDF to a WhatsApp number, which is a patient who still has their
+   * bill when they come back in six months, and a roll of paper the clinic
+   * did not spend.
+   */
+  async function deliverGstBill(saleId, hint = {}) {
+    let info = hint;
+    if (!info.billNo) {
+      try {
+        const sale = await API.get(`/api/pharmacy/sales/${saleId}`);
+        const row = sale.sale || sale;
+        info = {
+          billNo: row.bill_no,
+          name: `${row.first_name || ''} ${row.last_name || ''}`.trim() || row.customer_name || '',
+          number: row.whatsapp || row.phone || row.customer_phone || '',
+        };
+      } catch { info = {}; }
+    }
+    BillDelivery.open({
+      kind: 'pharmacy_sale',
+      id: saleId,
+      docNo: info.billNo,
+      patientName: info.name,
+      suggested: info.number,
+      print: () => printGstBill(saleId),
+    });
+  }
+
   async function printGstBill(saleId) {
     const inv = await API.get(`/api/pharmacy/sales/${saleId}/invoice`);
     const { supplier: sup, sale, items, summary, hsnSummary } = inv;
