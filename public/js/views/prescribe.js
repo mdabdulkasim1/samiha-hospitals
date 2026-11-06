@@ -55,7 +55,15 @@
     const strength = String(drug.strength || '').trim();
     if (!strength) return name;
     const squash = (x) => x.toLowerCase().replace(/\s+/g, '');
-    return squash(name).endsWith(squash(strength)) ? name : `${name} ${strength}`;
+    if (squash(name).endsWith(squash(strength))) return name;
+    // Dolo 650 with "650 mg" beside it is one strength, not two: the number is
+    // already in the name, so only the unit goes after it. Same rule as the
+    // server's, so the picker reads like the sheet it will print.
+    const m = strength.match(/^(\d+(?:\.\d+)?)\s*(\S.*)$/);
+    if (m && new RegExp(`(^|[^\\d.])${m[1].replace('.', '\\.')}$`).test(name)) {
+      return `${name} ${m[2]}`;
+    }
+    return `${name} ${strength}`;
   }
 
   const ROUTES = ['oral', 'topical', 'inhalation', 'eye', 'ear', 'nasal', 'iv', 'im', 'sc', 'rectal'];

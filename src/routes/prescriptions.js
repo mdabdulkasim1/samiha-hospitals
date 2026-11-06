@@ -35,7 +35,19 @@ function drugLabel(drug) {
   const strength = String(drug.strength || '').trim();
   if (!strength) return name;
   const squash = (s) => s.toLowerCase().replace(/\s+/g, '');
-  return squash(name).endsWith(squash(strength)) ? name : `${name} ${strength}`;
+  if (squash(name).endsWith(squash(strength))) return name;
+  /*
+   * An Indian brand carries its strength as a bare number — Dolo 650, Telma
+   * 40, Thyronorm 50 — and the formulary records "650 mg" beside it. Adding
+   * that whole prints "Dolo 650 650 mg", which is how a pharmacist ends up
+   * reading a sheet twice to work out what one dose is. The number is already
+   * on the name, so only the unit is put after it: "Dolo 650 mg".
+   */
+  const m = strength.match(/^(\d+(?:\.\d+)?)\s*(\S.*)$/);
+  if (m && new RegExp(`(^|[^\\d.])${m[1].replace('.', '\\.')}$`).test(name)) {
+    return `${name} ${m[2]}`;
+  }
+  return `${name} ${strength}`;
 }
 const prescriberRoles = requireRole('doctor');
 // The pharmacy and the desk read prescriptions; only a doctor writes one.

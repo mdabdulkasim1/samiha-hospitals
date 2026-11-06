@@ -113,6 +113,41 @@ test('a doctor writes a prescription from the pharmacy formulary', async () => {
   assert.strictEqual(rx.body.items[1].quantity, 5);
 });
 
+test('a brand that carries its strength in its name is not given it twice', async () => {
+  /*
+   * Dolo 650, Telma 40, Thyronorm 50 — an Indian brand puts the milligrams in
+   * the name, and the formulary records them again in the strength column.
+   * Printing both put "Dolo 650 650 mg" on the sheet: ten of the formulary's
+   * fifty-nine branded medicines read that way, and a pharmacist reading one
+   * has to work out whether 650 is the strength or the count.
+   */
+  const drugs = (await api('GET', '/api/pharmacy/drugs?limit=300', undefined, 'imran')).body;
+  const pick = (code) => drugs.find((d) => d.code === code).id;
+
+  const rx = await api('POST', '/api/prescriptions', {
+    patientId: ids.patient,
+    items: [
+      { drugId: pick('PARA500'), doseMorning: 1, durationDays: 1 },   // Dolo 650 · 650 mg
+      { drugId: pick('THYRO50'), doseMorning: 1, durationDays: 1 },   // Thyronorm 50 · 50 mcg
+      { drugId: pick('TELMI40'), doseMorning: 1, durationDays: 1 },   // Telma 40 · 40 mg
+      { drugId: pick('CETZ10'), doseMorning: 1, durationDays: 1 },    // a name with no number
+    ],
+  }, 'imran');
+  assert.strictEqual(rx.status, 201, JSON.stringify(rx.body));
+
+  const names = rx.body.items.map((i) => i.drug_name);
+  assert.strictEqual(names[0], 'Dolo 650 mg', 'the number is the name\'s, the unit is added to it');
+  assert.strictEqual(names[1], 'Thyronorm 50 mcg', 'and the unit is the one the formulary gives');
+  assert.strictEqual(names[2], 'Telma 40 mg');
+
+  for (const n of names) {
+    assert.ok(!/\b(\d+(?:\.\d+)?)\s+\1\b/.test(n), `${n} does not say its strength twice`);
+  }
+
+  // A medicine whose name carries no strength still gets the whole of it.
+  assert.strictEqual(names[3], 'Cetzine 10 mg');
+});
+
 test('how to take it is captured as morning, noon and night', async () => {
   const res = await api('POST', '/api/prescriptions', {
     patientId: ids.patient,
