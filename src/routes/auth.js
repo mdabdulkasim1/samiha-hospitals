@@ -42,7 +42,7 @@ router.post('/login', wrap((req, res) => {
     secure: config.isProd,
     maxAge: config.session.ttlHours * 3600_000,
   });
-  audit.log({ ...req, user }, 'login', 'user', user.id);
+  audit.log(req, 'login', 'user', user.id, null, user);
   res.json({
     token: session.token,
     expiresAt: session.expiresAt,
@@ -206,8 +206,8 @@ router.post('/reset-password', wrap(async (req, res) => {
   mailer.send({ to: config.mail.recoveryEmail, subject: msg.subject, text: msg.text })
     .catch((err) => console.error('[mail]', err.message));
 
-  audit.log({ ...req, user: { id: user.id, name: user.name, role: user.role } },
-    'reset_password', 'user', user.id);
+  audit.log(req, 'reset_password', 'user', user.id, null,
+    { id: user.id, name: user.name, role: user.role });
   res.json({ ok: true, message: 'Password updated. You can sign in with it now.' });
 }));
 
