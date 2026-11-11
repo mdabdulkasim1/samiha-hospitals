@@ -6,7 +6,7 @@
   "main": "src/server.js",
   "type": "commonjs",
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=20.0.0 <23.0.0"
   },
   "scripts": {
     "start": "node src/server.js",
@@ -16,12 +16,14 @@
     "db:reset": "node src/db/reset.js",
     "demo": "node scripts/demo-walkthrough.js",
     "setup": "npm run db:migrate && npm run db:seed",
-    "test": "node --test tests/*.test.js"
+    "test": "node --test tests/"
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0",
     "express": "^4.21.2",
+    "mysql2": "^3.24.6",
     "nodemailer": "^9.1.0",
-    "qrcode-generator": "^2.0.4"
+    "qrcode-generator": "^2.0.4",
+    "synckit": "^0.12.3"
   }
 }

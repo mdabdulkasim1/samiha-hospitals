@@ -165,9 +165,10 @@ router.post('/forgot-password', wrap(async (req, res) => {
 
   // Offline installs have no mailbox to check, so the administrator needs the
   // link itself — it is already visible to them in the outbox either way.
+  // Never leak devLink in production environments.
   res.json({
     ...generic,
-    ...(config.mail.provider !== 'smtp'
+    ...(!config.isProd && config.mail.provider !== 'smtp'
       ? { devLink: link, devNote: 'Email is in offline mode — this link is shown because no message was actually sent. Set MAIL_PROVIDER=smtp to email it instead.' }
       : {}),
     expiresAt,

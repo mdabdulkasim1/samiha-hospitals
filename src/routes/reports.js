@@ -132,7 +132,7 @@ router.get('/dashboard', requireAuth, wrap((req, res) => {
         `SELECT COUNT(*) AS c FROM (
            SELECT d.id FROM drugs d LEFT JOIN drug_batches b ON b.drug_id = d.id
             WHERE d.active = 1 GROUP BY d.id
-           HAVING COALESCE(SUM(CASE WHEN date(b.expiry_date) >= date('now') THEN b.qty_available ELSE 0 END),0) <= d.reorder_level)`
+           HAVING COALESCE(SUM(CASE WHEN date(b.expiry_date) >= date('now') THEN b.qty_available ELSE 0 END),0) <= d.reorder_level) AS _sub`
       ).get().c,
     },
     patients: (() => {

@@ -40,6 +40,7 @@ app.get('/api/health', (_req, res) => {
     ok: true,
     app: config.clinic.name,
     time: new Date().toISOString(),
+    dbEngine: config.dbEngine,
     whatsappProvider: config.whatsapp.provider,
     patients: db.prepare('SELECT COUNT(*) AS c FROM patients').get().c,
   });
@@ -198,7 +199,10 @@ if (require.main === module) {
     console.log(`\n  ${config.clinic.name} — ERP`);
     console.log(`  ▸ http://localhost:${config.port}`);
     console.log(`  ▸ environment: ${config.nodeEnv}`);
-    console.log(`  ▸ database:    ${config.dbFile}`);
+    const dbInfo = config.dbEngine === 'mysql'
+      ? `MySQL (${config.mysql.host}:${config.mysql.port}/${config.mysql.database})`
+      : config.dbFile;
+    console.log(`  ▸ database:    ${dbInfo}`);
     console.log(`  ▸ WhatsApp:    ${config.whatsapp.provider}` +
       (config.whatsapp.provider === 'mock' ? ' (simulator — no messages leave this machine)' : ''));
     console.log(`  ▸ Email:       ${config.mail.provider} → all recovery mail to ${config.mail.recoveryEmail}` +

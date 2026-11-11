@@ -1,15 +1,20 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const Database = require('better-sqlite3');
 const config = require('../config');
 
-fs.mkdirSync(path.dirname(config.dbFile), { recursive: true });
-
-const db = new Database(config.dbFile);
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
-db.pragma('busy_timeout = 5000');
+let db;
+if (config.dbEngine === 'mysql') {
+  db = require('./mysql-client');
+} else {
+  console.warn('[database] ⚠ SQLite is DEPRECATED for Samiha Polyclinic ERP. Please use MySQL (DB_ENGINE=mysql).');
+  const Database = require('better-sqlite3');
+  fs.mkdirSync(path.dirname(config.dbFile), { recursive: true });
+  db = new Database(config.dbFile);
+  db.pragma('journal_mode = WAL');
+  db.pragma('foreign_keys = ON');
+  db.pragma('busy_timeout = 5000');
+}
 
 /** Add a column to an existing table if it is not there yet. */
 /**
@@ -55,6 +60,7 @@ function backfillDoctorCodes() {
 
 /** Adds the column if it is missing. Returns true when it actually added it. */
 function ensureColumn(table, column, definition) {
+  if (config.dbEngine === 'mysql') return false;
   const exists = db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
   if (exists) return false;
   db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
@@ -63,6 +69,7 @@ function ensureColumn(table, column, definition) {
 
 /** Run the schema file — safe to call repeatedly (everything is IF NOT EXISTS). */
 function migrate() {
+  if (config.dbEngine === 'mysql') return;
   const sql = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
   db.exec(sql);
   // Columns added after the first release, for databases created earlier.

@@ -14,10 +14,12 @@ const path = require('node:path');
 // Run against a throwaway database so the suite is repeatable and never
 // touches the working clinic data.
 const tmpDb = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'samiha-test-')), 'test.db');
+process.env.DB_ENGINE = 'sqlite';
 process.env.DB_FILE = tmpDb;
 process.env.SESSION_SECRET = 'test-secret';
 
 require('../src/db/seed');
+const { db } = require('../src/db');
 const app = require('../src/server');
 
 let server;
@@ -73,6 +75,7 @@ test.before(async () => {
 
 test.after(() => {
   if (server) server.close();
+  try { db.close(); } catch {}
   fs.rmSync(path.dirname(tmpDb), { recursive: true, force: true });
 });
 

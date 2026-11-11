@@ -30,7 +30,15 @@ module.exports = {
   port: Number(env.PORT || 3000),
   nodeEnv: env.NODE_ENV || 'development',
   isProd: env.NODE_ENV === 'production',
+  dbEngine: env.DB_ENGINE || 'mysql',         // 'mysql' (default) | 'sqlite' (deprecated)
   dbFile: path.resolve(root, env.DB_FILE || './data/samiha.db'),
+  mysql: {
+    host: env.DB_HOST || 'localhost',
+    port: Number(env.DB_PORT || 3306),
+    database: env.DB_NAME || 'samiha-polyclinic',
+    user: env.DB_USER || 'root',
+    password: env.DB_PASSWORD || '',
+  },
   session: {
     secret: env.SESSION_SECRET || 'samiha-dev-secret-change-me',
     ttlHours: Number(env.SESSION_TTL_HOURS || 12),

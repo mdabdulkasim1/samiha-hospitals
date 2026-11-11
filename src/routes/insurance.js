@@ -763,7 +763,7 @@ router.get('/receivables', viewRoles, wrap((_req, res) => {
      FROM (SELECT COALESCE(julianday('now') - julianday(submitted_at), 0) AS d,
                   (approved_amount - settled_amount) AS amt
              FROM claims
-            WHERE status IN ('submitted','under_process','query_raised','approved','partially_settled'))`
+            WHERE status IN ('submitted','under_process','query_raised','approved','partially_settled')) AS _sub`
   ).get();
 
   const overdue = db.prepare(

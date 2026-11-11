@@ -12,6 +12,13 @@ const database = () => require('../db').db;
  * UHIDs, invoice numbers and IP numbers are gap-free and never collide.
  */
 function nextSeq(name) {
+  if (require('../config').dbEngine === 'mysql') {
+    database().prepare(
+      'INSERT INTO counters (`name`, `value`) VALUES (?, 1) ON DUPLICATE KEY UPDATE `value` = `value` + 1'
+    ).run(name);
+    const row = database().prepare('SELECT `value` FROM counters WHERE `name` = ?').get(name);
+    return row.value;
+  }
   const row = database().prepare(
     `INSERT INTO counters (name, value) VALUES (?, 1)
      ON CONFLICT(name) DO UPDATE SET value = value + 1

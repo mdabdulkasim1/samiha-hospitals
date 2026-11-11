@@ -122,7 +122,14 @@ const PATIENT = {
     appointment ? `Booked as ${appointment.appt_no}, token ${appointment.token_no}.`
                 : `Walked in without an appointment — the desk takes him anyway.`,
     `Visit ${visitRow.visit_no || ''} opened for ${doctor.name}. He is now in the waiting room.`,
-    `The cashier can already see him on Billing → Today's collections, with no bill yet.`,
+    `The cashier can already see him on Billing → Today's collections.`,
+  ]);
+
+  // 3b ------------------------------------------------ consultation fee
+  const fee = await cash('POST', `/api/visits/${visitId}/consultation-fee`, { mode: 'cash' });
+  say('Kavitha at the billing desk (cashier@samiha.local)', 'Billing → Collect Fee', [
+    `Collected ₹${fee.fee} consultation fee for ${doctor.name}.`,
+    `Receipt issued. Patient moves on to Sister Mary at the nurse station.`,
   ]);
 
   // 4 ---------------------------------------------------------------- vitals
@@ -184,6 +191,7 @@ const PATIENT = {
   ]);
 
   // 6 ------------------------------------------------------------------- lab
+  await cash('POST', `/api/billing/diagnostics/${order.id}/release`, { reason: 'Physician diabetes review — urgent processing' });
   await lab('POST', `/api/lab/orders/${order.id}/collect`, { sampleType: 'blood' });
   const full = await lab('GET', `/api/lab/orders/${order.id}`);
   const VALUE = { HBA1C: '9.4', FBS: '186', CREAT: '1.1', LIPID: '242', URINE: 'Glucose 2+, no ketones' };
