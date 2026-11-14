@@ -474,6 +474,22 @@
       const period = body.querySelector('#er-month').value || thisMonth();
       const r = await API.get(`/api/expenses/report?period=${period}`);
       body.querySelector('#er-body').innerHTML = reportHtml(r);
+
+      /*
+       * The stock reconciliation belongs on the same page as the month's
+       * costs: the accounts office asked for both in one report, and the
+       * stock figure is the one that decides whether the cost of medicines
+       * sold can be trusted. Fetched after the rest is drawn so a slow
+       * ledger never holds up the expenses.
+       */
+      try {
+        const stock = await API.get('/api/stock/reconciliation'
+          + `?from=${r.from}&to=${r.to}`);
+        body.querySelector('#er-body').insertAdjacentHTML('beforeend', stockHtml(stock));
+      } catch (err) {
+        body.querySelector('#er-body').insertAdjacentHTML('beforeend',
+          `<div class="alert warn mt">The stock reconciliation could not be read: ${UI.esc(err.message)}</div>`);
+      }
     };
     body.querySelector('#er-month').addEventListener('change', draw);
     body.querySelector('#er-print').addEventListener('click', () => {
@@ -584,6 +600,41 @@
         ${r.flags.missingDocuments.entries === 1 ? 'entry has' : 'entries have'} no invoice number
         or nothing filed against them</b> — ${money(r.flags.missingDocuments.amount)} in all.
         Filter the book by this month and look for the ones without a 📎.</div>` : ''}`;
+  }
+
+  /**
+   * The stock reconciliation, summarised under the month's costs.
+   *
+   * Short on purpose. The full statement — every movement line, the batches
+   * carrying the value, the short-dated ones — is the pharmacist's screen
+   * under Pharmacy → Reconciliation; what an accountant needs here is the
+   * four figures and whether they agree.
+   */
+  function stockHtml(s) {
+    return `
+      <h3 class="mt">Stock reconciliation</h3>
+      <p class="muted small">Medicines, at cost. ${UI.esc(s.note)}</p>
+      <table class="plain small"><tbody>
+        <tr><td>Opening stock on ${UI.esc(UI.date(s.openingDate))}</td>
+          <td class="num">${money(s.opening.value)}</td><td></td></tr>
+        <tr><td>Purchases and stock found</td><td class="num">${money(s.inward)}</td>
+          <td class="muted small">received into the pharmacy</td></tr>
+        <tr><td>Sold, issued, returned, written off</td><td class="num">− ${money(s.outward)}</td>
+          <td class="muted small">the cost of medicines sold is inside this</td></tr>
+        <tr class="strong"><td><b>Closing stock on ${UI.esc(UI.date(s.to))}</b></td>
+          <td class="num">${money(s.closing.value)}</td>
+          <td class="muted small">${UI.num(s.closing.units)} units</td></tr>
+        <tr><td>Difference against the movements</td>
+          <td class="num"${s.reconciles ? '' : ' style="color:var(--danger)"'}>${money(s.difference)}</td>
+          <td class="muted small">${s.reconciles ? 'it reconciles' : 'stock moved without being recorded'}</td></tr>
+      </tbody></table>
+      ${s.unpriced.batches ? `<div class="alert warn mt">
+        <b>${UI.num(s.unpriced.batches)} batches on the shelf have no cost price</b> —
+        ${UI.num(s.unpriced.units)} units valued at nothing, so the closing figure is understated.
+        ${UI.esc(s.unpriced.note)}</div>` : ''}
+      ${s.reconciles ? '' : `<div class="alert danger mt"><b>The stock does not reconcile.</b>
+        ${money(Math.abs(s.difference))} is unexplained. Pharmacy → Reconciliation has the
+        movement by movement statement.</div>`}`;
   }
 
   // ------------------------------------------------------------- the headings

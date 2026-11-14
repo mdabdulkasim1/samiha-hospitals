@@ -987,4 +987,129 @@ router.post('/write-off-expired', stockRoles, wrap((req, res) => {
   res.json({ written: batches.length, value: out, batches });
 }));
 
+/*
+ * ---------------------------------------- stock that leaves without being sold
+ *
+ * Until now the only way a pack could leave the shelf other than by being
+ * dispensed was the bulk write-off of everything already expired. A crushed
+ * box, a vial dropped on the floor, a strip that cannot be accounted for and
+ * a carton sent back to the supplier were all either invisible or filed as a
+ * stock-take adjustment, which is the line that is supposed to mean "we
+ * counted and the count was out".
+ *
+ * They are different events and the reconciliation has to tell them apart:
+ * expiry is a buying mistake, damage is a handling one, a return is money
+ * owed back by the supplier, and a shortage is none of those.
+ */
+const WRITE_OFF_REASONS = ['expired', 'damaged', 'lost', 'recalled'];
+
+router.post('/write-off', stockRoles, wrap((req, res) => {
+  required(req.body, ['batchId', 'qty', 'reason']);
+  const batch = db.prepare('SELECT * FROM drug_batches WHERE id = ?').get(int(req.body.batchId));
+  if (!batch) throw notFound('Batch not found');
+  const qty = num(req.body.qty);
+  if (!(qty > 0)) throw badRequest('How many are being written off?');
+  if (qty > batch.qty_available) {
+    throw badRequest(`There are only ${batch.qty_available} of batch ${batch.batch_no} on the shelf.`);
+  }
+  const reason = oneOf(req.body.reason, WRITE_OFF_REASONS, 'reason');
+  const note = str(req.body.notes);
+  if (reason !== 'expired' && !note) {
+    throw badRequest('Say what happened. A pack written off as damaged or lost with no '
+      + 'explanation is indistinguishable from one that walked.');
+  }
+
+  const value = round2(qty * batch.purchase_price);
+  db.transaction(() => {
+    db.prepare('UPDATE drug_batches SET qty_available = qty_available - ? WHERE id = ?').run(qty, batch.id);
+    pharmacy.writeLedger({
+      drugId: batch.drug_id, batchId: batch.id, txnType: 'expiry', qtyDelta: -qty,
+      refType: 'write_off', refId: batch.id, userId: req.user.id, reason,
+      notes: note || `${reason} — batch ${batch.batch_no}`,
+    });
+  })();
+
+  audit.log(req, 'write_off', 'drug_batch', batch.id,
+    { batch: batch.batch_no, qty, reason, value, notes: note });
+  res.status(201).json({ ...db.prepare('SELECT * FROM drug_batches WHERE id = ?').get(batch.id), qty, reason, value });
+}));
+
+/**
+ * A pack going back to the supplier.
+ *
+ * The credit note is recorded with it. A return the clinic was never
+ * credited for is the one worth chasing, and with only the quantity written
+ * down it is invisible — the stock is gone and nothing says anybody owes
+ * anything for it.
+ */
+router.post('/returns', stockRoles, wrap((req, res) => {
+  required(req.body, ['batchId', 'qty']);
+  const batch = db.prepare('SELECT * FROM drug_batches WHERE id = ?').get(int(req.body.batchId));
+  if (!batch) throw notFound('Batch not found');
+  const qty = num(req.body.qty);
+  if (!(qty > 0)) throw badRequest('How many are going back?');
+  if (qty > batch.qty_available) {
+    throw badRequest(`There are only ${batch.qty_available} of batch ${batch.batch_no} on the shelf.`);
+  }
+
+  // What the supplier has agreed to credit, which need not be what was paid:
+  // a return after the credit period is often taken at a discount, or not at
+  // all. Left empty it reads as "sent back, nothing credited yet".
+  const credit = req.body.creditAmount === undefined || req.body.creditAmount === ''
+    ? null : money(req.body.creditAmount);
+  const value = round2(qty * batch.purchase_price);
+
+  db.transaction(() => {
+    db.prepare('UPDATE drug_batches SET qty_available = qty_available - ? WHERE id = ?').run(qty, batch.id);
+    pharmacy.writeLedger({
+      drugId: batch.drug_id, batchId: batch.id, txnType: 'return', qtyDelta: -qty,
+      refType: 'supplier_return', refId: batch.id, userId: req.user.id,
+      reason: str(req.body.reason) || 'returned to supplier',
+      creditAmount: credit,
+      notes: str(req.body.notes) || `Returned to ${batch.supplier || 'the supplier'} — batch ${batch.batch_no}`,
+    });
+  })();
+
+  audit.log(req, 'supplier_return', 'drug_batch', batch.id,
+    { batch: batch.batch_no, qty, value, credit });
+  res.status(201).json({ batchId: batch.id, qty, value, credit });
+}));
+
+/**
+ * The stock reconciliation statement.
+ *
+ * Readable by whoever can read the register: the pharmacist has to explain a
+ * difference, and management has to see there is not one.
+ */
+router.get('/reconciliation', readRoles, wrap((req, res) => {
+  const recon = require('../services/stockReconciliation');
+  res.json({
+    ...recon.statement(str(req.query.from), str(req.query.to)),
+    snapshots: recon.snapshots(),
+  });
+}));
+
+/**
+ * Closing a period: the shelf written down as it stands.
+ *
+ * Without one of these the reconciliation's opening figure is today's shelf
+ * rolled backwards through the same movements it adds up, so the statement
+ * cannot come out wrong. This is what turns it into a check.
+ */
+router.post('/snapshots', stockRoles, wrap((req, res) => {
+  const recon = require('../services/stockReconciliation');
+  const asOn = str(req.body.asOn) || today();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(asOn)) throw badRequest('Give the date as YYYY-MM-DD.');
+  if (asOn > today()) throw badRequest('A stock position cannot be written down for a day that has not happened.');
+
+  const out = recon.takeSnapshot({ asOn, notes: str(req.body.notes), userId: req.user.id });
+  if (out.alreadyTaken) {
+    throw conflict(`Stock was already written down at the close of ${asOn} — `
+      + `${out.units} units, worth ${out.value}.`);
+  }
+  audit.log(req, 'stock_snapshot', 'stock_snapshot', out.id,
+    { asOn, units: out.units, value: out.value, batches: out.batches });
+  res.status(201).json(out);
+}));
+
 module.exports = router;

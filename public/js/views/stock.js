@@ -1168,5 +1168,174 @@
     await load();
   }
 
-  window.StockUI = { barcodes, purchases, register, stocktake, opening, scanBox, printLabels, openLabelDialog, openMovements, openGrn, openSetStock };
+
+  /**
+   * The stock reconciliation statement.
+   *
+   * Opening, plus what came in, less what went out, equals closing — and
+   * beside the computed figure, what the shelf actually holds. The two are
+   * built from the same ledger, so a difference means stock moved without
+   * a movement being written, which is a fault rather than a rounding.
+   *
+   * At cost throughout. This answers what the clinic's money on the shelf
+   * is, and the margin is a different question asked elsewhere.
+   */
+  async function reconciliation(body) {
+    const to = new Date().toISOString().slice(0, 10);
+    const from = `${to.slice(0, 7)}-01`;
+
+    body.innerHTML = `
+      <div class="card"><div class="card-head"><h3>Stock reconciliation</h3>
+        <input type="date" id="rc-from" value="${from}" style="max-width:165px">
+        <input type="date" id="rc-to" value="${to}" style="max-width:165px">
+        ${APP.can(['pharmacy']) ? '<button class="btn sm" id="rc-close">Close a period</button>' : ''}
+        <button class="btn ghost sm" id="rc-print">Print</button>
+      </div><div class="card-body" id="rc-body">${UI.loading()}</div></div>`;
+
+    const draw = async () => {
+      const r = await API.get('/api/stock/reconciliation' + API.qs({
+        from: body.querySelector('#rc-from').value,
+        to: body.querySelector('#rc-to').value,
+      }));
+      body.querySelector('#rc-body').innerHTML = statementHtml(r);
+    };
+    body.querySelectorAll('#rc-from, #rc-to').forEach((f) => f.addEventListener('change', draw));
+    const closeBtn = body.querySelector('#rc-close');
+    if (closeBtn) closeBtn.addEventListener('click', () => closePeriod(draw));
+    body.querySelector('#rc-print').addEventListener('click', () => UI.print(
+      `${UI.sheetStyles()}<div class="sheet" style="width:auto">
+        ${UI.sheetHead('Stock reconciliation')}
+        ${body.querySelector('#rc-body').innerHTML}</div>`,
+      'Stock reconciliation', { standalone: true, width: 1000 }));
+    await draw();
+  }
+
+  /**
+   * Writing the shelf down, which is what makes the statement a check.
+   *
+   * Offered as "close a period" rather than "take a snapshot" because that
+   * is what it is: after this, the next statement starts from a counted
+   * figure instead of from arithmetic, and can therefore come out wrong.
+   */
+  function closePeriod(onDone) {
+    const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    UI.modal({
+      title: 'Close a period',
+      size: 'narrow',
+      body: `<p class="muted" style="margin-top:0">This writes down what is on the shelf, batch by
+          batch, as the close of the day you choose. The next reconciliation starts from that
+          figure rather than working it back from today — which is the only way it can tell you
+          that something has gone missing.</p>
+        ${UI.field({ name: 'asOn', label: 'As at the close of', type: 'date', value: yesterday,
+    required: true, hint: 'Usually the last day of the month just finished.' })}
+        ${UI.field({ name: 'notes', label: 'Note', placeholder: 'Counted by whom, anything unusual' })}
+        <div class="muted small">Do it after the physical count, not before.</div>`,
+      footer: `<button class="btn ghost" data-act="__close">Cancel</button>
+               <button class="btn" data-act="close">Write it down</button>`,
+      async onAction(act, modal) {
+        if (act !== 'close') return undefined;
+        const values = UI.formValues(modal);
+        try {
+          const out = await API.post('/api/stock/snapshots', values);
+          UI.ok(`Closed ${out.as_on} — ${UI.num(out.units)} units, ${UI.money(out.value)}.`);
+          if (onDone) await onDone();
+        } catch (err) {
+          UI.err(err.message);
+          return 'keep';
+        }
+        return undefined;
+      },
+    });
+  }
+
+  const rcLine = (l, sign) => `<tr>
+    <td>${sign} ${UI.esc(l.label)}${l.note ? `<div class="muted small">${UI.esc(l.note)}</div>` : ''}</td>
+    <td class="num">${l.units ? UI.num(l.units) : '<span class="muted">—</span>'}</td>
+    <td class="num">${l.value ? UI.money(l.value) : '<span class="muted">—</span>'}</td></tr>`;
+
+  function statementHtml(r) {
+    return `
+      <div class="grid c4 mb">
+        <div class="stat"><div class="label">Opening stock</div>
+          <div class="value">${UI.money(r.opening.value)}</div>
+          <div class="foot">${UI.num(r.opening.units)} units on ${UI.esc(UI.date(r.openingDate))}</div></div>
+        <div class="stat teal"><div class="label">Came in</div>
+          <div class="value">${UI.money(r.inward)}</div><div class="foot">at cost</div></div>
+        <div class="stat orange"><div class="label">Went out</div>
+          <div class="value">${UI.money(r.outward)}</div><div class="foot">sold, issued, written off</div></div>
+        <div class="stat"><div class="label">Closing stock</div>
+          <div class="value">${UI.money(r.closing.value)}</div>
+          <div class="foot">${UI.num(r.closing.units)} units on ${UI.esc(UI.date(r.to))}</div></div>
+      </div>
+
+      ${r.proof.kind === 'derived'
+    ? `<div class="alert info"><b>This is a statement, not yet a check.</b>
+         ${UI.esc(r.proof.note)}</div>`
+    : `<div class="alert ${r.reconciles ? 'ok' : 'danger'}">
+        ${r.reconciles
+    ? '<b>It reconciles.</b> Against the stock written down on '
+          + `${UI.esc(UI.date(r.openingDate))}, every unit that has left the shelf is accounted `
+          + 'for by a movement.'
+    : `<b>It does not reconcile — ${UI.money(Math.abs(r.difference))} ${r.difference > 0
+      ? 'more on the shelf than the movements explain' : 'missing against the movements'}.</b>
+       Stock changed without a movement being recorded. Check the stock take and the write-offs
+       for the window before anybody signs this off.`}
+      </div>`}
+
+      <table class="plain small mt"><thead><tr><th>Movement</th>
+        <th class="num">Units</th><th class="num">At cost</th></tr></thead><tbody>
+        <tr class="strong"><td><b>Opening stock</b>
+          <div class="muted small">${r.opening.source === 'snapshot'
+    ? `counted and written down on ${UI.esc(UI.date(r.openingDate))}`
+    : `worked back from today's shelf — no count was written down on ${UI.esc(UI.date(r.openingDate))}`}</div></td>
+          <td class="num">${UI.num(r.opening.units)}</td>
+          <td class="num">${UI.money(r.opening.value)}</td></tr>
+        ${r.inwardLines.map((l) => rcLine(l, '+')).join('')}
+        ${r.outwardLines.map((l) => rcLine(l, '−')).join('')}
+        <tr class="strong"><td><b>Closing stock, as the movements compute it</b></td><td></td>
+          <td class="num">${UI.money(r.computed)}</td></tr>
+        <tr class="strong"><td><b>Closing stock, as the shelf holds it</b></td>
+          <td class="num">${UI.num(r.closing.units)}</td>
+          <td class="num">${UI.money(r.closing.value)}</td></tr>
+        <tr class="strong"><td><b>Difference</b></td><td></td>
+          <td class="num"${r.reconciles ? '' : ' style="color:var(--danger)"'}>
+            ${UI.money(r.difference)}</td></tr>
+      </tbody></table>
+
+      <div class="grid c3 mt">
+        <div class="card"><div class="card-body tight">
+          <div class="k">Wastage</div>
+          <div class="h3">${UI.money(r.wastage.value)}</div>
+          <div class="muted small">${r.wastage.value > 0 && r.wastage.ofPurchases < 0.1
+    ? 'under 0.1%' : `${UI.num(r.wastage.ofPurchases)}%`} of what was bought in the window.
+            ${UI.esc(r.wastage.note)}</div></div></div>
+        <div class="card"><div class="card-body tight">
+          <div class="k">Returned to suppliers</div>
+          <div class="h3">${UI.money(r.returns.value)}</div>
+          <div class="muted small">${UI.money(r.returns.credited)} credited${
+  r.returns.uncredited > 0.009
+    ? ` · <b style="color:var(--danger)">${UI.money(r.returns.uncredited)} not credited yet</b>` : ''}</div></div></div>
+        <div class="card"><div class="card-body tight">
+          <div class="k">On the shelf and short-dated</div>
+          <div class="h3">${UI.money(r.atRisk.value)}</div>
+          <div class="muted small">${UI.num(r.atRisk.batches)} batch(es) out of date within ninety days.</div></div></div>
+      </div>
+
+      ${r.unpriced.batches ? `<div class="alert warn mt">
+        <b>${UI.num(r.unpriced.batches)} batches on the shelf have no cost price</b>
+        — ${UI.num(r.unpriced.units)} units. ${UI.esc(r.unpriced.note)}</div>` : ''}
+
+      <h4 class="mt">Where the value is sitting</h4>
+      ${UI.table([
+    { label: 'Medicine', render: (b) => UI.esc(b.drug) },
+    { label: 'Batch', render: (b) => `<code>${UI.esc(b.batch)}</code>` },
+    { label: 'Expiry', render: (b) => UI.esc(b.expiry) },
+    { label: 'On hand', num: true, render: (b) => UI.num(b.qty) },
+    { label: 'Cost each', num: true, render: (b) => UI.money(b.cost) },
+    { label: 'Value', num: true, render: (b) => UI.money(b.value) },
+  ], r.largest, { emptyText: 'Nothing on the shelf.' })}
+      <p class="muted small">${UI.esc(r.note)}</p>`;
+  }
+
+  window.StockUI = { barcodes, purchases, register, stocktake, opening, reconciliation, scanBox, printLabels, openLabelDialog, openMovements, openGrn, openSetStock };
 })();

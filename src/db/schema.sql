@@ -1765,3 +1765,38 @@ CREATE TABLE IF NOT EXISTS expense_attachments (
   uploaded_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_exp_att ON expense_attachments(expense_id);
+
+-- --------------------------------------------------- stock, as it stood then
+-- The shelf written down at the close of a day, batch by batch.
+--
+-- Without this a stock reconciliation cannot do the one thing it exists for.
+-- Opening stock worked out by rolling today's shelf backwards through the
+-- movements is the same arithmetic as the statement itself, so the two sides
+-- always agree — including on the day somebody edits a quantity by hand or a
+-- bug loses a movement. The difference line reads zero and means nothing.
+--
+-- A snapshot is an independent record: this many packs, at this cost, on this
+-- date. From the next period onwards the statement can be wrong, which is
+-- what makes it worth reading.
+CREATE TABLE IF NOT EXISTS stock_snapshots (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  as_on     TEXT NOT NULL UNIQUE,     -- the close of this day
+  units     REAL NOT NULL DEFAULT 0,
+  value     REAL NOT NULL DEFAULT 0,
+  batches   INTEGER NOT NULL DEFAULT 0,
+  unpriced  INTEGER NOT NULL DEFAULT 0,
+  notes     TEXT,
+  taken_by  INTEGER REFERENCES users(id),
+  taken_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS stock_snapshot_lines (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  snapshot_id INTEGER NOT NULL REFERENCES stock_snapshots(id) ON DELETE CASCADE,
+  batch_id    INTEGER NOT NULL REFERENCES drug_batches(id),
+  drug_id     INTEGER NOT NULL REFERENCES drugs(id),
+  qty         REAL NOT NULL DEFAULT 0,
+  cost        REAL NOT NULL DEFAULT 0,
+  value       REAL NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_snap_lines ON stock_snapshot_lines(snapshot_id);

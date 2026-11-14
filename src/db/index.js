@@ -346,6 +346,23 @@ function migrate() {
    */
   ensureColumn('assets', 'life_years', 'INTEGER');
 
+  /*
+   * Why a pack left the shelf without being sold.
+   *
+   * The ledger could say "expiry" and nothing else, so a crushed box, a
+   * vial dropped on the floor and a strip that went out of date were all
+   * one line. The stock reconciliation has to tell them apart — expiry is
+   * a buying mistake, damage is a handling one, and they are fixed by
+   * different people.
+   */
+  ensureColumn('stock_ledger', 'reason', 'TEXT');
+  /*
+   * What the supplier credited for a pack sent back. Kept beside the stock
+   * movement because a return the clinic was never credited for is the one
+   * worth chasing, and it is invisible if only the quantity is recorded.
+   */
+  ensureColumn('stock_ledger', 'credit_amount', 'REAL');
+
   // Medicaments sit under HSN 3004 unless the formulary says otherwise; a GST
   // invoice must show a code, so nothing is left without one.
   db.exec("UPDATE drugs SET hsn = '3004' WHERE hsn IS NULL OR hsn = ''");
