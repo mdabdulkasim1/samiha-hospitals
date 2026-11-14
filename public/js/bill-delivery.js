@@ -55,6 +55,46 @@
     return `+${d}`;
   }
 
+  /** It landed. Which way it went matters only to whoever pays Meta. */
+  function sentNote(res) {
+    return `<div class="alert ok mt"><b>Sent to ${UI.esc(pretty(res.to))}.</b>
+      ${UI.esc(res.filename)} — the link works for 90 days.
+      ${res.via === 'template'
+    ? '<br><span class="muted">The patient had not written to the clinic recently, so it went '
+        + 'under the approved template. Meta charges for that one.</span>' : ''}
+      ${res.provider === 'mock'
+    ? '<br><span class="muted">WhatsApp is in demo mode on this system, so nothing left the '
+        + 'building. The message is in WhatsApp → Conversations.</span>' : ''}
+      <div class="mt"><a href="${UI.esc(res.url)}" target="_blank" rel="noopener">Open the bill</a>
+      · <button class="btn ghost sm" data-act="copy" data-url="${UI.esc(res.url)}">Copy the link</button></div>
+    </div>`;
+  }
+
+  /**
+   * It did not land.
+   *
+   * The common refusal has one cause and one cure, so it is named rather
+   * than left as Meta's sentence: the patient has not written to the clinic
+   * in 24 hours, and an approved template is the only thing WhatsApp will
+   * carry to them. Either way the bill exists and the link works, so what
+   * the cashier can do right now comes first.
+   */
+  function refusedNote(res) {
+    const why = res.windowClosed
+      ? (res.templateReady
+        ? 'The patient has not written to the clinic in the last 24 hours, and the approved '
+          + 'template was refused too — ask the administrator to check it under WhatsApp → Setup guide.'
+        : 'The patient has not written to the clinic in the last 24 hours. WhatsApp allows only an '
+          + 'approved template then, and none is set up yet — WhatsApp → Setup guide has the wording '
+          + 'to submit to Meta.')
+      : 'Print the bill, or read the patient the link.';
+    return `<div class="alert danger mt"><b>WhatsApp would not take it.</b>
+      ${UI.esc(res.error || 'No reason given.')}
+      <br>${why}
+      <div class="mt"><a href="${UI.esc(res.url)}" target="_blank" rel="noopener">${UI.esc(res.url)}</a></div>
+    </div>`;
+  }
+
   /**
    * Ask how the bill should go out.
    *
@@ -123,23 +163,7 @@
         result.innerHTML = `<div class="alert info mt">Sending the bill to ${UI.esc(pretty(to))}…</div>`;
         try {
           const res = await API.post(`${base(id)}/whatsapp`, { to });
-          result.innerHTML = res.sent
-            ? `<div class="alert ok mt"><b>Sent to ${UI.esc(pretty(res.to))}.</b>
-                 ${UI.esc(res.filename)} — the link works for 90 days.
-                 ${res.provider === 'mock'
-    ? '<br><span class="muted">WhatsApp is in demo mode on this system, so nothing left the '
-                      + 'building. The message is in WhatsApp → Conversations.</span>'
-    : ''}
-                 <div class="mt"><a href="${UI.esc(res.url)}" target="_blank" rel="noopener">Open the bill</a>
-                 · <button class="btn ghost sm" data-act="copy" data-url="${UI.esc(res.url)}">Copy the link</button></div>
-               </div>`
-            : `<div class="alert danger mt"><b>WhatsApp would not take it.</b>
-                 ${UI.esc(res.error || 'No reason given.')}
-                 <br>This is usually because the patient has not messaged the clinic in the last
-                 24 hours, which WhatsApp does not allow a business to write into. Print the bill,
-                 or read them the link:
-                 <div class="mt"><a href="${UI.esc(res.url)}" target="_blank" rel="noopener">${UI.esc(res.url)}</a></div>
-               </div>`;
+          result.innerHTML = res.sent ? sentNote(res) : refusedNote(res);
           if (res.sent) UI.ok(`Bill sent to ${pretty(res.to)}.`);
         } catch (err) {
           result.innerHTML = `<div class="alert danger mt">${UI.esc(err.message)}</div>`;

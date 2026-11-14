@@ -116,6 +116,50 @@ Queued in an outbox and retried on failure — visible under **WhatsApp → Outb
 
 The banner on the WhatsApp page turns green when the app is live.
 
+### Sending a bill to a patient who has not written in
+
+The counter can send an invoice or a pharmacy bill to a WhatsApp number as a PDF
+(**Print or send** on any bill). WhatsApp allows a free-form message only within 24 hours of
+the patient's own last message, and a patient paying at the counter has usually never messaged
+the clinic — so without a template the bill cannot be delivered at all.
+
+Create one in **WhatsApp Manager → Message templates**:
+
+| | |
+|---|---|
+| Name | `samiha_bill` (lower case and underscores only) |
+| Category | **Utility** — a bill is a transaction; submitted as marketing it is rejected, and costs more |
+| Language | English; note whether Meta files it as `en` or `en_US` |
+| Header | **Document** — this is what carries the PDF. Without it a bill cannot be attached. |
+| Body | `Hello {{1}}, here is your bill {{2}} from SAMIHA Polyclinic & Diagnostics. Total {{3}}. {{4}}. Thank you for visiting us.` |
+
+Sample values for the submission: `Ayesha Begum`, `INV261100001`, `₹500.00`,
+`Balance to pay: ₹500.00`.
+
+Then set and restart:
+
+```bash
+WHATSAPP_BILL_TEMPLATE=samiha_bill
+WHATSAPP_TEMPLATE_LANG=en
+WHATSAPP_WABA_ID=123456789012345
+```
+
+**WhatsApp → Setup guide → Check the template with Meta** then says whether it is approved, has
+a document header, and expects as many variables as the ERP supplies.
+
+What the ERP does with it:
+
+- Inside the 24-hour window the bill goes as an ordinary document with a caption. Free, and it
+  reads like a person wrote it.
+- Outside it, WhatsApp refuses and the bill is sent again under the template. Meta charges the
+  utility rate for that message.
+- With no template configured, the refusal is reported to the cashier with the link, while the
+  patient is still at the counter and paper is still an option.
+
+`WHATSAPP_BILL_TEMPLATE_BODY` sets what fills `{{1}}`, `{{2}}`… — by default
+`{patient}|{billNo}|{total}|{balance}`. Drop one if your approved wording has three variables;
+`{clinic}` and `{date}` are available too. No code change is needed for either.
+
 ### Notes on running it in production
 
 - **The webhook must be publicly reachable over HTTPS.** Meta will not deliver to plain HTTP.

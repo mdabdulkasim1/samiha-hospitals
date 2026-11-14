@@ -366,3 +366,182 @@ test('a bill outlives the person who sent it', async () => {
   assert.strictEqual(row.sent_by, null, 'the account is cut loose, the document is not');
   assert.strictEqual(db.pragma('foreign_key_check').length, 0);
 });
+
+// ------------------------------------------------------- the approved template
+/*
+ * WhatsApp will not carry a free-form message to somebody who has not written
+ * to the clinic in the last 24 hours, which is nearly every patient paying at
+ * a counter. An approved template is the only thing it will carry, so the
+ * fallback is the difference between a bill that arrives and one that cannot.
+ *
+ * These tests stand in for Meta: `fetch` is replaced so the refusal and the
+ * second attempt can be watched, because the one thing that must be right is
+ * what is sent on the second attempt — a template name, a document header
+ * carrying the PDF, and the body variables in the order the clinic's own
+ * approved wording expects.
+ */
+function withMeta(handler, run) {
+  const realFetch = global.fetch;
+  const was = { provider: config.whatsapp.provider, token: config.whatsapp.token,
+    phoneNumberId: config.whatsapp.phoneNumberId };
+  config.whatsapp.provider = 'meta';
+  config.whatsapp.token = 'test-token';
+  config.whatsapp.phoneNumberId = '1234567890';
+  const calls = [];
+  global.fetch = async (url, init) => {
+    // Only Meta is intercepted; the test's own calls to the ERP go through.
+    if (!String(url).includes('graph.facebook.com')) return realFetch(url, init);
+    // A read (listing templates) carries no body; a send does.
+    const sent = init && init.body ? JSON.parse(init.body) : { type: 'GET', url: String(url) };
+    calls.push(sent);
+    return handler(sent, calls.length);
+  };
+  return Promise.resolve(run(calls)).finally(() => {
+    global.fetch = realFetch;
+    Object.assign(config.whatsapp, was);
+  });
+}
+
+const metaOk = () => ({ ok: true, json: async () => ({ messages: [{ id: 'wamid.TEST' }] }) });
+const metaWindowClosed = () => ({
+  ok: false,
+  json: async () => ({ error: {
+    code: 131047,
+    message: 'Re-engagement message',
+    error_data: { details: 'Message failed to send because more than 24 hours have passed.' },
+  } }),
+});
+
+test('inside the 24-hour window a bill goes as a plain document', async () => {
+  await withMeta(() => metaOk(), async (calls) => {
+    config.whatsapp.billTemplate.name = 'samiha_bill';
+    const r = await api('POST', `/api/billing/invoices/${ids.invoice}/whatsapp`, { to: '9876543210' });
+    assert.strictEqual(r.body.sent, true);
+    assert.strictEqual(r.body.via, 'document', 'the free one, which also reads better');
+    assert.strictEqual(calls[0].type, 'document');
+    assert.ok(!calls.some((c) => c.type === 'template'), 'the template is not spent when it need not be');
+    config.whatsapp.billTemplate.name = '';
+  });
+});
+
+test('outside it, the bill goes again under the approved template', async () => {
+  await withMeta((sent) => (sent.type === 'document' ? metaWindowClosed() : metaOk()), async (calls) => {
+    config.whatsapp.billTemplate.name = 'samiha_bill';
+    config.whatsapp.billTemplate.language = 'en_US';
+    const r = await api('POST', `/api/billing/invoices/${ids.invoice}/whatsapp`, { to: '9876543210' });
+
+    assert.strictEqual(r.body.sent, true, 'the patient gets their bill');
+    assert.strictEqual(r.body.via, 'template');
+    assert.strictEqual(r.body.windowClosed, true);
+
+    const used = calls.find((c) => c.type === 'template');
+    assert.ok(used, 'it was tried the cheap way first, then under the template');
+    assert.strictEqual(used.template.name, 'samiha_bill');
+    assert.strictEqual(used.template.language.code, 'en_US');
+
+    // The header is the only place a PDF can ride on a template.
+    const header = used.template.components.find((c) => c.type === 'header');
+    assert.strictEqual(header.parameters[0].type, 'document');
+    assert.match(header.parameters[0].document.link, /\/d\//);
+    assert.match(header.parameters[0].document.filename, /^Invoice-INV/);
+
+    // And the body variables, in the order the clinic's wording declares.
+    const body = used.template.components.find((c) => c.type === 'body');
+    assert.strictEqual(body.parameters.length, 4);
+    assert.ok(body.parameters[1].text.startsWith('INV'), 'the bill number is the second');
+    assert.match(body.parameters[2].text, /Rs|₹|\d/, 'and the total the third');
+    for (const p of body.parameters) {
+      assert.ok(!/\n|\t|\s{4}/.test(p.text),
+        `"${p.text}" has no newline or run of spaces — Meta rejects the whole message for one`);
+    }
+
+    config.whatsapp.billTemplate.name = '';
+    config.whatsapp.billTemplate.language = 'en';
+  });
+});
+
+test('the clinic chooses what fills the template, without a code change', async () => {
+  await withMeta((sent) => (sent.type === 'document' ? metaWindowClosed() : metaOk()), async (calls) => {
+    config.whatsapp.billTemplate.name = 'samiha_bill';
+    config.whatsapp.billTemplate.body = '{billNo}|{total}';   // an approved wording with two
+    const r = await api('POST', `/api/billing/invoices/${ids.invoice}/whatsapp`, { to: '9876543210' });
+    assert.strictEqual(r.body.sent, true);
+
+    const body = calls.find((c) => c.type === 'template').template.components
+      .find((c) => c.type === 'body');
+    assert.strictEqual(body.parameters.length, 2, 'two variables, because that is what was approved');
+    assert.ok(body.parameters[0].text.startsWith('INV'));
+
+    config.whatsapp.billTemplate.body = '{patient}|{billNo}|{total}|{balance}';
+    config.whatsapp.billTemplate.name = '';
+  });
+});
+
+test('with no template set up, the refusal is reported and says what would fix it', async () => {
+  await withMeta(() => metaWindowClosed(), async (calls) => {
+    const r = await api('POST', `/api/billing/invoices/${ids.invoice}/whatsapp`, { to: '9876543210' });
+    assert.strictEqual(r.body.sent, false);
+    assert.strictEqual(r.body.windowClosed, true, 'the counter is told which refusal this was');
+    assert.strictEqual(r.body.templateReady, false, 'and that the one cure is not in place');
+    assert.ok(r.body.url, 'while the bill itself is still there to print or read out');
+    assert.strictEqual(calls.length, 1, 'nothing is tried that cannot work');
+  });
+});
+
+test('a refusal that is not the window is not papered over with a template', async () => {
+  /*
+   * A bad token and a closed window both come back as a failed send. Sending
+   * a template after a bad token would spend a paid message on a call that
+   * cannot succeed, and would hide the real fault.
+   */
+  const badToken = () => ({ ok: false, json: async () => ({ error: { code: 190, message: 'Invalid OAuth access token' } }) });
+  await withMeta(() => badToken(), async (calls) => {
+    config.whatsapp.billTemplate.name = 'samiha_bill';
+    const r = await api('POST', `/api/billing/invoices/${ids.invoice}/whatsapp`, { to: '9876543210' });
+    assert.strictEqual(r.body.sent, false);
+    assert.strictEqual(r.body.windowClosed, false);
+    assert.match(r.body.error, /190/, 'the real reason survives, with its code');
+    assert.strictEqual(calls.length, 1, 'and no template was spent on it');
+    config.whatsapp.billTemplate.name = '';
+  });
+});
+
+test('the clinic can ask Meta whether its template is actually ready', async () => {
+  const approved = {
+    data: [{
+      name: 'samiha_bill', status: 'APPROVED', category: 'UTILITY', language: 'en',
+      components: [
+        { type: 'HEADER', format: 'DOCUMENT' },
+        { type: 'BODY', text: 'Hello {{1}}, here is your bill {{2}}. Total {{3}}. {{4}}.' },
+      ],
+    }],
+  };
+  await withMeta(() => ({ ok: true, json: async () => approved }), async () => {
+    config.whatsapp.wabaId = '99887766';
+    config.whatsapp.billTemplate.name = 'samiha_bill';
+
+    const r = await api('GET', '/api/whatsapp/templates', undefined, 'admin');
+    assert.strictEqual(r.status, 200);
+    assert.strictEqual(r.body.ready, true);
+    assert.strictEqual(r.body.templates[0].hasDocumentHeader, true);
+    assert.strictEqual(r.body.templates[0].variables, 4);
+
+    // The two ways a template can exist and still not work.
+    approved.data[0].status = 'PENDING';
+    const pending = await api('GET', '/api/whatsapp/templates', undefined, 'admin');
+    assert.strictEqual(pending.body.ready, false);
+    assert.match(pending.body.verdict, /not approved yet/i);
+
+    approved.data[0].status = 'APPROVED';
+    approved.data[0].components[0].format = 'TEXT';
+    const noHeader = await api('GET', '/api/whatsapp/templates', undefined, 'admin');
+    assert.strictEqual(noHeader.body.ready, false);
+    assert.match(noHeader.body.verdict, /document header/i);
+
+    // And it is the administrator's question, not the counter's.
+    assert.strictEqual((await api('GET', '/api/whatsapp/templates', undefined, 'cashier')).status, 403);
+
+    config.whatsapp.wabaId = '';
+    config.whatsapp.billTemplate.name = '';
+  });
+});
