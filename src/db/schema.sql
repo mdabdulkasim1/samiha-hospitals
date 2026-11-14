@@ -1631,3 +1631,137 @@ CREATE TABLE IF NOT EXISTS document_shares (
 );
 CREATE INDEX IF NOT EXISTS idx_doc_shares_ref ON document_shares(kind, ref_id);
 CREATE INDEX IF NOT EXISTS idx_doc_shares_made ON document_shares(created_at);
+
+-- ----------------------------------------------------------- the expense book
+-- What the clinic spends, under the headings the accounts office asked for.
+--
+-- The cash book next door records money moving. This records a cost being
+-- incurred, which is not the same event: a supplier's invoice dated the 3rd
+-- and paid on the 28th is one cost in this month and one payment in it, and a
+-- clinic that only writes down payments cannot answer "what did October
+-- actually cost" until every bill happens to be settled.
+--
+-- So an expense is the invoice, and payments hang off it. Each payment writes
+-- the cash book entry it always would have — linked both ways — so the money
+-- appears exactly once wherever money is counted, and the cost appears
+-- exactly once wherever costs are counted.
+CREATE TABLE IF NOT EXISTS expense_categories (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  -- Never changes once it has been used: the reports key on it. The name
+  -- above it is the clinic's to reword.
+  code          TEXT NOT NULL UNIQUE,
+  name          TEXT NOT NULL,
+  cost_group    TEXT NOT NULL DEFAULT 'operating'
+                  CHECK (cost_group IN ('setup','operating','finance','schedule')),
+  -- Whether this is a cost of the month at all. See src/db/expenseBook.js.
+  nature        TEXT NOT NULL DEFAULT 'operating'
+                  CHECK (nature IN ('operating','capital','stock','finance',
+                                    'financing_capital','deposit','advance')),
+  -- The row of the owner's monthly comparison this adds to, if any.
+  report_line   TEXT,
+  default_department TEXT NOT NULL DEFAULT 'common',
+  -- Which cash book heading a payment under this one writes itself as, so
+  -- the money appears in the cash flow and on the owner's board under a
+  -- name that means something there too.
+  cash_category TEXT,
+  is_direct     INTEGER NOT NULL DEFAULT 0,
+  is_fixed      INTEGER NOT NULL DEFAULT 0,
+  note          TEXT,
+  -- Shipped with the system, so the report that totals by it can rely on it
+  -- being there. A seeded heading may be reworded and switched off, never
+  -- deleted; one the clinic added itself may be.
+  seeded        INTEGER NOT NULL DEFAULT 0,
+  active        INTEGER NOT NULL DEFAULT 1,
+  sort_order    INTEGER NOT NULL DEFAULT 0,
+  created_by    INTEGER REFERENCES users(id),
+  created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_exp_cat_group ON expense_categories(cost_group, sort_order);
+
+CREATE TABLE IF NOT EXISTS expense_items (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  category_id INTEGER NOT NULL REFERENCES expense_categories(id) ON DELETE CASCADE,
+  name        TEXT NOT NULL,
+  seeded      INTEGER NOT NULL DEFAULT 0,
+  active      INTEGER NOT NULL DEFAULT 1,
+  sort_order  INTEGER NOT NULL DEFAULT 0,
+  created_by  INTEGER REFERENCES users(id),
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (category_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_exp_item_cat ON expense_items(category_id, sort_order);
+
+CREATE TABLE IF NOT EXISTS expenses (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  ref_no        TEXT NOT NULL UNIQUE,
+  category_id   INTEGER NOT NULL REFERENCES expense_categories(id),
+  item_id       INTEGER REFERENCES expense_items(id),
+  department    TEXT NOT NULL DEFAULT 'common',
+  supplier_id   INTEGER REFERENCES suppliers(id),
+  -- A supplier the clinic has no account with — the hardware shop down the
+  -- road — is a name, not a record. Forcing one would stop the entry.
+  supplier_name TEXT,
+  description   TEXT,
+  invoice_no    TEXT,
+  invoice_date  TEXT NOT NULL,
+  -- What the charge is for, where that is a stretch of time: a month's rent,
+  -- a quarter's AMC. Without it a yearly licence read as one costly month.
+  period_from   TEXT,
+  period_to     TEXT,
+  taxable       REAL NOT NULL DEFAULT 0,
+  tax           REAL NOT NULL DEFAULT 0,
+  total         REAL NOT NULL CHECK (total > 0),
+  due_date      TEXT,
+  -- Kept in step with the payments by the service that writes them; never
+  -- typed in. 'void' is the only way a line leaves the totals.
+  status        TEXT NOT NULL DEFAULT 'unpaid'
+                  CHECK (status IN ('unpaid','part_paid','paid','void')),
+  paid          REAL NOT NULL DEFAULT 0,
+  approved_by   INTEGER REFERENCES users(id),
+  approved_at   TEXT,
+  approval_note TEXT,
+  notes         TEXT,
+  created_by    INTEGER REFERENCES users(id),
+  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  voided_at     TEXT,
+  voided_by     INTEGER REFERENCES users(id),
+  void_reason   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(invoice_date);
+CREATE INDEX IF NOT EXISTS idx_expenses_cat ON expenses(category_id, invoice_date);
+CREATE INDEX IF NOT EXISTS idx_expenses_dept ON expenses(department, invoice_date);
+CREATE INDEX IF NOT EXISTS idx_expenses_due ON expenses(status, due_date);
+
+CREATE TABLE IF NOT EXISTS expense_payments (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  expense_id  INTEGER NOT NULL REFERENCES expenses(id) ON DELETE CASCADE,
+  amount      REAL NOT NULL CHECK (amount > 0),
+  paid_on     TEXT NOT NULL,
+  mode        TEXT NOT NULL DEFAULT 'cash'
+                CHECK (mode IN ('cash','card','upi','netbanking','cheque','other')),
+  reference   TEXT,
+  -- The cash book line this payment wrote. One rupee, one place it is counted.
+  cash_book_id INTEGER REFERENCES cash_book(id),
+  created_by  INTEGER REFERENCES users(id),
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_exp_pay ON expense_payments(expense_id);
+
+-- The invoice or receipt itself, and whatever approval came with it.
+--
+-- Held in the database rather than on disk because the container this runs in
+-- is rebuilt on every deploy and anything written beside the code goes with
+-- it. A bill nobody can produce afterwards is a bill that was never filed.
+CREATE TABLE IF NOT EXISTS expense_attachments (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  expense_id  INTEGER NOT NULL REFERENCES expenses(id) ON DELETE CASCADE,
+  kind        TEXT NOT NULL DEFAULT 'invoice'
+                CHECK (kind IN ('invoice','receipt','approval','other')),
+  filename    TEXT NOT NULL,
+  mime        TEXT NOT NULL,
+  bytes       INTEGER NOT NULL DEFAULT 0,
+  content     BLOB NOT NULL,
+  uploaded_by INTEGER REFERENCES users(id),
+  uploaded_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_exp_att ON expense_attachments(expense_id);

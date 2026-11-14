@@ -451,7 +451,17 @@ function sync({ quiet = false } = {}) {
       console.log(`[catalogue]   kept ${k.code} at ${k.at} — the tariff says ${k.wanted}`);
     }
   }
-  return { added, tariff, revisions };
+  /*
+   * The headings the clinic's money is spent under. Insert-if-absent, like
+   * everything else here: a heading the clinic has reworded or switched off
+   * stays as the clinic left it.
+   */
+  const book = require('./expenseBook').load(db);
+  if (!quiet && (book.added || book.items)) {
+    console.log(`[expenses] ${book.added} heading(s) and ${book.items} item(s) added to the expense book.`);
+  }
+
+  return { added, tariff, revisions, expenseBook: book };
 }
 
 module.exports = { sync };

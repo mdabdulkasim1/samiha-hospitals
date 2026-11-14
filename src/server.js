@@ -70,6 +70,7 @@ app.use('/api/pharmacy', require('./routes/pharmacy'));
 app.use('/api/stock', require('./routes/stock'));
 app.use('/api/billing', require('./routes/billing'));
 app.use('/api/accounts', require('./routes/accounts'));
+app.use('/api/expenses', require('./routes/expenses'));
 app.use('/api/assets', require('./routes/assets'));
 app.use('/api/access', require('./routes/access'));
 app.use('/api/owner', require('./routes/owner'));

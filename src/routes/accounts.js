@@ -54,17 +54,36 @@ const CATEGORIES = {
     'Electricity & water',
     'Medicines & consumables',
     'Lab reagents & kits',
+    // What is used on a patient in the clinic, as against what the pharmacy
+    // sells: a dressing and a cannula are a cost of treating somebody, and
+    // were previously typed as "other expense" and lost among the overheads.
+    'Treatment consumables',
+    'Radiology & ECG supplies',
+    'Home collection costs',
     'Equipment purchase',
     'Equipment maintenance',
+    // The three headings a clinic only spends under once, while it is being
+    // built. Kept apart from the running costs because an owner comparing
+    // months needs the fit-out out of the way to see them.
+    'Building & fit-out',
+    'Furniture & IT hardware',
+    'Pre-opening & inauguration',
     'Housekeeping & security',
+    'Waste disposal',
+    'Ambulance & transport',
     'Printing & stationery',
     'Telephone & internet',
+    'Software & subscriptions',
     'Marketing & camps',
     'Travel & conveyance',
     'Professional & audit fees',
     'Licences, taxes & insurance',
+    'Bank & payment charges',
     'Bank charges & interest',
     'Loan repayment',
+    // Money out against something still owned or still owed, which is not a
+    // cost of the month however much it feels like one on the day.
+    'Deposit or advance paid',
     'Refund to patient',
     'Other expense',
   ],

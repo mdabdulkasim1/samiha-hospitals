@@ -95,6 +95,7 @@ const generators = {
   grn:         () => `GRN${yymm()}${pad(nextSeq(`grn-${yymm()}`), 4)}`,
   stockTake:   () => `STK${yymm()}${pad(nextSeq(`stk-${yymm()}`), 4)}`,
   cashEntry:   () => `CB${yymm()}${pad(nextSeq(`cb-${yymm()}`), 5)}`,
+  expense:     () => `EXP${yymm()}${pad(nextSeq(`exp-${yymm()}`), 5)}`,
   asset:       () => `AST${pad(nextSeq('asset'), 4)}`,
   complaint:   () => `CMP${yymm()}${pad(nextSeq(`cmp-${yymm()}`), 4)}`,
   incident:    () => `INC${yymm()}${pad(nextSeq(`inc-${yymm()}`), 4)}`,

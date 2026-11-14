@@ -41,7 +41,18 @@
     async render(el, params) {
       const tabs = {};
       if (isOverview()) tabs.overview = overviewTab;
+      /*
+       * The expense book sits beside the cash book rather than replacing it.
+       * The cash book is money moving — a camp collection, cash handed over
+       * at the door; the expense book is a cost being incurred, under the
+       * headings the accounts office set, and paying one writes the other.
+       */
+      if (isEntry()) tabs.expenses = ExpenseBook.bookTab;
       if (isEntry()) tabs.book = bookTab;
+      if (ExpenseBook.isManagement()) {
+        tabs.report = ExpenseBook.reportTab;
+        tabs.headings = ExpenseBook.headingsTab;
+      }
 
       const names = Object.keys(tabs);
       if (!names.length) {
@@ -53,7 +64,10 @@
       el.innerHTML = `
         <div class="tabs" id="ac-tabs">
           ${isOverview() ? `<button data-tab="overview" class="${open === 'overview' ? 'active' : ''}">Overview</button>` : ''}
+          ${isEntry() ? `<button data-tab="expenses" class="${open === 'expenses' ? 'active' : ''}">Expense book</button>` : ''}
           ${isEntry() ? `<button data-tab="book" class="${open === 'book' ? 'active' : ''}">Cash book</button>` : ''}
+          ${ExpenseBook.isManagement() ? `<button data-tab="report" class="${open === 'report' ? 'active' : ''}">Monthly report</button>` : ''}
+          ${ExpenseBook.isManagement() ? `<button data-tab="headings" class="${open === 'headings' ? 'active' : ''}">Headings</button>` : ''}
         </div>
         <div id="ac-body">${UI.loading()}</div>`;
 
