@@ -355,6 +355,21 @@ function migrate() {
    * a buying mistake, damage is a handling one, and they are fixed by
    * different people.
    */
+  /*
+   * A person taken out of the records by the owner.
+   *
+   * The row stays: a consultation, a prescription and a bill all point at
+   * it, and those are the clinic's history, not the person's property. What
+   * goes is everything that says who they were — the name, the contact
+   * details, the signature, the way in. What is left is the staff code the
+   * documents were printed with, which identifies the work without naming
+   * the worker, and that is the posture every printed sheet here already
+   * takes: a doctor's code, never their name.
+   */
+  ensureColumn('users', 'erased_at', 'TEXT');
+  ensureColumn('users', 'erased_by', 'INTEGER REFERENCES users(id)');
+  ensureColumn('users', 'erase_reason', 'TEXT');
+
   ensureColumn('stock_ledger', 'reason', 'TEXT');
   /*
    * What the supplier credited for a pack sent back. Kept beside the stock

@@ -3,7 +3,7 @@ const express = require('express');
 const crypto = require('crypto');
 const { db } = require('../db');
 const { wrap, notFound, conflict, badRequest, forbidden } = require('../lib/http');
-const { requireRole, seesPrices, hasFullAccess } = require('../lib/auth');
+const { requireRole, requireOwner, seesPrices, hasFullAccess } = require('../lib/auth');
 const { required, str, num, int, bool } = require('../lib/validate');
 const audit = require('../lib/audit');
 const { generate, doctorCode } = require('../lib/ids');
@@ -75,7 +75,8 @@ router.get('/staff', wrap((req, res) => {
     `SELECT u.id, u.staff_code, u.name, u.email, u.phone, u.role, u.active, u.department_id,
             d.name AS department_name, dp.doctor_code, dp.qualification, dp.specialization,
             dp.consult_fee, dp.follow_up_fee, dp.slot_minutes, dp.room_no,
-            u.password_set_at, u.last_login_at, setter.name AS password_set_by_name
+            u.password_set_at, u.last_login_at, setter.name AS password_set_by_name,
+            u.erased_at
        FROM users u
        LEFT JOIN users setter ON setter.id = u.password_set_by
        LEFT JOIN departments d ON d.id = u.department_id
@@ -686,6 +687,61 @@ router.delete('/staff/:id', adminOnly, wrap((req, res) => {
   audit.log(req, 'delete', 'user', id, { staffCode: user.staff_code, name: user.name, role: user.role });
   res.json({ ok: true, id, name: user.name, staffCode: user.staff_code });
 }));
+
+/*
+ * ------------------------------------- removing a person from the records
+ *
+ * Deleting the row is refused above, and for a good reason: a consultation,
+ * a prescription and a bill all point at the account, and several of those
+ * references cannot be empty, so deleting the person means deleting the
+ * patient's record of being treated.
+ *
+ * This is the other answer. Everything that says who the person was is
+ * erased — name, email, telephone, signature, registration number, their
+ * way in — and every record they made stays exactly where it is, under the
+ * staff code it was always filed against.
+ *
+ * The owner alone. An administrator can already create and disable
+ * accounts; taking a person's name off the audit trail of their own work is
+ * a different act, and the one thing an administrator must not be able to
+ * do quietly to their own tracks.
+ */
+const erasure = require('../services/staffErasure');
+
+/** What would be erased, and what would survive it. Shown before the owner commits. */
+router.get('/staff/:id/erasure', requireOwner, wrap((req, res) => {
+  res.json(erasure.preview(int(req.params.id)));
+}));
+
+router.post('/staff/:id/erase', requireOwner, wrap((req, res) => {
+  const id = int(req.params.id);
+  const before = erasure.preview(id);
+
+  /*
+   * The staff code has to be typed out. Not a flourish: this cannot be
+   * undone, the list it is pressed from is alphabetical, and the row above
+   * the one somebody meant is another human being.
+   */
+  if (str(req.body.confirm) !== before.staffCode) {
+    throw badRequest(`Type ${before.staffCode} to confirm removing this person from the records.`);
+  }
+
+  const after = erasure.erase(id, { reason: str(req.body.reason), by: req.user.id });
+
+  /*
+   * The audit line names the code and not the person, which is the whole
+   * point — writing the erased name into the audit detail would put it
+   * straight back into the database it was just taken out of.
+   */
+  audit.log(req, 'erase', 'user', id, {
+    staffCode: before.staffCode, doctorCode: before.doctorCode, role: before.role,
+    reason: str(req.body.reason), recordsKept: before.keeps,
+  });
+  res.json({ ...after, kept: before.keeps });
+}));
+
+/** Who has been taken out of the records, when, and why. */
+router.get('/staff-erased', requireOwner, wrap((_req, res) => res.json(erasure.erased())));
 
 router.post('/services', adminOnly, wrap((req, res) => {
   required(req.body, ['code', 'name', 'price']);

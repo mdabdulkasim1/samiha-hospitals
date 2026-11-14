@@ -217,6 +217,16 @@
             // is refused anyway, and offering it is a button that cannot work.
             + (u.id === (APP.user && APP.user.id) ? ''
               : `<button class="btn ghost sm danger" data-del="${u.id}">Delete</button>`)
+            /*
+             * The owner's own button, and nobody else's. Deleting is refused
+             * the moment somebody has treated a patient; this takes the
+             * person's name out while the treating stays on the record. An
+             * administrator does not get it: removing a name from the audit
+             * trail of its own work is not an administrator's to do quietly.
+             */
+            + (isOwner() && u.id !== (APP.user && APP.user.id) && !u.erased_at
+              ? `<button class="btn ghost sm danger" data-erase="${u.id}">Remove name</button>` : '')
+            + (u.erased_at ? UI.badge('Name removed', 'warn') : '')
             + '</div>'),
       },
     ];
@@ -246,6 +256,86 @@
         const user = rows.find((r) => String(r.id) === btn.dataset.del);
         if (user) openDeleteStaff(user);
       });
+    });
+    host.querySelectorAll('[data-erase]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const user = rows.find((r) => String(r.id) === btn.dataset.erase);
+        if (user) openEraseStaff(user);
+      });
+    });
+  }
+
+
+  /**
+   * The owner taking a person's name out of the records.
+   *
+   * Deleting the account is refused the moment somebody has treated a
+   * patient, and rightly: the consultation points at them and a record that
+   * cannot say who signed it is worth less than no record. This is the other
+   * answer — the name, the contact details, the signature and the way in all
+   * go; the work stays, under the staff code it was always filed against.
+   *
+   * What will survive is listed before anything happens, because "their data
+   * stays" is easy to say and worth showing. The staff code has to be typed:
+   * this cannot be undone, and the row above the one somebody meant to press
+   * is another person.
+   */
+  async function openEraseStaff(user) {
+    let plan;
+    try {
+      plan = await API.get(`/api/masters/staff/${user.id}/erasure`);
+    } catch (err) { return UI.err(err.message); }
+
+    UI.modal({
+      title: `Remove ${user.name} from the records`,
+      body: `
+        <div class="alert warn"><b>This cannot be undone.</b>
+          ${UI.esc(user.name)} becomes <b>${UI.esc(plan.becomes)}</b> everywhere in the system —
+          name, email, telephone, signature and registration number gone, and the sign-in with
+          them.</div>
+
+        <p class="muted small">Everything they did stays exactly where it is, filed under
+          <code>${UI.esc(plan.staffCode)}</code>${plan.doctorCode
+    ? ` and <code>${UI.esc(plan.doctorCode)}</code>` : ''} — which is what every prescription and
+          bill the clinic prints already carries, instead of a name.</p>
+
+        ${plan.keeps.length ? `<h4>What stays</h4>
+          <table class="plain small"><tbody>${plan.keeps.map((k) => `<tr>
+            <td>${UI.esc(k.what)}</td><td class="num"><b>${UI.num(k.count)}</b></td></tr>`).join('')}
+          </tbody></table>`
+    : '<p class="muted">Nothing in the clinic\'s records points at this account at all.</p>'}
+
+        ${plan.caveats.length ? `<h4 class="mt">What this does not reach</h4>
+          <ul class="muted small">${plan.caveats.map((c) => `<li>${UI.esc(c)}</li>`).join('')}</ul>` : ''}
+
+        <div class="mt">
+          ${UI.field({ name: 'reason', label: 'Why', required: true,
+    placeholder: 'Entered by mistake · left the clinic and asked to be removed · duplicate record' })}
+          ${UI.field({ name: 'confirm', label: `Type ${plan.staffCode} to confirm`, required: true,
+    placeholder: plan.staffCode })}
+        </div>
+        <div id="erase-out"></div>`,
+      footer: `<button class="btn ghost" data-act="__close">Cancel</button>
+               <button class="btn danger" data-act="erase">Remove the name</button>`,
+      onAction: async (act, modal) => {
+        if (act !== 'erase') return undefined;
+        const values = UI.formValues(modal);
+        const out = modal.querySelector('#erase-out');
+        if (!values.reason || !values.confirm) {
+          out.innerHTML = '<div class="alert danger mt">Both the reason and the code are needed.</div>';
+          return 'keep';
+        }
+        try {
+          const done = await API.post(`/api/masters/staff/${user.id}/erase`, values);
+          UI.ok(`Removed. The records now read ${done.name}.`);
+          APP.reload();
+        } catch (err) {
+          out.innerHTML = `<div class="alert danger mt">${UI.esc(err.message)}</div>`;
+          return 'keep';
+        }
+        return undefined;
+      },
     });
   }
 
