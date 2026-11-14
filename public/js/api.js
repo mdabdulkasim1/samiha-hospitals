@@ -41,7 +41,10 @@
     post: (p, b) => request('POST', p, b || {}),
     patch: (p, b) => request('PATCH', p, b || {}),
     put: (p, b) => request('PUT', p, b || {}),
-    del: (p) => request('DELETE', p),
+    // A delete may carry a body: the destructive ones ask for a typed
+    // confirmation and a reason, and those belong in the request rather
+    // than in the query string where they end up in a server log.
+    del: (p, b) => request('DELETE', p, b),
     getToken: () => token,
     setToken(value) {
       token = value;

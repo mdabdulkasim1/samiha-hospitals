@@ -2,7 +2,7 @@
 const express = require('express');
 const { db } = require('../db');
 const { wrap, notFound, conflict, badRequest } = require('../lib/http');
-const { requireRole, seesMoney, seesPrices } = require('../lib/auth');
+const { requireRole, requireOwner, seesMoney, seesPrices } = require('../lib/auth');
 const { required, str, int, num, bool, phone, paging, oneOf, aadhaar } = require('../lib/validate');
 const { generate } = require('../lib/ids');
 const audit = require('../lib/audit');
@@ -876,6 +876,45 @@ router.get('/:id/screening-status', deskRoles, wrap((req, res) => {
   const last = p.last_screening_date ? new Date(p.last_screening_date) : null;
   const due = !last || (Date.now() - last.getTime()) > 365 * 24 * 3600 * 1000;
   res.json({ due, lastScreeningDate: p.last_screening_date, dueSince: last ? new Date(last.getTime() + 365 * 24 * 3600 * 1000).toISOString().slice(0, 10) : null });
+}));
+
+/*
+ * ---------------------------------------- removing a record that is not a patient
+ *
+ * A clinic setting the system up types in two or three people to see what
+ * the screens do. Those are test rows, not patients: they sit at the top of
+ * the register with a UHID nobody will use, they make every count of
+ * patients registered wrong, and one day somebody books a real appointment
+ * against one of them.
+ *
+ * The owner can take such a record off, and only while there is genuinely
+ * nothing behind it. The moment a visit, a bill, a prescription or a
+ * booking points at the record it is a patient's, and a patient's record is
+ * corrected in place or marked, never deleted.
+ */
+const removal = require('../services/patientRemoval');
+
+/** What would go, and what is holding the record. Shown before anything happens. */
+router.get('/:id/removal', requireOwner, wrap((req, res) => {
+  res.json(removal.preview(int(req.params.id)));
+}));
+
+router.delete('/:id', requireOwner, wrap((req, res) => {
+  const id = int(req.params.id);
+  const before = removal.preview(id);
+
+  // The UHID has to be typed: this cannot be undone, and the row above the
+  // one somebody meant is another person.
+  if (str(req.body && req.body.confirm) !== before.uhid) {
+    throw badRequest(`Type ${before.uhid} to confirm removing this record.`);
+  }
+
+  const out = removal.remove(id, { reason: str(req.body.reason), by: req.user.id });
+  audit.log(req, 'delete', 'patient', id, {
+    uhid: out.uhid, name: out.name, reason: str(req.body.reason),
+    cascaded: out.cascaded, detached: out.detached,
+  });
+  res.json(out);
 }));
 
 module.exports = router;

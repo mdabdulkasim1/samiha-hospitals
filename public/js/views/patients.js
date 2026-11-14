@@ -451,6 +451,68 @@
     });
   }
 
+  /**
+   * The owner removing a record that was never a patient.
+   *
+   * What is holding it is fetched and shown first, because the answer to
+   * "this one has a visit on it" is not to press harder — it is that this
+   * is somebody's medical record and the clinic does not delete those.
+   */
+  async function openRemovePatient(p) {
+    let plan;
+    try {
+      plan = await API.get(`/api/patients/${p.id}/removal`);
+    } catch (err) { return UI.err(err.message); }
+
+    UI.modal({
+      title: `Remove ${plan.name || plan.uhid}?`,
+      size: 'narrow',
+      body: plan.canRemove
+        ? `<div class="alert warn"><b>This cannot be undone.</b> The record
+             <code>${UI.esc(plan.uhid)}</code> is deleted outright — it is not disabled, hidden
+             or kept anywhere.</div>
+           <p class="muted small">Nothing in the clinic's records points at it: no visit, no
+             booking, no bill, no prescription. That is the only reason this is being offered.
+             ${plan.goesWith.length
+    ? `Its ${plan.goesWith.map((g) => `${g.count} ${UI.esc(g.what)}`).join(', ')} go with it.` : ''}</p>
+           <div class="mt">
+             ${UI.field({ name: 'reason', label: 'Why', required: true,
+    placeholder: 'Entered to try the system out · duplicate of another record' })}
+             ${UI.field({ name: 'confirm', label: `Type ${plan.uhid} to confirm`, required: true,
+    placeholder: plan.uhid })}
+           </div>
+           <div id="rm-out"></div>`
+        : `<div class="alert danger"><b>This is a patient, not a test row.</b>
+             The clinic holds records against <code>${UI.esc(plan.uhid)}</code>:
+             ${plan.blocks.map((b) => `${UI.num(b.count)} ${UI.esc(b.what)}`).join(', ')}.</div>
+           <p class="muted small">A record with care behind it is corrected in place, never
+             deleted. Edit the details if something is wrong, or ask the front desk to mark the
+             record if it should not be used again.</p>`,
+      footer: plan.canRemove
+        ? `<button class="btn ghost" data-act="__close">Cancel</button>
+           <button class="btn danger" data-act="remove">Remove it</button>`
+        : '<button class="btn ghost" data-act="__close">Close</button>',
+      onAction: async (act, modal) => {
+        if (act !== 'remove') return undefined;
+        const values = UI.formValues(modal);
+        const out = modal.querySelector('#rm-out');
+        if (!values.reason || !values.confirm) {
+          out.innerHTML = '<div class="alert danger mt">Both the reason and the UHID are needed.</div>';
+          return 'keep';
+        }
+        try {
+          await API.del(`/api/patients/${p.id}`, values);
+          UI.ok(`${plan.uhid} removed.`);
+          APP.navigate('patients');
+        } catch (err) {
+          out.innerHTML = `<div class="alert danger mt">${UI.esc(err.message)}</div>`;
+          return 'keep';
+        }
+        return undefined;
+      },
+    });
+  }
+
   // ------------------------------------------------------------ 360° record
   async function renderRecord(el, id, params = {}) {
     const p = await API.get(`/api/patients/${id}`);
@@ -464,6 +526,14 @@
         ? [{ id: 'edit', label: 'Edit details', onClick: () => openEdit(p) }] : []),
       ...(!isEnquiry && APP.can(['reception'])
         ? [{ id: 'arrive', label: 'Record arrival', onClick: () => { APP.navigate('queue'); UI.toast('Use “+ Patient arrived” on the queue board.'); } }] : []),
+      /*
+       * The owner's, and nobody else's. A record with any care behind it is
+       * corrected or marked, never deleted — the server refuses it and says
+       * what is holding it. This is for the two or three rows typed in to
+       * see what the screens did.
+       */
+      ...(APP.user && APP.user.role === 'owner'
+        ? [{ id: 'remove', label: 'Remove this record', onClick: () => openRemovePatient(p) }] : []),
     ]);
 
     // Deep link from the dashboard opens the registration form straight away.
