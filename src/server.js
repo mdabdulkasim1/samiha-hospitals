@@ -68,6 +68,7 @@ app.use('/api/lab', require('./routes/lab'));
 app.use('/api/prescriptions', require('./routes/prescriptions'));
 app.use('/api/pharmacy', require('./routes/pharmacy'));
 app.use('/api/stock', require('./routes/stock'));
+app.use('/api/consumables', require('./routes/consumables'));
 app.use('/api/billing', require('./routes/billing'));
 app.use('/api/accounts', require('./routes/accounts'));
 app.use('/api/expenses', require('./routes/expenses'));

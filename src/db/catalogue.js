@@ -461,7 +461,17 @@ function sync({ quiet = false } = {}) {
     console.log(`[expenses] ${book.added} heading(s) and ${book.items} item(s) added to the expense book.`);
   }
 
-  return { added, tariff, revisions, expenseBook: book };
+  /*
+   * The consumables store: gloves, swabs, bin liners. Insert-if-absent like
+   * everything else here — an item the clinic has renamed or switched off
+   * stays as the clinic left it.
+   */
+  const store = require('./consumables').load(db);
+  if (!quiet && (store.added || store.areas)) {
+    console.log(`[consumables] ${store.added} item(s) and ${store.areas} area(s) added to the store.`);
+  }
+
+  return { added, tariff, revisions, expenseBook: book, consumables: store };
 }
 
 module.exports = { sync };

@@ -1800,3 +1800,76 @@ CREATE TABLE IF NOT EXISTS stock_snapshot_lines (
   value       REAL NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_snap_lines ON stock_snapshot_lines(snapshot_id);
+
+-- ------------------------------------------------------- the consumables store
+-- Every glove, swab, cannula and bin liner the clinic keeps.
+--
+-- Deliberately not the pharmacy. A medicine is bought in a batch with an
+-- expiry and an MRP, sold to a named patient and taxed; a box of gauze is
+-- received, put on a shelf and used until it runs out. Running them through
+-- the same screens would mean asking a nurse for a batch number and a GST
+-- rate before she could write down that she had taken two rolls of
+-- micropore, and the honest outcome of that is a store nobody updates.
+--
+-- What is on the shelf is never stored as a number. It is the sum of the
+-- movements, every one of which says who and when — because a figure that
+-- can be typed over is a figure nobody can account for, and "the system
+-- says 40 and there are 12" is the conversation this exists to prevent.
+CREATE TABLE IF NOT EXISTS consumable_areas (
+  code       TEXT PRIMARY KEY,
+  label      TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  active     INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS consumables (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  code        TEXT NOT NULL UNIQUE,
+  name        TEXT NOT NULL,
+  description TEXT,
+  area        TEXT NOT NULL REFERENCES consumable_areas(code),
+  -- "Box of 100", "Pkt of 50", "Roll". The only thing that makes a count
+  -- mean anything: twelve of something is twelve boxes or twelve pieces,
+  -- and the difference is a thousand swabs.
+  unit        TEXT NOT NULL DEFAULT 'No.',
+  -- What the purchase order was raised for: the level the store is expected
+  -- to hold, which is not a count of what is on the shelf.
+  indent_qty  REAL NOT NULL DEFAULT 0,
+  -- Below this, the screen asks for it to be re-ordered. Defaults from the
+  -- indent until somebody who knows the usage sets it.
+  reorder_at  REAL,
+  seeded      INTEGER NOT NULL DEFAULT 0,
+  active      INTEGER NOT NULL DEFAULT 1,
+  sort_order  INTEGER NOT NULL DEFAULT 0,
+  created_by  INTEGER REFERENCES users(id),
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_consumables_area ON consumables(area, sort_order);
+
+CREATE TABLE IF NOT EXISTS consumable_movements (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  item_id      INTEGER NOT NULL REFERENCES consumables(id) ON DELETE CASCADE,
+  -- 'opening'  what was on the shelf when the store was first written down
+  -- 'receipt'  a delivery taken in
+  -- 'issue'    given out to a room, a ward or a department
+  -- 'wastage'  damaged, expired or spoiled
+  -- 'return'   sent back to the supplier
+  -- 'count'    a physical count correcting the book, either way
+  kind         TEXT NOT NULL CHECK (kind IN ('opening','receipt','issue','wastage','return','count')),
+  -- Signed: what it does to the shelf. A receipt is positive, an issue is
+  -- negative, a count can be either.
+  qty          REAL NOT NULL,
+  moved_on     TEXT NOT NULL,
+  supplier     TEXT,
+  invoice_no   TEXT,
+  -- What it cost, where anybody knows. Left empty rather than guessed: a
+  -- store valued on invented prices is worse than one not valued at all.
+  unit_cost    REAL,
+  issued_to    TEXT,
+  reason       TEXT,
+  notes        TEXT,
+  created_by   INTEGER REFERENCES users(id),
+  created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_cons_moves ON consumable_movements(item_id, moved_on);
+CREATE INDEX IF NOT EXISTS idx_cons_moves_when ON consumable_movements(moved_on);

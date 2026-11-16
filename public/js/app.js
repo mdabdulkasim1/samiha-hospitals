@@ -45,6 +45,13 @@
        * knowing the analyser is out of calibration as the owner does;
        * entering and editing belongs to the departments that run the kit.
        */
+      /*
+       * The consumables store: gloves, dressings, reagents, bin liners.
+       * The nurses are on this list because they are the people who open
+       * the last box, and a store only a manager can update is one that is
+       * updated once a month from memory.
+       */
+      { id: 'consumables', label: 'Consumables Store', icon: '⧉', roles: ['admin','nurse'] },
       { id: 'assets',      label: 'Assets & Calibration', icon: '⚙', roles: '*' },
     ]},
     { group: 'Money', items: [
