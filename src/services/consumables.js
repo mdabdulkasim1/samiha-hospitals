@@ -41,9 +41,28 @@ const KINDS = {
 
 const ON_HAND = `COALESCE((SELECT SUM(m.qty) FROM consumable_movements m WHERE m.item_id = c.id), 0)`;
 
+/*
+ * The row reads as a statement rather than as one number: what came in,
+ * what has been used out of it, and what is therefore left.
+ *
+ * `used` is stock that left for a reason somebody gave — issued to a room,
+ * damaged, sent back. A count correction is not usage, however much it
+ * looks like it on a spreadsheet: it is the book being brought into line
+ * with the shelf, and burying it in the usage figure would tell the owner
+ * the clinic got through gauze it never had. It is kept as its own figure
+ * so a row that does not add up says why.
+ */
+const SUM_OF = (clause) => `COALESCE((SELECT SUM(${clause}) FROM consumable_movements m
+  WHERE m.item_id = c.id), 0)`;
+
 const SELECT = `
   SELECT c.*, a.label AS area_label, a.sort_order AS area_sort,
          ${ON_HAND} AS on_hand,
+         ${SUM_OF("CASE WHEN m.kind IN ('opening','receipt') THEN m.qty END")} AS taken_in,
+         ${SUM_OF("CASE WHEN m.kind IN ('issue','wastage','return') THEN -m.qty END")} AS used,
+         ${SUM_OF("CASE WHEN m.kind = 'issue' THEN -m.qty END")} AS issued,
+         ${SUM_OF("CASE WHEN m.kind = 'wastage' THEN -m.qty END")} AS wasted,
+         ${SUM_OF("CASE WHEN m.kind = 'count' THEN m.qty END")} AS counted_adjust,
          COALESCE(c.reorder_at, c.indent_qty * 0.25) AS reorder_level,
          (SELECT MAX(m.moved_on) FROM consumable_movements m WHERE m.item_id = c.id) AS last_moved,
          (SELECT COUNT(*) FROM consumable_movements m WHERE m.item_id = c.id) AS movements
@@ -83,6 +102,7 @@ function list(query = {}) {
 
   let rows = db.prepare(`${SELECT} ${clause} ORDER BY a.sort_order, c.sort_order, c.id`)
     .all(...params);
+  const shown = rows.length;
 
   /*
    * "Nothing left" means the shelf was counted and is empty. An item that
@@ -94,9 +114,16 @@ function list(query = {}) {
   if (query.low) rows = rows.filter((r) => r.movements > 0 && r.on_hand <= r.reorder_level);
   if (query.out) rows = rows.filter((r) => r.movements > 0 && r.on_hand <= 0);
 
-  const all = db.prepare(`${SELECT} ${clause}`).all(...params);
+  /*
+   * The tiles describe the whole store, not the search. "Nothing left: 0"
+   * is a fact about the clinic; narrowing to one cupboard must not make it
+   * read as though the problem went away. What the table is showing is
+   * said separately.
+   */
+  const all = db.prepare(`${SELECT} ${query.includeInactive ? '' : 'WHERE c.active = 1'}`).all();
   return {
     rows,
+    shown,
     totals: {
       items: all.length,
       counted: all.filter((r) => r.movements > 0).length,

@@ -346,3 +346,49 @@ test('every movement is on the record', () => {
   const details = JSON.parse(row.details);
   assert.ok(details.code && details.kind !== undefined);
 });
+
+// --------------------------------------------------- the row as a statement
+test('the shelf reads as taken in, used, available', async () => {
+  /*
+   * One number cannot answer the question a storekeeper actually has. "40"
+   * does not say whether the shelf is emptying fast or has simply never
+   * been filled, and the difference decides whether to raise an order.
+   */
+  const item = find((await api('GET', '/api/consumables')).body.rows, 'Micropore surgical tape');
+  const start = await api('GET', `/api/consumables/${item.id}`);
+
+  await api('POST', `/api/consumables/${item.id}/movements`,
+    { kind: 'issue', qty: 12, issuedTo: 'Dressing room' });
+  await api('POST', `/api/consumables/${item.id}/movements`,
+    { kind: 'wastage', qty: 3, reason: 'Rolls unwound in the damp' });
+
+  const after = (await api('GET', `/api/consumables/${item.id}`));
+  assert.strictEqual(after.body.taken_in, start.body.taken_in, 'what came in has not changed');
+  assert.strictEqual(after.body.used, 15, 'twelve issued and three wasted');
+  assert.strictEqual(after.body.issued, 12);
+  assert.strictEqual(after.body.wasted, 3);
+  assert.strictEqual(after.body.on_hand, after.body.taken_in - 15,
+    'and what is available is what came in, less what was used');
+});
+
+test('a count correction is not counted as usage', async () => {
+  /*
+   * A correction is the book being brought into line with the shelf, not
+   * stock the clinic got through. Folding it into usage would tell the
+   * owner the clinic used gauze it never had, and that figure is the one
+   * the next order is sized from.
+   */
+  const item = find((await api('GET', '/api/consumables')).body.rows, 'Yellow bag, non-chlorinated');
+  const before = (await api('GET', `/api/consumables/${item.id}`)).body;
+
+  const counted = before.on_hand - 25;
+  await api('POST', `/api/consumables/${item.id}/movements`, { kind: 'count', counted });
+
+  const after = (await api('GET', `/api/consumables/${item.id}`)).body;
+  assert.strictEqual(after.used, before.used, 'usage is untouched by a count');
+  assert.strictEqual(after.counted_adjust, -25, 'the correction stands on its own');
+  assert.strictEqual(after.on_hand, counted, 'and the shelf is what was counted');
+
+  // The three figures still explain the fourth.
+  assert.strictEqual(after.on_hand, after.taken_in - after.used + after.counted_adjust);
+});

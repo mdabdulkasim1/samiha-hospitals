@@ -66,7 +66,8 @@
         <div class="grid c4 mb">
           <div class="stat"><div class="label">Items on the list</div>
             <div class="value">${num(data.totals.items)}</div>
-            <div class="foot">across ${data.areas.length} areas</div></div>
+            <div class="foot">${data.shown === data.totals.items
+    ? `across ${data.areas.length} areas` : `showing ${num(data.shown)} of them`}</div></div>
           <div class="stat ${data.totals.out ? 'crimson' : 'ok'}"><div class="label">Nothing left</div>
             <div class="value">${num(data.totals.out)}</div>
             <div class="foot">the shelf is empty</div></div>
@@ -106,13 +107,27 @@
         <div class="card-body tight" id="cs-list"></div></div>`;
 
       const host = body.querySelector('#cs-list');
+      /*
+       * The row reads as a statement, left to right: what came in, what has
+       * been used out of it, what is left. A single "stock" number tells a
+       * storekeeper nothing about whether a shelf is emptying fast or has
+       * simply never been filled.
+       */
       host.innerHTML = UI.table([
         { label: 'Item', render: (r) => `<b>${UI.esc(r.name)}</b>
           ${r.description ? `<div class="muted small">${UI.esc(r.description)}</div>` : ''}` },
         { label: 'Where', render: (r) => UI.esc(r.area_label || r.area) },
         { label: 'Unit', render: (r) => UI.esc(r.unit) },
-        { label: 'On the shelf', num: true, render: (r) => (r.movements
+        { label: 'Taken in', num: true, render: (r) => (r.taken_in
+          ? num(r.taken_in) : '<span class="muted">—</span>') },
+        { label: 'Used', num: true, render: (r) => (r.used
+          ? `${num(r.used)}${r.wasted ? `<div class="muted small">${num(r.wasted)} wasted</div>` : ''}`
+          : '<span class="muted">—</span>') },
+        { label: 'Available', num: true, render: (r) => (r.movements
           ? `<b${r.on_hand <= 0 ? ' style="color:var(--danger)"' : ''}>${num(r.on_hand)}</b>`
+            + (r.counted_adjust
+              ? `<div class="muted small">${r.counted_adjust > 0 ? '+' : ''}${
+                num(r.counted_adjust)} counted</div>` : '')
           : '<span class="muted">not counted</span>') },
         { label: 'Should hold', num: true, render: (r) => num(r.indent_qty) },
         { label: '', render: (r) => (!r.movements
@@ -171,17 +186,22 @@
           <code>${UI.esc(item.code)}</code> · ${UI.esc(item.area_label || item.area)}
           ${item.description ? ` · ${UI.esc(item.description)}` : ''}</p>
 
-        <div class="grid c3 mb">
-          <div class="stat ${item.movements && item.on_hand <= 0 ? 'crimson' : ''}">
-            <div class="label">On the shelf</div>
+        <div class="grid c4 mb">
+          <div class="stat"><div class="label">Taken in</div>
+            <div class="value">${num(item.taken_in)}</div>
+            <div class="foot">opening and deliveries</div></div>
+          <div class="stat orange"><div class="label">Used</div>
+            <div class="value">${num(item.used)}</div>
+            <div class="foot">${num(item.issued)} issued${
+  item.wasted ? ` · ${num(item.wasted)} wasted` : ''}</div></div>
+          <div class="stat ${item.movements && item.on_hand <= 0 ? 'crimson' : 'teal'}">
+            <div class="label">Available</div>
             <div class="value">${item.movements ? num(item.on_hand) : '—'}</div>
-            <div class="foot">${UI.esc(item.unit)}${item.movements ? '' : ' · never counted'}</div></div>
+            <div class="foot">${UI.esc(item.unit)}${item.movements ? '' : ' · never counted'}${
+  item.counted_adjust ? ` · ${item.counted_adjust > 0 ? '+' : ''}${num(item.counted_adjust)} from counts` : ''}</div></div>
           <div class="stat"><div class="label">Should hold</div>
             <div class="value">${num(item.indent_qty)}</div>
-            <div class="foot">from the purchase order</div></div>
-          <div class="stat"><div class="label">Re-order at</div>
-            <div class="value">${num(item.reorder_level)}</div>
-            <div class="foot">${item.reorder_at === null ? 'a quarter of the order' : 'set by the clinic'}</div></div>
+            <div class="foot">re-order at ${num(item.reorder_level)}</div></div>
         </div>
 
         <div class="btn-row mb">
