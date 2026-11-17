@@ -22,6 +22,14 @@
 
   const esc = (s) => UI.esc(s === null || s === undefined ? '' : s);
 
+  /*
+   * The mark on the file sticker. Short on purpose — it shares the top line
+   * with the UHID, which is the one thing on the label that must never be
+   * the part that gets cut off — and it is the group's name rather than the
+   * clinic's full registered one, which is what the sticker is for.
+   */
+  const BADGE = 'SAMIHA HEALTHCARE';
+
   /** What a patient is called on a label: title, both names, nothing missing. */
   function fullName(p) {
     return [p.title, p.first_name, p.last_name].filter(Boolean).join(' ').trim()
@@ -104,7 +112,7 @@
         <div class="frame">
           <div class="top">
             <div class="uhid"><span class="k">UHID</span><span class="v">${esc(p.uhid)}</span></div>
-            <div class="badge">SAMIHA POLYCLINIC</div>
+            <div class="badge">${esc(BADGE)}</div>
           </div>
           <div class="row"><span class="lab">Name</span><span class="val">${esc(fullName(p))}</span></div>
           <div class="row split">

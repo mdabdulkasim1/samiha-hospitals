@@ -139,7 +139,7 @@ test('the file sticker carries what the clinic\'s own design asks for', async ()
 
   assert.ok(html.includes(ids.uhid), 'the UHID, whole');
   assert.ok(!/SPD\d+…|SPD\d+\.\.\./.test(html), 'and never cut short');
-  assert.ok(html.includes('SAMIHA POLYCLINIC'), 'the clinic badge');
+  assert.ok(html.includes('SAMIHA HEALTHCARE'), 'the clinic badge');
   assert.ok(html.includes('Mrs. Ayesha Begum'), 'the name as the file is labelled');
   assert.ok(html.includes('>34<'), 'the age');
   assert.ok(html.includes('Female'), 'and the sex');
