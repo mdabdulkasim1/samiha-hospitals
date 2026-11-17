@@ -145,6 +145,14 @@ function migrate() {
   // One mobile number is often one household, so a patient can say how they
   // relate to the person the number belongs to.
   ensureColumn('patients', 'relationship_to_primary', 'TEXT');
+  /*
+   * Son of, daughter of, wife of — the line every Indian form and every
+   * file sticker carries, and the one most often used to tell two patients
+   * of the same name apart at a counter. Kept separate from the emergency
+   * contact, which is who to ring and not who somebody is.
+   */
+  ensureColumn('patients', 'guardian_name', 'TEXT');
+  ensureColumn('patients', 'guardian_relation', 'TEXT');
 
   /*
    * The code a doctor is known by on paper — SPC-MHD-002. It is the only thing

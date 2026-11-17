@@ -232,6 +232,15 @@
           ${UI.field({ name: 'email', label: 'Email', type: 'email', value: v('email'),
             hint: 'Appointment reminders and reports' })}
         </div>
+        <div class="grid c3">
+          ${UI.field({ name: 'guardianRelation', label: 'S/o · D/o · W/o', value: v('guardian_relation'),
+            options: [{ value: '', label: '— none —' }, { value: 'S/o', label: 'S/o — son of' },
+                      { value: 'D/o', label: 'D/o — daughter of' }, { value: 'W/o', label: 'W/o — wife of' }],
+            hint: 'Printed on the file sticker' })}
+          <div style="grid-column:span 2">${UI.field({ name: 'guardianName',
+            label: 'Father\'s or husband\'s name', value: v('guardian_name'),
+            hint: 'What tells two patients of the same name apart' })}</div>
+        </div>
         ${UI.field({ name: 'address', label: 'Home address', type: 'textarea', rows: 2, value: v('address') })}
         <div class="grid c4">
           ${UI.field({ name: 'city', label: 'City', value: v('city') })}
@@ -532,6 +541,15 @@
        * what is holding it. This is for the two or three rows typed in to
        * see what the screens did.
        */
+      /*
+       * The two stickers, on every patient, for everybody who opens one.
+       * They are what the desk and the bench reach for first: one for the
+       * cover of the paper file, one for whatever sample is about to be
+       * taken. Writing either out by hand is where "Fathima 32" and
+       * "Fathima 23" come from.
+       */
+      { id: 'file-sticker', label: '🏷 File sticker', onClick: () => Stickers.open('file', p) },
+      { id: 'sample-sticker', label: '🏷 Sample sticker', onClick: () => Stickers.open('sample', p) },
       ...(APP.user && APP.user.role === 'owner'
         ? [{ id: 'remove', label: 'Remove this record', onClick: () => openRemovePatient(p) }] : []),
     ]);

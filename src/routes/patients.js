@@ -38,6 +38,10 @@ function registrationMap(body) {
     blood_group: str(body.bloodGroup), marital_status: str(body.maritalStatus),
     // How this person relates to whoever else shares their mobile number.
     relationship_to_primary: str(body.relationshipToPrimary),
+    // Son of / daughter of / wife of: what the file sticker carries, and
+    // what tells two patients of the same name apart at the counter.
+    guardian_name: str(body.guardianName),
+    guardian_relation: oneOf(body.guardianRelation, ['S/o', 'D/o', 'W/o'], 'guardianRelation'),
 
     // --- insurance and billing --------------------------------------------
     insurance_provider: str(body.insuranceProvider),
@@ -582,6 +586,10 @@ router.patch('/:id', requireRole('reception', 'nurse', 'doctor', 'counselor'), w
     occupation: str(req.body.occupation), emergency_name: str(req.body.emergencyName),
     emergency_phone: phone(req.body.emergencyPhone), emergency_relation: str(req.body.emergencyRelation),
     id_type: str(req.body.idType), id_number: str(req.body.idNumber),
+    // Son of / daughter of / wife of, correctable later: it is usually the
+    // field the desk leaves until the patient's second visit.
+    guardian_name: str(req.body.guardianName),
+    guardian_relation: oneOf(req.body.guardianRelation, ['S/o', 'D/o', 'W/o'], 'guardianRelation'),
     /*
      * The Aadhaar was previously only ever accepted at registration, so a
      * patient who brought theirs on a later visit could not have it recorded
