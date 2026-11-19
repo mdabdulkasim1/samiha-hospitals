@@ -21,8 +21,16 @@ const store = require('../services/consumables');
 
 const router = express.Router();
 
-/** The owner, the administrator and the nurses — owner and admin by bypass. */
-const storeRoles = requireRole('nurse');
+/**
+ * The owner, the administrator, the store keeper and the nurses — owner and
+ * admin by bypass.
+ *
+ * The store keeper is here for the obvious reason: it is their cupboard.
+ * The nurses stay because they are the people who open the last box of
+ * gauze, and a store only the keeper can update is one that is updated once
+ * a month from memory.
+ */
+const storeRoles = requireRole('store', 'nurse');
 
 router.get('/', storeRoles, wrap((req, res) => {
   res.json({

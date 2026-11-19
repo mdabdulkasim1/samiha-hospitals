@@ -1063,3 +1063,9 @@ tbody tr.panel-head.panel-sub td { background: transparent; border-top: 1px soli
 .tv-room-doc { font-size: 1.25vw; color: #fff; font-weight: 600; margin-top: .2vh; }
 .q-duty { font-size: 12.6px; line-height: 1.45; }
 .warn-text { color: var(--orange-dark); }
+
+/* The asset label, previewed on screen at its printed size. */
+.asset-label-preview { display: inline-block; border: 1px solid var(--line);
+  border-radius: 6px; background: #fff; padding: 3px; }
+/* An asset code, wherever it is read rather than scanned. */
+.a-code { font-variant-numeric: tabular-nums; letter-spacing: .02em; font-weight: 700; }

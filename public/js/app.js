@@ -15,7 +15,7 @@
       { id: 'owner',       label: "Owner's board",    icon: '◈', roles: [], ownerOnly: true },
     ]},
     { group: 'Front office', items: [
-      { id: 'dashboard',   label: 'Dashboard',        icon: '▦', roles: '*' },
+      { id: 'dashboard',   label: 'Dashboard',        icon: '▦', roles: '*', alsoStore: true },
       { id: 'queue',       label: 'Patient Queue',    icon: '⛭', roles: '*' },
       /*
        * The screen for the televisions in the two waiting rooms. It is in
@@ -57,8 +57,11 @@
        * the last box, and a store only a manager can update is one that is
        * updated once a month from memory.
        */
-      { id: 'consumables', label: 'Consumables Store', icon: '⧉', roles: ['admin','nurse'] },
-      { id: 'assets',      label: 'Assets & Calibration', icon: '⚙', roles: '*' },
+      { id: 'consumables', label: 'Consumables Store', icon: '⧉', roles: ['store','admin','nurse'] },
+      // Open to everybody to read — the technician at the bench has as much
+      // business knowing an analyser is overdue as the owner does — and to
+      // the store keeper, whose register it is.
+      { id: 'assets',      label: 'Assets & Calibration', icon: '⚙', roles: '*', alsoStore: true },
     ]},
     { group: 'Money', items: [
       { id: 'billing',     label: 'Billing & Payments', icon: '₹', roles: ['admin','cashier','counselor'] },
@@ -96,7 +99,7 @@
        * one place admin does not bypass (src/lib/auth.js, requireOwner).
        */
       { id: 'access',      label: 'Screen access',    icon: '◪', roles: [], ownerOnly: true },
-      { id: 'account',     label: 'Account & System', icon: '⚙', roles: '*' },
+      { id: 'account',     label: 'Account & System', icon: '⚙', roles: '*', alsoStore: true },
     ]},
   ];
 
@@ -109,11 +112,27 @@
     views: {},
 
     can(roles) {
-      if (roles === '*') return true;
-      if (!APP.user) return false;
+      if (!APP.user) return roles === '*';
       // Owner and admin pass every gate; see FULL_ACCESS in src/lib/auth.js,
       // which is where it is actually enforced.
-      return ['owner', 'admin'].includes(APP.user.role) || roles.includes(APP.user.role);
+      if (['owner', 'admin'].includes(APP.user.role)) return true;
+      /*
+       * The store keeper is the one role that is not clinical at all, so
+       * "everybody" does not include them. A screen open to all staff — the
+       * patient list, the queue, the reports — is a screen the server
+       * refuses them anyway, and a menu full of doors that open onto an
+       * error is worse than a short menu.
+       */
+      if (APP.user.role === 'store') return roles !== '*' && roles.includes('store');
+      if (roles === '*') return true;
+      return roles.includes(APP.user.role);
+    },
+
+    /** A menu item, with the two screens every account keeps. */
+    canOpenItem(item) {
+      if (!item) return false;
+      if (item.alsoStore && APP.user && APP.user.role === 'store') return true;
+      return APP.can(item.roles);
     },
 
     /*
@@ -138,7 +157,7 @@
       const item = NAV.flatMap((g) => g.items).find((i) => i.id === route);
       if (!item) return true;
       if (item.ownerOnly) return APP.user && APP.user.role === 'owner';
-      return APP.can(item.roles);
+      return APP.canOpenItem(item);
     },
 
     seesMoney() { return APP.can(['cashier', 'counselor']); },
@@ -167,6 +186,15 @@
         // Screens the owner has taken off this role's menu. Visibility only:
         // see src/routes/access.js for why that is not the same as access.
         APP.hiddenScreens = me.hiddenScreens || [];
+        /*
+         * The store keeper opens onto the register rather than the clinical
+         * dashboard. Their day's work is the equipment and the cupboard,
+         * and a dashboard of consultations and takings is a screen they
+         * would have to click past every morning.
+         */
+        if (APP.user.role === 'store' && !window.location.hash.replace(/^#\/?/, '')) {
+          window.location.hash = '#/assets';
+        }
         renderShell();
         await router();
         refreshBadges();
@@ -573,7 +601,7 @@
            administrator, so there is nothing to be let into here.</div>`;
       return;
     }
-    if (navItem && !navItem.ownerOnly && !APP.can(navItem.roles)) {
+    if (navItem && !navItem.ownerOnly && !APP.canOpenItem(navItem)) {
       document.getElementById('view').innerHTML =
         `<div class="alert danger">Your role (<b>${UI.esc(APP.user.role)}</b>) does not have access to ${UI.esc(navItem.label)}.</div>`;
       return;

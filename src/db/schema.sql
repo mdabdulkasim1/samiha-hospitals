@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS users (
   -- 'owner' sits above 'admin': full access to everything, and the only role
   -- that decides what the other roles may see.
   role           TEXT NOT NULL CHECK (role IN
-                   ('owner','admin','reception','counselor','nurse','doctor','lab','pharmacy','cashier','ward')),
+                   ('owner','admin','reception','counselor','nurse','doctor','lab','pharmacy','cashier','ward','store')),
   department_id  INTEGER REFERENCES departments(id),
   active         INTEGER NOT NULL DEFAULT 1,
   last_login_at  TEXT,
@@ -1981,3 +1981,51 @@ CREATE TABLE IF NOT EXISTS queue_tokens (
 CREATE INDEX IF NOT EXISTS idx_queue_tokens_day ON queue_tokens(issue_date, category_id, seq);
 CREATE INDEX IF NOT EXISTS idx_queue_tokens_room ON queue_tokens(issue_date, room_id, status);
 CREATE INDEX IF NOT EXISTS idx_queue_tokens_visit ON queue_tokens(visit_id);
+
+-- ===========================================================================
+-- The asset register's own codes: the branch, the item, and the label
+-- ===========================================================================
+
+/*
+ * The clinic's branches.
+ *
+ * An asset code carries the branch it belongs to — SHC-WHLCH-0326-MPM-001 is
+ * the first wheelchair bought in March 2026 at Melapalayam — so the branch
+ * has to be a list the clinic keeps rather than a word typed on each asset.
+ * Opening at Cheranmahadevi is then adding a row here, and every code minted
+ * afterwards carries CH without anybody editing the format.
+ */
+CREATE TABLE IF NOT EXISTS branches (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  -- Two or three letters, as they appear in the middle of an asset code.
+  code       TEXT NOT NULL UNIQUE,
+  name       TEXT NOT NULL,
+  address    TEXT,
+  is_default INTEGER NOT NULL DEFAULT 0,
+  active     INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+/*
+ * The short code for a kind of thing.
+ *
+ * The second part of an asset code says what the thing is — WHLCH for a
+ * wheelchair, BPAPP for a BP apparatus — and the point of it is that every
+ * wheelchair in the clinic carries the same five letters. That only holds if
+ * the codes are a list rather than something each person shortens their own
+ * way, so they are kept here and reused.
+ *
+ * The clinic adds to it as it buys things it has not bought before, which is
+ * why a code can be created from the asset screen in the same breath as the
+ * asset.
+ */
+CREATE TABLE IF NOT EXISTS asset_item_codes (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  code       TEXT NOT NULL UNIQUE,
+  name       TEXT NOT NULL,
+  category   TEXT,
+  active     INTEGER NOT NULL DEFAULT 1,
+  created_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_item_codes_name ON asset_item_codes(name);

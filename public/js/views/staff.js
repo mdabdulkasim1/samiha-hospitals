@@ -31,6 +31,12 @@
     { value: 'pharmacy', label: 'Pharmacist — dispensing, stock' },
     { value: 'cashier', label: 'Cashier — billing, payments, insurance' },
     { value: 'ward', label: 'Ward sister — beds, admissions, rounds' },
+    /*
+     * The store keeper. Deliberately narrow: the asset register and the
+     * consumables cupboard, and nothing that touches a patient record. It
+     * is the one account in the clinic whose whole job is the equipment.
+     */
+    { value: 'store', label: 'Store keeper — assets, equipment, consumables' },
     { value: 'admin', label: 'Administrator — full access' },
     { value: 'owner', label: 'Owner — full access, and sets what others see' },
   ];

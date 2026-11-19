@@ -194,6 +194,19 @@ function sync({ quiet = false } = {}) {
                  WHERE code = ? AND (location IS NULL OR location = '')`).run(where, code);
   }
 
+  // ----------------------------------------------------------- the branches
+  /*
+   * Melapalayam, which is the clinic. Its code is the middle of every asset
+   * label printed here — SHC-WHLCH-0326-MPM-001 — and a second branch is a
+   * row added beside it, after which codes minted there carry its letters
+   * instead. Inserted only if the table is empty, so a clinic that has
+   * renamed or added to this is left alone.
+   */
+  if (!db.prepare('SELECT 1 FROM branches').get()) {
+    db.prepare(`INSERT INTO branches (code, name, address, is_default)
+                VALUES ('MPM', 'Melapalayam', 'Nethaji Road, Melapalayam - 627 005', 1)`).run();
+  }
+
   // ------------------------------------------------------------------- assets
   /*
    * The equipment the clinic bought, from its purchase orders. Matched on the

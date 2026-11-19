@@ -182,6 +182,29 @@ function migrate() {
    */
   ensureColumn('doctor_availability', 'op_room_id', 'INTEGER REFERENCES op_rooms(id)');
 
+  /*
+   * The asset's own code, the one printed on the sticker stuck to the thing
+   * itself: SHC-WHLCH-0326-MPM-001. It is kept beside the register's
+   * internal `asset_no` rather than replacing it, because the two answer
+   * different questions — `asset_no` is this row, and the asset code is
+   * that object in the store room, readable off a label by somebody holding
+   * a scanner and nothing else.
+   *
+   * Nullable, because the clinic mints codes when it is ready to label
+   * things, and an asset entered this morning is still an asset this
+   * afternoon whether or not somebody has printed a sticker for it.
+   */
+  ensureColumn('assets', 'asset_code', 'TEXT');
+  ensureColumn('assets', 'item_code', 'TEXT');
+  ensureColumn('assets', 'branch_id', 'INTEGER REFERENCES branches(id)');
+  ensureColumn('assets', 'code_serial', 'INTEGER');
+  ensureColumn('assets', 'code_minted_at', 'TEXT');
+  ensureColumn('assets', 'code_minted_by', 'INTEGER REFERENCES users(id)');
+  // Two things cannot carry the same label. The index allows many assets
+  // with no code yet, and exactly one holder of each code that exists.
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_assets_code ON assets(asset_code) '
+    + 'WHERE asset_code IS NOT NULL');
+
   ensureColumn('patients', 'guardian_name', 'TEXT');
   ensureColumn('patients', 'guardian_relation', 'TEXT');
 
@@ -317,15 +340,23 @@ function migrate() {
   const usersSql = db.prepare(
     "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'"
   ).get();
-  if (usersSql && !/'owner'/.test(usersSql.sql)) {
+  /*
+   * The store keeper's role is added the same way, and for the same reason:
+   * the role list is a CHECK constraint, and SQLite can only change one by
+   * rebuilding the table. Both are handled in one pass, so a database from
+   * before either existed comes forward in a single rewrite.
+   */
+  const missingRole = usersSql && (!/'owner'/.test(usersSql.sql) || !/'store'/.test(usersSql.sql));
+  if (missingRole) {
     const columns = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
     const rebuilt = usersSql.sql
       .replace(/CREATE TABLE\s+(?:IF NOT EXISTS\s+)?["`]?users["`]?/i, 'CREATE TABLE users_rebuild')
       .replace("role IN\n                   ('admin'", "role IN\n                   ('owner','admin'")
-      .replace("role IN ('admin'", "role IN ('owner','admin'");
+      .replace("role IN ('admin'", "role IN ('owner','admin'")
+      .replace("'ward')", "'ward','store')");
 
-    if (!/'owner'/.test(rebuilt)) {
-      console.error('[migrate] could not add the owner role — users table left untouched.');
+    if (!/'owner'/.test(rebuilt) || !/'store'/.test(rebuilt)) {
+      console.error('[migrate] could not extend the role list — users table left untouched.');
     } else {
       const wasOn = db.pragma('foreign_keys', { simple: true });
       db.pragma('foreign_keys = OFF');
@@ -339,10 +370,10 @@ function migrate() {
         const broken = db.pragma('foreign_key_check');
         if (broken.length) throw new Error(`${broken.length} reference(s) would be orphaned`);
         db.exec('COMMIT');
-        console.log('[migrate] users table rebuilt — the owner role is now allowed.');
+        console.log('[migrate] users table rebuilt — the owner and store roles are now allowed.');
       } catch (err) {
         try { db.exec('ROLLBACK'); } catch { /* already rolled back */ }
-        console.error('[migrate] owner role migration failed, nothing changed:', err.message);
+        console.error('[migrate] role migration failed, nothing changed:', err.message);
       } finally {
         if (wasOn) db.pragma('foreign_keys = ON');
       }
