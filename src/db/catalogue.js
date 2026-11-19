@@ -98,24 +98,100 @@ function sync({ quiet = false } = {}) {
 
   // -------------------------------------------------------- the four OP rooms
   /*
-   * The building: two consulting rooms on the ground floor, two on the
-   * first, as the clinic described them.
+   * The building, as the floor plan draws it: out-patient rooms 1 and 2 on
+   * the ground floor, 3 and 4 on the first, numbered straight through
+   * rather than one and two on each floor. OP-3 is the dental room on the
+   * plan, which is why the dentist is put there below.
    *
-   * They are put in empty — no specialties against them — because which
-   * clinics sit in which room is the clinic's own to enter and will change:
-   * a room takes four specialties or more, and they move. What the rooms
-   * being here buys is that admin opens the screen to four rows to fill in
-   * rather than a blank page and a question about what a room record is.
+   * Only a room the table has never heard of is added, and the rename below
+   * carries an older install across. What sits in each room is the clinic's
+   * to change at any time, which is the whole point of the screen that
+   * edits it.
    */
-  for (const [floor, floor_order, name] of [
-    ['Ground Floor', 1, 'OP 1'], ['Ground Floor', 1, 'OP 2'],
-    ['First Floor', 2, 'OP 1'], ['First Floor', 2, 'OP 2'],
+  const ROOMS = [
+    ['Ground Floor', 1, 'OP-1'], ['Ground Floor', 1, 'OP-2'],
+    ['First Floor', 2, 'OP-3'], ['First Floor', 2, 'OP-4'],
+  ];
+
+  /*
+   * An install from before the rooms were numbered through the building had
+   * "OP 1" and "OP 2" on each floor. Renamed rather than added beside, so
+   * the tokens already issued against those rooms still point at the room
+   * the patient was sent to.
+   */
+  for (const [floor, name, became] of [
+    ['Ground Floor', 'OP 1', 'OP-1'], ['Ground Floor', 'OP 2', 'OP-2'],
+    ['First Floor', 'OP 1', 'OP-3'], ['First Floor', 'OP 2', 'OP-4'],
   ]) {
+    const old = db.prepare('SELECT id FROM op_rooms WHERE floor = ? AND name = ?').get(floor, name);
+    const taken = db.prepare('SELECT id FROM op_rooms WHERE floor = ? AND name = ?').get(floor, became);
+    if (old && !taken) db.prepare('UPDATE op_rooms SET name = ? WHERE id = ?').run(became, old.id);
+  }
+
+  for (const [floor, floor_order, name] of ROOMS) {
     const seen = db.prepare('SELECT id FROM op_rooms WHERE floor = ? AND name = ?').get(floor, name);
     if (!seen) {
       db.prepare('INSERT INTO op_rooms (floor, floor_order, name) VALUES (?, ?, ?)')
         .run(floor, floor_order, name);
     }
+  }
+
+  // ------------------------------------------- who sits in which room, to start
+  /*
+   * The clinic's own allocation, written against its category sheet: ENT,
+   * General Medicine and General Surgery in OP-1; Obstetrics and Paediatrics
+   * in OP-2; the dentist in OP-3; and the rest of the specialists upstairs
+   * in OP-4.
+   *
+   * Written once and then left alone for good. A specialty is moved between
+   * rooms whenever a doctor is away — that is a normal morning here — and a
+   * restart that quietly put every clinic back where it started would undo
+   * the move the front desk made an hour ago. So the mark goes in the
+   * settings table the first time this runs, and nothing touches the
+   * allocation again.
+   */
+  const ALLOCATED = 'queue.rooms_allocated';
+  if (!db.prepare('SELECT 1 FROM settings WHERE key = ?').get(ALLOCATED)) {
+    const placement = {
+      'OP-1': ['03', '05', '06'],
+      'OP-2': ['07', '08'],
+      'OP-3': ['10'],
+      'OP-4': ['01', '02', '04', '09', '11'],
+    };
+    for (const [roomName, codes] of Object.entries(placement)) {
+      const room = db.prepare('SELECT id FROM op_rooms WHERE name = ?').get(roomName);
+      if (!room) continue;
+      // Never over a room the clinic has already filled in itself.
+      const already = db.prepare('SELECT COUNT(*) AS c FROM op_room_categories WHERE room_id = ?')
+        .get(room.id).c;
+      if (already) continue;
+      codes.forEach((code, i) => {
+        const cat = db.prepare('SELECT id FROM queue_categories WHERE code = ?').get(code);
+        if (!cat) return;
+        db.prepare(`INSERT OR IGNORE INTO op_room_categories (room_id, category_id, sort_order)
+                    VALUES (?, ?, ?)`).run(room.id, cat.id, i);
+      });
+    }
+    db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)')
+      .run(ALLOCATED, new Date().toISOString());
+  }
+
+  // ------------------------------------------------ where the counters are
+  /*
+   * A counter is not a consulting room, so it has no row in op_rooms — and
+   * a patient holding 19-004 still has to be told that the X-ray is
+   * upstairs. These are the floors from the directory board in the
+   * entrance, filled in only where nothing has been entered, so a counter
+   * the clinic has since moved stays where the clinic put it.
+   */
+  for (const [code, where] of [
+    ['13', 'Ground Floor'],
+    ['14', 'Ground Floor'],
+    ['19', 'First Floor'],
+    ['20', 'Ground Floor'],
+  ]) {
+    db.prepare(`UPDATE queue_categories SET location = ?
+                 WHERE code = ? AND (location IS NULL OR location = '')`).run(where, code);
   }
 
   // ------------------------------------------------------------------- assets

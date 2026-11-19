@@ -142,11 +142,15 @@ test.before(async () => {
   });
   ids.other = made.body.id;
 
-  // First Floor OP 1 takes Paediatrics, as the clinic would enter it.
+  /*
+   * Paediatrics sits in OP-2 by the clinic's own allocation. These tests
+   * put it in OP-3 instead, so that a test which moves it has somewhere to
+   * move it from and the seeded allocation is not what is being asserted.
+   */
   const rooms = queue.rooms();
-  const room = rooms.find((r) => r.floor === 'First Floor' && r.name === 'OP 1');
+  const room = rooms.find((r) => r.name === 'OP-3');
   const pedCat = queue.categories().find((c) => c.code === '08');
-  queue.setRoomCategories(room.id, [pedCat.id]);
+  queue.assignCategoryRoom(pedCat.id, room.id);
   ids.room = room.id;
   ids.pedCat = pedCat.id;
 });
@@ -232,26 +236,28 @@ test('a token with no patient is still a place in the line', () => {
 test('the room on the token is the room the clinic entered', () => {
   clear();
   const t = queue.issue({ categoryId: ids.pedCat, date: ids.date });
-  assert.strictEqual(t.room_name, 'OP 1');
+  assert.strictEqual(t.room_name, 'OP-3');
   assert.strictEqual(t.room_floor, 'First Floor');
 });
 
 test('a doctor\'s own room beats the specialty\'s room', () => {
   clear();
-  const ground = queue.rooms().find((r) => r.floor === 'Ground Floor' && r.name === 'OP 2');
+  const ground = queue.rooms().find((r) => r.name === 'OP-2');
   queue.setDoctorRoom(ids.doctor, ground.id);
   const t = queue.issue({ categoryId: ids.pedCat, doctorId: ids.doctor, date: ids.date });
-  assert.strictEqual(t.room_name, 'OP 2');
+  assert.strictEqual(t.room_name, 'OP-2');
   assert.strictEqual(t.room_floor, 'Ground Floor');
   queue.setDoctorRoom(ids.doctor, null);
 });
 
-test('a room with no specialty set sends nobody anywhere, rather than guessing', () => {
+test('a specialty with no room sends nobody anywhere, rather than guessing', () => {
   clear();
   const ent = queue.categories().find((c) => c.code === '03');
+  queue.assignCategoryRoom(ent.id, null);
   const t = queue.issue({ categoryId: ent.id, date: ids.date });
   assert.strictEqual(t.room_id, null, 'no room invented');
   assert.strictEqual(t.label, '03-001', 'but the number is still issued');
+  queue.assignCategoryRoom(ent.id, queue.rooms().find((r) => r.name === 'OP-1').id);
 });
 
 test('a room takes several specialties, because one room holds several clinics', () => {
@@ -263,6 +269,15 @@ test('a room takes several specialties, because one room holds several clinics',
   assert.deepStrictEqual(saved.categories.map((c) => c.code), ['08', '02', '01', '11'],
     'and in the order the clinic listed them');
   queue.setRoomCategories(room.id, [ids.pedCat]);
+  // Put the four back where the clinic's own sheet has them.
+  queue.assignCategoryRoom(queue.categories().find((c) => c.code === '02').id,
+    queue.rooms().find((r) => r.name === 'OP-4').id);
+  queue.assignCategoryRoom(queue.categories().find((c) => c.code === '01').id,
+    queue.rooms().find((r) => r.name === 'OP-4').id);
+  queue.assignCategoryRoom(queue.categories().find((c) => c.code === '11').id,
+    queue.rooms().find((r) => r.name === 'OP-4').id);
+  queue.assignCategoryRoom(queue.categories().find((c) => c.code === '10').id,
+    queue.rooms().find((r) => r.name === 'OP-3').id);
 });
 
 // ============================================== the rule: who goes in next
@@ -410,7 +425,7 @@ test('the slip carries the number, the room and how many are ahead', async () =>
   const slip = (await api('GET', `/api/queue/tokens/${second.id}/slip`)).body;
   assert.strictEqual(slip.label, '08-002');
   assert.strictEqual(slip.category, 'Paediatrics');
-  assert.strictEqual(slip.room, 'OP 1');
+  assert.strictEqual(slip.room, 'OP-3');
   assert.strictEqual(slip.floor, 'First Floor');
   assert.strictEqual(slip.ahead, 1, 'one person in front of them');
   assert.strictEqual(slip.clinic, 'SAMIHA HEALTHCARE');
@@ -453,10 +468,11 @@ test('the waiting-room screen shows one floor, with numbers and no names', () =>
 
   const first = queue.display('First Floor', ids.date, at('09:06'));
   assert.deepStrictEqual(first.floors, ['Ground Floor', 'First Floor']);
-  const panel = first.panels.find((p) => p.room.name === 'OP 1');
+  const panel = first.panels.find((p) => p.room.name === 'OP-3');
   assert.strictEqual(panel.nowCalling.label, '08-001');
   assert.deepStrictEqual(panel.upNext.map((u) => u.label), ['08-002']);
-  assert.deepStrictEqual(panel.room.specialties, ['Paediatrics']);
+  assert.ok(panel.room.specialties.includes('Paediatrics'),
+    'the panel names the clinics sitting in that room');
 
   // A waiting room is a public place.
   const json = JSON.stringify(first);
@@ -497,7 +513,7 @@ test('recording an arrival hands out the token for that department', async () =>
   assert.strictEqual(res.status, 201, JSON.stringify(res.body));
   assert.ok(res.body.queueToken, 'a token comes back with the arrival');
   assert.match(res.body.queueToken.label, /^08-\d{3}$/);
-  assert.strictEqual(res.body.queueToken.room_name, 'OP 1');
+  assert.strictEqual(res.body.queueToken.room_name, 'OP-3');
 
   // Opening the visit again shows the same token — never a second number.
   const visit = (await api('GET', `/api/visits/${res.body.visit.id}`)).body;
@@ -577,6 +593,114 @@ test('a room that tokens point at is switched off rather than deleted', async ()
 
   // The token still says where that patient was sent.
   const still = queue.tokensFor({ date: ids.date })[0];
-  assert.strictEqual(still.room_name, 'OP 1');
+  assert.strictEqual(still.room_name, 'OP-3');
   await api('PATCH', `/api/queue/rooms/${ids.room}`, { active: true }, 'admin');
+});
+
+// ============================================ the clinic's own OP allocation
+test('the four rooms are numbered through the building, as the plan draws them', () => {
+  const rooms = queue.rooms();
+  assert.deepStrictEqual(
+    rooms.map((r) => `${r.floor}:${r.name}`),
+    ['Ground Floor:OP-1', 'Ground Floor:OP-2', 'First Floor:OP-3', 'First Floor:OP-4'],
+    'OP-1 and OP-2 downstairs, OP-3 and OP-4 up — not one and two on each floor');
+});
+
+test('each specialty starts in the room the clinic allocated it', () => {
+  // Paediatrics is moved to OP-3 by these tests' own set-up, so it is the
+  // one specialty not asserted here.
+  const where = (code) => {
+    const cat = queue.categories().find((c) => c.code === code);
+    const room = queue.roomOfCategory(cat.id);
+    return room ? room.name : null;
+  };
+  assert.strictEqual(where('05'), 'OP-1', 'General / Internal Medicine downstairs');
+  assert.strictEqual(where('06'), 'OP-1', 'General Surgery downstairs');
+  assert.strictEqual(where('07'), 'OP-2', 'Obstetrics & Gynaecology downstairs');
+  assert.strictEqual(where('10'), 'OP-3', 'the dentist in the dental room on the plan');
+  assert.strictEqual(where('02'), 'OP-4', 'Cardiology upstairs');
+  assert.strictEqual(where('09'), 'OP-4', 'Orthopaedics upstairs');
+});
+
+test('a counter carries a floor instead of a room, and the slip says it', () => {
+  clear();
+  const xray = queue.categories().find((c) => c.code === '19');
+  assert.strictEqual(xray.location, 'First Floor');
+
+  const t = queue.issue({ categoryId: xray.id, date: ids.date });
+  assert.strictEqual(t.room_id, null, 'the X-ray is not a consulting room');
+  const slip = queue.slip(t.id);
+  assert.strictEqual(slip.room, null);
+  assert.strictEqual(slip.location, 'First Floor',
+    'and a patient holding 19-001 is still told which floor to walk to');
+});
+
+test('moving a clinic takes the people waiting in it to the new room', async () => {
+  clear();
+  const from = queue.rooms().find((r) => r.name === 'OP-3');
+  const to = queue.rooms().find((r) => r.name === 'OP-1');
+
+  const waiting = plant({ category: '08', arrived: '09:00' });
+  const calledIn = plant({ category: '08', arrived: '09:10', patient: ids.other });
+  db.prepare("UPDATE queue_tokens SET status = 'called', called_at = ? WHERE id = ?")
+    .run(`${ids.date} 09:12:00`, calledIn.id);
+  assert.strictEqual(queue.tokenOr404(waiting.id).room_name, 'OP-3');
+
+  /*
+   * Over the wire first, to prove the front desk may do this at all — the
+   * route moves today's queue, and these tokens are dated, so the count it
+   * reports is of today's and is zero here.
+   */
+  const res = await api('POST', `/api/queue/categories/${ids.pedCat}/room`,
+    { roomId: to.id }, 'reception');
+  assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+  assert.strictEqual(res.body.from.name, 'OP-3');
+  assert.strictEqual(res.body.to.name, 'OP-1');
+
+  // Then the move itself, against the day these tokens were issued on.
+  queue.assignCategoryRoom(ids.pedCat, from.id, { date: ids.date });
+  const moved = queue.assignCategoryRoom(ids.pedCat, to.id, { date: ids.date });
+  assert.strictEqual(moved.moved, 1, 'one patient was still waiting');
+
+  assert.strictEqual(queue.tokenOr404(waiting.id).room_name, 'OP-1',
+    'the queue follows the doctor');
+  assert.strictEqual(queue.tokenOr404(calledIn.id).room_name, 'OP-3',
+    'somebody already called stays at the door they were called to');
+
+  // The next token issued goes to the new room without being told.
+  assert.strictEqual(queue.issue({ categoryId: ids.pedCat, date: ids.date,
+    patientId: null, again: true }).room_name, 'OP-1');
+
+  // And it is one call to swap it back.
+  const back = await api('POST', `/api/queue/categories/${ids.pedCat}/room`,
+    { roomId: from.id }, 'reception');
+  assert.strictEqual(back.body.to.name, 'OP-3');
+  assert.strictEqual(queue.roomOfCategory(ids.pedCat).name, 'OP-3');
+  queue.assignCategoryRoom(ids.pedCat, from.id, { date: ids.date });
+});
+
+test('a clinic sits in one room at a time, so moving it does not leave it in two', () => {
+  const op4 = queue.rooms().find((r) => r.name === 'OP-4');
+  const op1 = queue.rooms().find((r) => r.name === 'OP-1');
+  const derm = queue.categories().find((c) => c.code === '11');
+
+  queue.assignCategoryRoom(derm.id, op1.id);
+  const stillInFour = queue.rooms().find((r) => r.id === op4.id)
+    .categories.some((c) => c.id === derm.id);
+  assert.strictEqual(stillInFour, false, 'it left the room it was in');
+  assert.strictEqual(queue.roomOfCategory(derm.id).name, 'OP-1');
+  queue.assignCategoryRoom(derm.id, op4.id);
+});
+
+test('the queue can be left behind when the move is only for later', async () => {
+  clear();
+  const waiting = plant({ category: '08', arrived: '09:00' });
+  const to = queue.rooms().find((r) => r.name === 'OP-4');
+
+  const res = queue.assignCategoryRoom(ids.pedCat, to.id,
+    { moveWaiting: false, date: ids.date });
+  assert.strictEqual(res.moved, 0);
+  assert.strictEqual(queue.tokenOr404(waiting.id).room_name, 'OP-3',
+    'the people already holding a slip are left where the slip sent them');
+  queue.assignCategoryRoom(ids.pedCat, ids.room);
 });

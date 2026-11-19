@@ -30,6 +30,13 @@
   let timer = null;
 
   const isManagement = () => Boolean(APP.user && ['owner', 'admin'].includes(APP.user.role));
+  /*
+   * Moving a clinic from one room to another is the front desk's call as
+   * much as admin's: a doctor failing to arrive is a nine o'clock problem,
+   * and the person who finds out is the receptionist. The room records and
+   * the category codes themselves stay with admin.
+   */
+  const canSetup = () => isManagement() || APP.can(['reception']);
 
   APP.register('queue', {
     title: 'Patient Queue',
@@ -52,7 +59,7 @@
         floor: (host) => draw(host, date),
         setup: (host) => drawSetup(host),
       };
-      const open = tabs[params.tab] && (params.tab !== 'setup' || isManagement())
+      const open = tabs[params.tab] && (params.tab !== 'setup' || canSetup())
         ? params.tab : 'calling';
 
       APP.actions([
@@ -66,7 +73,8 @@
         <div class="tabs" id="q-tabs">
           <button data-tab="calling" class="${open === 'calling' ? 'active' : ''}">Now calling</button>
           <button data-tab="floor" class="${open === 'floor' ? 'active' : ''}">Clinic floor</button>
-          ${isManagement() ? `<button data-tab="setup" class="${open === 'setup' ? 'active' : ''}">Set-up</button>` : ''}
+          ${canSetup() ? `<button data-tab="setup" class="${open === 'setup' ? 'active' : ''}">${
+            isManagement() ? 'Rooms &amp; codes' : 'Who sits where'}</button>` : ''}
         </div>
         <div id="q-body">${UI.loading()}</div>`;
 
@@ -626,7 +634,8 @@
       <div class="q-who">${t.patient_name
         ? `${UI.esc(t.patient_name)}<span class="muted small"> · ${UI.esc(t.uhid || '')}</span>`
         : '<span class="muted small">No patient attached</span>'}
-        <span class="muted small"> · ${UI.esc(t.why)}</span></div>
+        <span class="muted small"> · ${UI.esc(t.why)}${t.room_name
+          ? ` · ${UI.esc(t.room_name)}` : ''}</span></div>
       <div class="q-acts">
         ${APP.can(['reception', 'nurse', 'doctor'])
           ? `<button class="btn sm ${t.callable ? 'teal' : 'ghost'}" data-act="call" data-id="${t.id}">Call</button>` : ''}
@@ -799,20 +808,31 @@
       API.get('/api/queue/setup'),
       API.get('/api/masters/departments'),
     ]);
-    const doctors = await API.get('/api/masters/staff?role=doctor');
+    const doctors = isManagement() ? await API.get('/api/masters/staff?role=doctor') : [];
     const cats = setup.categories;
+    const rooms = setup.rooms.filter((r) => r.active);
 
     host.innerHTML = `
       <div class="alert info">A token is the category code and a number that starts again each
-        morning — <b>08-001</b> is the day's first Paediatrics patient. Enter which specialties sit
-        in which room, and the room goes on the slip and the waiting-room screen by itself.</div>
+        morning — <b>08-001</b> is the day's first Paediatrics patient. The room against each
+        specialty is what goes on the slip and on the waiting-room screen.</div>
 
-      <h3>Consulting rooms</h3>
-      <div class="q-rooms">${setup.rooms.map((r) => roomCard(r, cats, doctors)).join('')}</div>
-      <button class="btn ghost mt" id="q-add-room">+ Add a room</button>
+      <h3>Who sits in which OP</h3>
+      <div class="muted small mb">Change a room here whenever a doctor is away and their clinic
+        moves. Anybody already waiting in that queue is sent to the new room with it —
+        the ERP says how many, so the desk can call it out.</div>
+      <div id="q-alloc"></div>
 
-      <h3 class="mt">Category codes</h3>
-      <div id="q-cats"></div>`;
+      ${isManagement() ? `
+        <h3 class="mt">Consulting rooms</h3>
+        <div class="q-rooms">${setup.rooms.map((r) => roomCard(r, cats, doctors)).join('')}</div>
+        <button class="btn ghost mt" id="q-add-room">+ Add a room</button>
+
+        <h3 class="mt">Category codes</h3>
+        <div id="q-cats"></div>` : ''}`;
+
+    drawAllocation(host, cats, rooms);
+    if (!isManagement()) return;
 
     host.querySelector('#q-cats').innerHTML = UI.table([
       { label: 'Code', render: (c) => `<span class="q-code">${UI.esc(c.code)}</span>` },
@@ -837,6 +857,93 @@
       UI.ok('Saved.');
       drawSetup(host);
     }));
+  }
+
+  /**
+   * The allocation, as one line per specialty.
+   *
+   * Deliberately a table of dropdowns rather than four room cards with tick
+   * boxes: the question being asked here is "where does Cardiology sit
+   * today", and that is answered one specialty at a time. Swapping two
+   * clinics is two changes on this screen, which is also how it happens in
+   * the building.
+   */
+  function drawAllocation(host, cats, rooms) {
+    const consult = cats.filter((c) => c.kind === 'consult' && c.active);
+    const counters = cats.filter((c) => c.kind === 'service' && c.active);
+    const where = {};
+    for (const r of rooms) for (const c of r.categories) where[c.id] = r.id;
+
+    host.querySelector('#q-alloc').innerHTML = `
+      <div class="table-wrap"><table class="q-alloc">
+        <thead><tr><th>Code</th><th>Specialty</th><th>Room</th><th>Token</th></tr></thead>
+        <tbody>${consult.map((c) => `<tr>
+          <td><span class="q-code">${UI.esc(c.code)}</span></td>
+          <td>${UI.esc(c.name)}</td>
+          <td><select data-alloc="${c.id}">
+            <option value="">— not allocated —</option>
+            ${rooms.map((r) => `<option value="${r.id}" ${where[c.id] === r.id ? 'selected' : ''}>
+              ${UI.esc(r.name)} · ${UI.esc(r.floor)}</option>`).join('')}
+          </select></td>
+          <td class="muted">${UI.esc(c.code)}-001</td>
+        </tr>`).join('')}</tbody>
+      </table></div>
+      ${counters.length ? `<div class="muted small mt">Counters are not consulting rooms, so they
+        carry a floor instead: ${counters.map((c) => `${UI.esc(c.name)}${c.location
+          ? ` — ${UI.esc(c.location)}` : ' — <i>no floor set</i>'}`).join(' · ')}</div>` : ''}`;
+
+    host.querySelectorAll('[data-alloc]').forEach((sel) => {
+      sel.dataset.was = sel.value;
+      sel.addEventListener('change', () => moveSpecialty(host, sel, cats, rooms));
+    });
+  }
+
+  async function moveSpecialty(host, sel, cats, rooms) {
+    const cat = cats.find((c) => c.id === Number(sel.dataset.alloc));
+    const roomId = sel.value ? Number(sel.value) : null;
+    const room = rooms.find((r) => r.id === roomId);
+
+    /*
+     * How many people this will move, asked before it is done. Their slips
+     * say the old room and they are sitting in front of the old door, so
+     * this is a thing somebody has to announce — not a silent change.
+     */
+    let waiting = 0;
+    try {
+      waiting = (await API.get('/api/queue/queues' + API.qs({ categoryId: cat.id })))
+        .counts.waiting;
+    } catch { waiting = 0; }
+
+    const go = async () => {
+      try {
+        const out = await API.post(`/api/queue/categories/${cat.id}/room`, { roomId });
+        UI.ok(`${cat.name} ${room ? `now sits in ${room.name}, ${room.floor}` : 'has no room'}`
+          + `${out.moved ? ` — ${out.moved} patient(s) waiting have been moved with it.` : '.'}`);
+        drawSetup(host);
+      } catch (err) {
+        UI.err(err.message);
+        sel.value = sel.dataset.was;
+      }
+    };
+
+    if (!waiting) return go();
+    UI.modal({
+      title: `Move ${cat.name}?`,
+      size: 'narrow',
+      body: `<div class="alert warn"><b>${UI.num(waiting)} patient(s)</b> are waiting in this
+          queue. Their slips say the room they were given at the desk, so somebody should call
+          the change out in the waiting room.</div>
+        <div class="small">${UI.esc(cat.name)} will be called to
+          <b>${room ? `${UI.esc(room.name)}, ${UI.esc(room.floor)}` : 'no room'}</b> from now on.
+          Anybody already called in, or with a doctor, stays where they are.</div>`,
+      footer: `<button class="btn ghost" data-act="__close">Cancel</button>
+               <button class="btn" data-act="go">Move the clinic and the queue</button>`,
+      async onAction(act) {
+        if (act !== 'go') { sel.value = sel.dataset.was; return; }
+        UI.closeModal();
+        await go();
+      },
+    });
   }
 
   function roomCard(r, cats, doctors) {

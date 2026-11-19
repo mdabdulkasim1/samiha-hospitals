@@ -1054,3 +1054,9 @@ tbody tr.panel-head.panel-sub td { background: transparent; border-top: 1px soli
 .tslip-preview { border: 1px solid var(--line); border-radius: 8px; background: #fff;
   display: inline-block; padding: 4px; }
 .row-gap { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+
+/* Who sits in which OP: one line per specialty, one dropdown to move it. */
+.q-alloc { width: 100%; }
+.q-alloc td, .q-alloc th { padding: 6px 10px; }
+.q-alloc select { width: auto; min-width: 190px; }
+.tv-counter-where { color: #6B8290; }

@@ -164,6 +164,13 @@ function migrate() {
    */
   ensureColumn('departments', 'queue_category_id', 'INTEGER REFERENCES queue_categories(id)');
   ensureColumn('users', 'op_room_id', 'INTEGER REFERENCES op_rooms(id)');
+  /*
+   * Where a counter is, in the words the directory board in the entrance
+   * uses. A consulting room says where it is because it is a room; the
+   * pharmacy, the X-ray and the scan are not rooms in this sense and still
+   * have to tell a patient which floor to walk to.
+   */
+  ensureColumn('queue_categories', 'location', 'TEXT');
 
   ensureColumn('patients', 'guardian_name', 'TEXT');
   ensureColumn('patients', 'guardian_relation', 'TEXT');

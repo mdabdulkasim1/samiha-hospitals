@@ -74,7 +74,9 @@
     const calls = d.panels.filter((p) => p.nowCalling)
       .map((p) => ({ ...p.nowCalling, where: `${p.room.floor} · ${p.room.name}` }))
       .concat(d.counters.filter((c) => c.nowCalling)
-        .map((c) => ({ ...c.nowCalling, where: c.counter.name })))
+        .map((c) => ({ ...c.nowCalling,
+          where: c.counter.location
+            ? `${c.counter.name} · ${c.counter.location}` : c.counter.name })))
       .sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));
     const head = calls[0] || null;
 
@@ -126,7 +128,8 @@
 
   function counter(c) {
     return `<div class="tv-counter">
-      <div class="tv-counter-name">${UI.esc(c.counter.name)}</div>
+      <div class="tv-counter-name">${UI.esc(c.counter.name)}${c.counter.location
+        ? `<span class="tv-counter-where"> · ${UI.esc(c.counter.location)}</span>` : ''}</div>
       <div class="tv-counter-number">${c.nowCalling ? UI.esc(c.nowCalling.label) : '—'}</div>
       <div class="tv-counter-next">${c.upNext.length
         ? `Next: ${c.upNext.map((t) => UI.esc(t.label)).join('  ')}` : '&nbsp;'}</div>

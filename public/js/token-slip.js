@@ -59,7 +59,9 @@
 
         ${slip.room || slip.floor ? `<div class="t-room">
           ${esc(slip.floor || '')}${slip.floor && slip.room ? ' · ' : ''}${esc(slip.room || '')}
-        </div>` : '<div class="t-room t-ask">Ask at the front desk for your room</div>'}
+        </div>` : (slip.location
+          ? `<div class="t-room">${esc(slip.location)}</div>`
+          : '<div class="t-room t-ask">Ask at the front desk for your room</div>')}
         ${slip.doctor ? `<div class="t-line">${esc(slip.doctor)}</div>` : ''}
         ${bookedLine(slip)}
         ${waitLine(slip)}

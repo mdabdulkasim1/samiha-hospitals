@@ -80,7 +80,7 @@ const categoryOr404 = (id) => {
 };
 
 function saveCategory(id, fields) {
-  const cols = ['code', 'name', 'kind', 'sort_order', 'active'];
+  const cols = ['code', 'name', 'kind', 'sort_order', 'active', 'location'];
 
   if (fields.code !== undefined) {
     const code = String(fields.code).trim();
@@ -109,6 +109,61 @@ function saveCategory(id, fields) {
   ).run(...given.map((c) => fields[c]));
   return categoryOr404(info.lastInsertRowid);
 }
+
+/**
+ * Move a specialty into a room.
+ *
+ * This is the morning's most ordinary administrative act: the cardiologist
+ * is away, so Cardiology moves out of OP-4 and the room is given to somebody
+ * else, and at four o'clock it moves back. So it is one call, it replaces
+ * wherever the specialty was sitting rather than adding a second room, and
+ * it says how many people it affected.
+ *
+ * The people already in the queue are the real question. Their printed
+ * slips say the old room and they are sitting in front of the old door, so
+ * moving them silently would send them to a room nobody calls them from.
+ * They are moved by default, because the alternative — a queue pointing at a
+ * room the doctor has left — is worse, and the caller is told the count so
+ * somebody can announce it. Anybody already called or already in with a
+ * doctor is left exactly where they are.
+ */
+function assignCategoryRoom(categoryId, roomId, { moveWaiting = true, date = dateKey(now()) } = {}) {
+  const category = categoryOr404(categoryId);
+  if (roomId) roomOr404(roomId);
+
+  const before = db.prepare(
+    `SELECT r.id, r.name, r.floor FROM op_room_categories rc JOIN op_rooms r ON r.id = rc.room_id
+      WHERE rc.category_id = ?`).all(categoryId);
+
+  const write = db.transaction(() => {
+    db.prepare('DELETE FROM op_room_categories WHERE category_id = ?').run(categoryId);
+    if (roomId) {
+      const next = db.prepare(
+        'SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM op_room_categories WHERE room_id = ?')
+        .get(roomId).n;
+      db.prepare('INSERT INTO op_room_categories (room_id, category_id, sort_order) VALUES (?, ?, ?)')
+        .run(roomId, categoryId, next);
+    }
+    if (!moveWaiting) return 0;
+    return db.prepare(
+      `UPDATE queue_tokens SET room_id = ?
+        WHERE category_id = ? AND issue_date = date(?) AND status = 'waiting'`
+    ).run(roomId || null, categoryId, date).changes;
+  });
+  const moved = write();
+
+  return {
+    category: categoryOr404(categoryId),
+    from: before[0] || null,
+    to: roomId ? roomOr404(roomId) : null,
+    moved,
+  };
+}
+
+/** The room a specialty is sitting in, if the clinic has said. */
+const roomOfCategory = (categoryId) => db.prepare(
+  `SELECT r.* FROM op_room_categories rc JOIN op_rooms r ON r.id = rc.room_id
+    WHERE rc.category_id = ? AND r.active = 1 ORDER BY r.floor_order, r.name`).get(categoryId) || null;
 
 /** Which departments feed a category — several may, and the clinic says so. */
 function setCategoryDepartments(categoryId, departmentIds) {
@@ -276,6 +331,7 @@ const TOKENS = `
          t.doctor_id, t.room_id, t.status, t.called_at, t.call_count, t.passed_at,
          t.serving_at, t.done_at, t.note, t.created_at,
          c.code AS category_code, c.name AS category_name, c.kind AS category_kind,
+         c.location AS category_location,
          p.uhid, p.title AS patient_title, p.first_name, p.last_name,
          TRIM(p.first_name || ' ' || COALESCE(p.last_name, '')) AS patient_name,
          p.age_years, p.gender, p.phone,
@@ -712,6 +768,9 @@ function slip(tokenId, at = now()) {
     code: token.category_code,
     room: token.room_name || null,
     floor: token.room_floor || null,
+    // A counter has no consulting room, so the slip falls back to where the
+    // directory board says it is: "Ground Floor · Pharmacy".
+    location: token.room_name ? null : (token.category_location || null),
     doctor: token.doctor_name || null,
     booked: isBooked(token),
     scheduledAt: token.scheduled_at || null,
@@ -775,7 +834,7 @@ function display(floor, date = dateKey(now()), at = now()) {
     if (!q.counts.waiting && !q.counts.called && !q.counts.serving) return null;
     const head = q.called[0] || q.serving[0] || null;
     return {
-      counter: { id: c.id, code: c.code, name: c.name },
+      counter: { id: c.id, code: c.code, name: c.name, location: c.location || null },
       nowCalling: head ? brief(head) : null,
       upNext: q.queue.slice(0, 3).map((r) => ({ label: r.label, booked: r.booked })),
       waiting: q.counts.waiting,
@@ -798,6 +857,7 @@ module.exports = {
   // what the clinic configures
   categories, saveCategory, setCategoryDepartments,
   rooms, saveRoom, removeRoom, setRoomCategories, setDoctorRoom,
+  assignCategoryRoom, roomOfCategory,
   // tokens
   issue, tokenForVisit, tokensFor, tokenOr404,
   // the queue itself

@@ -62,6 +62,7 @@ router.patch('/categories/:id', requireRole(), wrap((req, res) => {
   if (req.body.name !== undefined) fields.name = str(req.body.name);
   if (req.body.kind !== undefined) fields.kind = str(req.body.kind) === 'service' ? 'service' : 'consult';
   if (req.body.sortOrder !== undefined) fields.sort_order = int(req.body.sortOrder);
+  if (req.body.location !== undefined) fields.location = str(req.body.location);
   if (req.body.active !== undefined) fields.active = bool(req.body.active) ? 1 : 0;
   const row = queue.saveCategory(Number(req.params.id), fields);
 
@@ -70,6 +71,22 @@ router.patch('/categories/:id', requireRole(), wrap((req, res) => {
   }
   audit.log(req, 'queue.category.update', 'queue_category', row.id, fields);
   res.json(queue.categories({ includeInactive: true }).find((c) => c.id === row.id));
+}));
+
+/**
+ * Move a specialty into another room.
+ *
+ * The front desk's call, not only admin's: a doctor failing to arrive is a
+ * nine o'clock problem and the person who finds out is the receptionist.
+ */
+router.post('/categories/:id/room', deskRoles, wrap((req, res) => {
+  const out = queue.assignCategoryRoom(Number(req.params.id),
+    int(req.body.roomId) || null,
+    { moveWaiting: req.body.moveWaiting === undefined ? true : bool(req.body.moveWaiting) });
+  audit.log(req, 'queue.category.room', 'queue_category', Number(req.params.id), {
+    from: out.from ? out.from.name : null, to: out.to ? out.to.name : null, moved: out.moved,
+  });
+  res.json(out);
 }));
 
 // ----------------------------------------------------------------- the rooms
