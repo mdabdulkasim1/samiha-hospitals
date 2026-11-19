@@ -91,6 +91,7 @@
 
     host.innerHTML = `
       <div class="tv-head">
+        <div class="tv-logo"><img src="/assets/logo-icon.svg" alt=""></div>
         <div class="tv-badge">${UI.esc(d.clinic)}</div>
         <div class="tv-floor">${UI.esc(d.floor || 'All floors')}</div>
         <div class="tv-clock">${UI.esc(String(d.at).slice(11, 16))}</div>
@@ -187,6 +188,7 @@
 
     if (!slides.length) {
       ad.innerHTML = `<div class="tv-ad-none">
+        <img class="tv-ad-logo" src="/assets/logo.svg" alt="">
         <div class="tv-ad-badge">SAMIHA HEALTHCARE</div>
         <div class="tv-ad-line">Care · Compassion · Commitment</div>
         ${mayEdit() ? '<div class="tv-ad-hint">Posters → add an image to fill this half</div>' : ''}

@@ -1003,32 +1003,52 @@ tbody tr.panel-head.panel-sub td { background: transparent; border-top: 1px soli
 .q-tick input { width: auto; margin: 0; }
 
 /* ---------------------------------------------------------- the television
-   Read from across a room, never operated. Dark, because a waiting room is
-   lit from above and a white screen on a wall is a lamp pointed at people.
-   Sizes are in vw/vh so one page fits a 32-inch screen and a 55-inch one.
+   Read from across a room, never operated.
+
+   It wears the clinic's own colours rather than a neutral dark theme: the
+   teal of the cross for the ground it stands on, the maroon of the heart
+   for the bands that carry words, the orange for the one thing the eye
+   should go to first, and white for the numbers. A screen on a wall in a
+   waiting room is signage, and signage that does not match the board in the
+   entrance reads as somebody else's.
+
+   Dark ground, because a waiting room is lit from above and a white screen
+   on a wall is a lamp pointed at the people sitting under it. Sizes are in
+   vw/vh so one page fits a 32-inch screen and a 55-inch one.
 
    The split is the whole layout: numbers on the left, the clinic's poster on
    the right. The left half is a table of two columns because the question a
    patient is asking — "where do I go with 08-004" — is answered by a table
    and hunted for in a grid of panels. */
-.tv { background: #0C1418; color: #fff; border-radius: 12px; padding: 2vh 1.6vw 1.4vh;
+.tv {
+  background: linear-gradient(165deg, #0F4C58 0%, #0B3D47 58%, #10343C 100%);
+  color: #fff; border-radius: 12px; padding: 1.6vh 1.4vw 1.2vh;
   min-height: 78vh; display: flex; flex-direction: column; gap: 1.2vh;
-  position: relative; z-index: 6; }
-.tv-fs { border-radius: 0; height: 100vh; min-height: 100vh; padding: 2.4vh 2vw; }
+  position: relative; z-index: 6;
+}
+.tv-fs { border-radius: 0; height: 100vh; min-height: 100vh; padding: 2vh 1.8vw; }
 
-.tv-head { display: flex; justify-content: space-between; align-items: baseline; gap: 2vw;
-  border-bottom: 1px solid #22323A; padding-bottom: 1vh; }
-.tv-badge { font-size: 2vw; font-weight: 800; letter-spacing: .06em; }
-.tv-floor { font-size: 1.6vw; color: #9FB4BD; }
-.tv-clock { font-size: 1.8vw; font-variant-numeric: tabular-nums; color: #9FB4BD; }
+/* The name band: the clinic's maroon, ruled underneath in its orange. */
+.tv-head {
+  display: flex; align-items: center; gap: 1.4vw;
+  background: linear-gradient(90deg, #7C142A, #9E1B34 60%, #A82742);
+  border-bottom: .5vh solid var(--orange);
+  border-radius: 10px; padding: 1.1vh 1.4vw;
+}
+.tv-logo { width: 3.4vw; height: 3.4vw; background: #fff; border-radius: 10px;
+  padding: .45vw; flex: none; }
+.tv-logo img { width: 100%; height: 100%; display: block; }
+.tv-badge { font-size: 2vw; font-weight: 800; letter-spacing: .05em; color: #fff; }
+.tv-floor { font-size: 1.5vw; color: #F7D3DA; margin-left: auto; }
+.tv-clock { font-size: 1.7vw; font-variant-numeric: tabular-nums; color: #fff; font-weight: 600; }
 
-.tv-split { flex: 1; display: grid; grid-template-columns: 1.3fr 1fr; gap: 1.4vw; min-height: 0; }
+.tv-split { flex: 1; display: grid; grid-template-columns: 1.3fr 1fr; gap: 1.2vw; min-height: 0; }
 
 /* The board. One row per place a patient can be called to, in a fixed order
    all day: a row that moves under somebody watching for it is a row they
    have to find again. */
-.tv-board { background: #12232A; border: 1px solid #22323A; border-radius: 12px;
-  overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
+.tv-board { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.14);
+  border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
 /* The rows share whatever height the screen has, so four of them on a quiet
    morning and nine at eleven o'clock both fill the board without either
    scrolling or leaving a gap at the bottom. Nothing on a television can be
@@ -1036,37 +1056,45 @@ tbody tr.panel-head.panel-sub td { background: transparent; border-top: 1px soli
 .tv-rows { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .tv-rows .tv-row { flex: 1 1 0; min-height: 0; }
 .tv-row { display: grid; grid-template-columns: 12.5vw 1fr; align-items: center;
-  gap: .8vw; padding: .9vh 1.2vw; border-bottom: 1px solid #1C2E36; }
+  gap: .8vw; padding: .9vh 1.2vw; border-bottom: 1px solid rgba(255,255,255,.10); }
 .tv-row:last-child { border-bottom: 0; }
-.tv-row-head { background: #0E1D23; color: #9FB4BD; font-size: 1.15vw;
-  letter-spacing: .1em; text-transform: uppercase; padding: .8vh 1.2vw; }
+.tv-row-head { background: var(--crimson); color: #fff; font-size: 1.15vw;
+  letter-spacing: .1em; text-transform: uppercase; padding: .9vh 1.2vw; border-bottom: 0; }
 .tv-row-head div { font-weight: 700; }
 
 /* One line, always. A token broken across two lines is read as two
    numbers by somebody glancing up from the far side of the room. */
-.tv-token { font-size: 2.9vw; line-height: 1.05; font-weight: 800;
+.tv-token { font-size: 2.9vw; line-height: 1.05; font-weight: 800; color: #fff;
   font-variant-numeric: tabular-nums; letter-spacing: 0; white-space: nowrap; }
-.tv-room-no { font-size: 2vw; line-height: 1.1; font-weight: 700; }
-.tv-sub { font-size: 1.05vw; color: #9FB4BD; line-height: 1.25; }
-.tv-next { font-size: 1vw; color: #7FD4C1; font-variant-numeric: tabular-nums; }
+.tv-room-no { font-size: 2vw; line-height: 1.1; font-weight: 700; color: #fff; }
+.tv-sub { font-size: 1.05vw; color: #BBD7DE; line-height: 1.25; }
+.tv-next { font-size: 1vw; color: #FFC79A; font-variant-numeric: tabular-nums; }
 
-/* The one just called. Picked out rather than enlarged, so the row heights
-   stay put and nothing jumps while somebody is reading. */
-.tv-row.lit { background: #13302C; box-shadow: inset .35vw 0 0 #2E8B7A; }
-.tv-row.lit .tv-token { color: #8FE3CC; }
-.tv-row.idle .tv-token { color: #4A5E68; }
-.tv-row.idle .tv-room-no { color: #8FA3AC; }
-.tv-empty { padding: 6vh 2vw; text-align: center; color: #9FB4BD; font-size: 1.6vw; }
+/* The one just called: a white card in the clinic's maroon and teal, with
+   the orange edge the rest of the screen saves for exactly this. Picked out
+   rather than enlarged, so the row heights stay put and nothing jumps while
+   somebody is reading. */
+.tv-row.lit { background: #fff; box-shadow: inset .45vw 0 0 var(--orange); }
+.tv-row.lit .tv-token { color: var(--crimson); }
+.tv-row.lit .tv-room-no { color: var(--teal-dark); }
+.tv-row.lit .tv-sub { color: #43555F; }
+.tv-row.lit .tv-next { color: var(--orange-dark); }
+.tv-row.idle .tv-token { color: rgba(255,255,255,.30); }
+.tv-row.idle .tv-room-no { color: rgba(255,255,255,.72); }
+.tv-empty { padding: 6vh 2vw; text-align: center; color: #BBD7DE; font-size: 1.6vw; }
 
-/* The clinic's poster: the whole picture, never cropped — a package price
-   cut off at the edge is worse than a margin. */
-.tv-ad { background: #12232A; border: 1px solid #22323A; border-radius: 12px;
+/* The clinic's poster: on white, and the whole picture, never cropped — a
+   package price cut off at the edge is worse than a margin. */
+.tv-ad { background: #fff; border: 1px solid rgba(255,255,255,.22); border-radius: 12px;
   overflow: hidden; display: flex; align-items: center; justify-content: center; min-height: 0; }
 .tv-ad img { width: 100%; height: 100%; object-fit: contain; display: block; }
-.tv-ad-none { text-align: center; padding: 2vh 1.5vw; }
-.tv-ad-badge { font-size: 2.2vw; font-weight: 800; letter-spacing: .05em; }
-.tv-ad-line { font-size: 1.2vw; color: #9FB4BD; margin-top: 1vh; letter-spacing: .08em; }
-.tv-ad-hint { font-size: 1vw; color: #7FD4C1; margin-top: 3vh; }
+.tv-ad-none { text-align: center; padding: 2vh 1.5vw; color: var(--teal-dark); }
+.tv-ad-logo { width: 9vw; margin: 0 auto 2vh; display: block; }
+.tv-ad-badge { font-size: 2.2vw; font-weight: 800; letter-spacing: .05em; color: var(--crimson); }
+.tv-ad-line { font-size: 1.2vw; color: var(--teal); margin-top: 1vh; letter-spacing: .08em; }
+.tv-ad-hint { font-size: 1vw; color: var(--orange-dark); margin-top: 3vh; }
+
+.tv-foot { font-size: 1.1vw; color: #9FC0C8; text-align: center; }
 
 /* The posters, as the clinic manages them. */
 .sl-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
