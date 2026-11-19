@@ -1076,6 +1076,10 @@
           </div>
           <div class="muted small">Tokens will read <b id="qc-eg">${UI.esc(cat.code)}-001</b>,
             ${UI.esc(cat.code)}-002, and so on, starting again each morning.</div>
+          ${cat.kind === 'service' ? UI.field({ name: 'location', label: 'Where it is',
+            value: cat.location || '', placeholder: 'Ground Floor',
+            hint: 'A counter has no consulting room, so this is what the waiting-room screen '
+              + 'and the token slip tell the patient.' }) : ''}
         </form>
         <fieldset class="mt"><legend>Departments that feed this queue</legend>
           <div class="muted small mb">A patient arriving under one of these is given a token in this

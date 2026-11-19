@@ -33,6 +33,35 @@
   const isManagement = () => Boolean(APP.user && ['owner', 'admin'].includes(APP.user.role));
   const mayEdit = () => isManagement() || APP.can(['reception']);
 
+  /*
+   * How big the television actually is.
+   *
+   * A 32-inch set in a small waiting room is usually 1366 × 768 — fewer
+   * pixels across than a laptop — while a 55-inch set is 1920 × 1080. Sized
+   * from the screen alone, the small television would show the smaller
+   * numbers, which is exactly backwards: both are read from across the same
+   * room, and the physically smaller one needs the bigger type.
+   *
+   * So whoever hangs it says what it is, once. The answer is kept in that
+   * television's own browser, because it is a fact about that television
+   * and not about the clinic — the desk's screen and the two wall sets can
+   * each be set differently and none of it travels to the others.
+   */
+  const SIZES = [
+    { id: '32', label: '32-inch', zoom: 1.3, rows: 6 },
+    { id: '43', label: '43-inch', zoom: 1.12, rows: 7 },
+    { id: '55', label: '55-inch +', zoom: 1, rows: 9 },
+  ];
+  const sizeKey = 'samiha.tv.size';
+  const screenSize = () => SIZES.find((s) => s.id === readSize()) || SIZES[2];
+
+  function readSize() {
+    try { return localStorage.getItem(sizeKey) || '55'; } catch { return '55'; }
+  }
+  function writeSize(id) {
+    try { localStorage.setItem(sizeKey, id); } catch { /* private window; this screen still works */ }
+  }
+
   APP.register('display', {
     title: 'Waiting-room screen',
     subtitle: 'For the television — pick a floor, then press full screen',
@@ -40,7 +69,19 @@
     async render(el, params) {
       const first = await API.get('/api/queue/display');
       const floors = first.floors;
-      const floor = params.floor || floors[0] || '';
+      /*
+       * Every television shows the same board, and that is the default.
+       *
+       * The clinic runs five or six sets and wants one picture on all of
+       * them: a patient sitting downstairs should see that 02-004 has been
+       * called to OP-4 upstairs, because that is where they have to walk.
+       * Which is why every row carries its floor and its doctor rather than
+       * leaning on a heading — the heading is the same on every screen.
+       *
+       * A single floor is still available for a set hung outside one
+       * department's door, but nobody has to choose it.
+       */
+      const floor = params.floor === undefined ? '' : params.floor;
 
       APP.actions([
         { id: 'full', label: 'Full screen', onClick: () => goFullScreen(el) },
@@ -52,8 +93,12 @@
         <div class="search-row no-print" id="tv-pick">
           ${floors.map((f) => `<button class="btn ${f === floor ? '' : 'ghost'}"
             data-floor="${UI.esc(f)}">${UI.esc(f)}</button>`).join('')}
+          <button class="btn ${floor === '' ? '' : 'ghost'}" data-floor="">All floors</button>
+          <span class="muted small" style="align-self:center;margin-left:10px">Screen</span>
+          ${SIZES.map((sz) => `<button class="btn sm ${sz.id === readSize() ? '' : 'ghost'}"
+            data-size="${sz.id}">${UI.esc(sz.label)}</button>`).join('')}
           <span class="muted small" style="align-self:center">
-            Open this on the television and press Full screen. It refreshes itself.</span>
+            Set this on the television itself, then press Full screen. It refreshes itself.</span>
         </div>
         <div class="tv" id="tv"></div>`;
 
@@ -61,6 +106,15 @@
         APP.navigate('display', { floor: b.dataset.floor })));
 
       const host = el.querySelector('#tv');
+      el.querySelectorAll('[data-size]').forEach((b) => b.addEventListener('click', () => {
+        writeSize(b.dataset.size);
+        el.querySelectorAll('[data-size]').forEach((x) =>
+          x.classList.toggle('ghost', x.dataset.size !== b.dataset.size));
+        applySize(host);
+        paint(host, floor).catch(() => {});
+      }));
+
+      applySize(host);
       await paint(host, floor);
 
       /*
@@ -80,12 +134,13 @@
   async function paint(host, floor) {
     const d = await API.get('/api/queue/display' + API.qs({ floor }));
     /*
-     * Nine lines at most. A television cannot be scrolled, so a tenth row
-     * is not a row anybody sees — and squeezing more in shrinks the type
-     * until the numbers stop being readable from the back of the room,
-     * which is the one thing this screen has to do.
+     * As many lines as this television can carry at readable size, which is
+     * fewer on a small one. A television cannot be scrolled, so a row past
+     * the bottom is not a row anybody sees — and squeezing more in shrinks
+     * the type until the numbers stop being readable from the back of the
+     * room, which is the one thing this screen has to do.
      */
-    const rows = tableRows(d).slice(0, 9);
+    const rows = tableRows(d).slice(0, screenSize().rows);
     const newest = rows.filter((r) => r.at).sort((a, b) =>
       String(b.at).localeCompare(String(a.at)))[0] || null;
 
@@ -102,6 +157,7 @@
           <div class="tv-row tv-row-head">
             <div>Token No</div>
             <div>Room No</div>
+            <div class="tv-wait-head">Waiting</div>
           </div>
           <div class="tv-rows">
             ${rows.length ? rows.map((r) => row(r, newest)).join('')
@@ -135,8 +191,12 @@
       label: p.nowCalling ? p.nowCalling.label : null,
       room: p.room.name,
       floor: p.room.floor,
-      sub: [p.room.doctors.join(' · '), p.nowCalling ? p.nowCalling.category : '']
-        .filter(Boolean).join(' — ') || p.room.specialties.join(' · '),
+      // Who is behind that door, named on the row. A patient called to OP-4
+      // is going to see a person, and the name is what tells them they are
+      // at the right door when they get there.
+      doctor: p.room.doctors.join(' · '),
+      sub: (p.nowCalling && p.nowCalling.category)
+        ? p.nowCalling.category : p.room.specialties.join(' · '),
       waiting: p.waiting,
       upNext: p.upNext,
       at: p.nowCalling ? p.nowCalling.at : null,
@@ -152,7 +212,8 @@
         label: c.nowCalling ? c.nowCalling.label : null,
         room: c.counter.name,
         floor: c.counter.location || '',
-        sub: c.counter.location || '',
+        doctor: '',
+        sub: '',
         waiting: c.waiting,
         upNext: c.upNext,
         at: c.nowCalling ? c.nowCalling.at : null,
@@ -166,10 +227,20 @@
     return `<div class="tv-row ${lit ? 'lit' : ''} ${r.label ? '' : 'idle'}">
       <div class="tv-token">${r.label ? UI.esc(r.label) : '—'}</div>
       <div class="tv-where">
-        <div class="tv-room-no">${UI.esc(r.room)}</div>
-        ${r.sub ? `<div class="tv-sub">${UI.esc(r.sub)}</div>` : ''}
+        <div class="tv-room-line">
+          <span class="tv-room-no">${UI.esc(r.room)}</span>
+          ${r.floor ? `<span class="tv-floor-tag">${UI.esc(r.floor)}</span>` : ''}
+        </div>
+        ${r.doctor || r.sub ? `<div class="tv-sub">
+          ${r.doctor ? `<span class="tv-doc">${UI.esc(r.doctor)}</span>` : ''}
+          ${r.doctor && r.sub ? ' · ' : ''}${r.sub ? UI.esc(r.sub) : ''}
+        </div>` : ''}
         ${r.upNext && r.upNext.length
     ? `<div class="tv-next">Next: ${r.upNext.map((t) => UI.esc(t.label)).join('  ')}</div>` : ''}
+      </div>
+      <div class="tv-wait">
+        <div class="tv-wait-n">${UI.num(r.waiting || 0)}</div>
+        <div class="tv-wait-l">waiting</div>
       </div>
     </div>`;
   }
@@ -207,6 +278,11 @@
       }
     };
     show(slideAt);
+  }
+
+  /** The one number every size on the screen is a multiple of. */
+  function applySize(host) {
+    if (host) host.style.setProperty('--tv-zoom', String(screenSize().zoom));
   }
 
   function goFullScreen(el) {
