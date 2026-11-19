@@ -15,6 +15,7 @@
  * standing next to it.
  */
 const express = require('express');
+const { db } = require('../db');
 const { wrap, badRequest } = require('../lib/http');
 const { requireRole } = require('../lib/auth');
 const { str, int, bool } = require('../lib/validate');
@@ -244,7 +245,105 @@ router.post('/tokens/:id/room', deskRoles, wrap((req, res) => {
 
 // ------------------------------------------------- the screen in the corridor
 router.get('/display', anyone, wrap((req, res) => {
-  res.json(queue.display(str(req.query.floor), str(req.query.date) || today()));
+  res.json({
+    ...queue.display(str(req.query.floor), str(req.query.date) || today()),
+    slides: slideList(str(req.query.floor)),
+  });
+}));
+
+/*
+ * The posters that play beside the numbers.
+ *
+ * Sent as a data URL because that is what a browser hands back from a file
+ * input without an upload library, and stored as bytes in the database
+ * because this container is rebuilt on every deploy — a poster written
+ * beside the code is gone by the next release.
+ */
+const slideBody = express.json({ limit: '8mb' });
+const MAX_SLIDE = 6 * 1024 * 1024;
+const SLIDE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+
+const slideList = (floor) => db.prepare(
+  `SELECT id, title, mime, bytes, seconds, floor, sort_order, active, created_at
+     FROM display_slides
+    WHERE active = 1 AND (floor IS NULL OR floor = ?)
+    ORDER BY sort_order, id`).all(floor || null);
+
+router.get('/slides', anyone, wrap((req, res) => {
+  res.json({
+    rows: db.prepare(
+      `SELECT s.id, s.title, s.mime, s.bytes, s.seconds, s.floor, s.sort_order, s.active,
+              s.created_at, u.name AS uploaded_by_name
+         FROM display_slides s LEFT JOIN users u ON u.id = s.uploaded_by
+        ORDER BY s.sort_order, s.id`).all(),
+  });
+}));
+
+/** The image itself. Cached hard: a television re-fetches it all day. */
+router.get('/slides/:id/image', anyone, wrap((req, res) => {
+  const row = db.prepare('SELECT mime, content FROM display_slides WHERE id = ?')
+    .get(Number(req.params.id));
+  if (!row) throw badRequest('No such slide.');
+  res.setHeader('Content-Type', row.mime);
+  res.setHeader('Cache-Control', 'private, max-age=3600');
+  res.end(row.content);
+}));
+
+router.post('/slides', deskRoles, slideBody, wrap((req, res) => {
+  const data = String(req.body.data || '');
+  const match = data.match(/^data:([\w/+.-]+);base64,(.+)$/);
+  if (!match) throw badRequest('Choose the poster image itself.');
+  const mime = match[1].toLowerCase();
+  if (!SLIDE_TYPES.includes(mime)) {
+    throw badRequest(`A ${mime} cannot go on the screen. Use a JPEG, PNG, WEBP or GIF.`);
+  }
+  const content = Buffer.from(match[2], 'base64');
+  if (!content.length) throw badRequest('That file is empty.');
+  if (content.length > MAX_SLIDE) {
+    throw badRequest(`That image is ${(content.length / 1048576).toFixed(1)} MB. `
+      + `Save it smaller — up to ${MAX_SLIDE / 1048576} MB.`);
+  }
+
+  const next = db.prepare('SELECT COALESCE(MAX(sort_order), 0) + 1 AS n FROM display_slides').get().n;
+  const info = db.prepare(
+    `INSERT INTO display_slides (title, mime, bytes, content, seconds, floor, sort_order, uploaded_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(str(req.body.title) || null, mime, content.length, content,
+    Math.min(Math.max(int(req.body.seconds) || 12, 3), 120),
+    str(req.body.floor) || null, next, req.user.id);
+
+  audit.log(req, 'queue.slide.add', 'display_slide', info.lastInsertRowid,
+    { title: str(req.body.title), bytes: content.length });
+  res.status(201).json({ id: info.lastInsertRowid, bytes: content.length, mime });
+}));
+
+router.patch('/slides/:id', deskRoles, wrap((req, res) => {
+  const id = Number(req.params.id);
+  const row = db.prepare('SELECT id FROM display_slides WHERE id = ?').get(id);
+  if (!row) throw badRequest('No such slide.');
+  const sets = [];
+  const args = [];
+  if (req.body.title !== undefined) { sets.push('title = ?'); args.push(str(req.body.title) || null); }
+  if (req.body.seconds !== undefined) {
+    sets.push('seconds = ?');
+    args.push(Math.min(Math.max(int(req.body.seconds) || 12, 3), 120));
+  }
+  if (req.body.floor !== undefined) { sets.push('floor = ?'); args.push(str(req.body.floor) || null); }
+  if (req.body.sortOrder !== undefined) { sets.push('sort_order = ?'); args.push(int(req.body.sortOrder) || 0); }
+  if (req.body.active !== undefined) { sets.push('active = ?'); args.push(bool(req.body.active) ? 1 : 0); }
+  if (!sets.length) throw badRequest('Nothing to change.');
+  db.prepare(`UPDATE display_slides SET ${sets.join(', ')} WHERE id = ?`).run(...args, id);
+  audit.log(req, 'queue.slide.update', 'display_slide', id, req.body);
+  res.json(db.prepare(
+    'SELECT id, title, mime, bytes, seconds, floor, sort_order, active FROM display_slides WHERE id = ?')
+    .get(id));
+}));
+
+router.delete('/slides/:id', deskRoles, wrap((req, res) => {
+  const id = Number(req.params.id);
+  db.prepare('DELETE FROM display_slides WHERE id = ?').run(id);
+  audit.log(req, 'queue.slide.remove', 'display_slide', id, {});
+  res.json({ removed: true });
 }));
 
 module.exports = router;

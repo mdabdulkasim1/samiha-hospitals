@@ -2029,3 +2029,33 @@ CREATE TABLE IF NOT EXISTS asset_item_codes (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_item_codes_name ON asset_item_codes(name);
+
+/*
+ * What plays beside the numbers on the waiting-room screen.
+ *
+ * Half the television is the queue and half is the clinic's own poster —
+ * the Sunday package, the new scanner, the vaccination camp. That half is
+ * the only reason anybody looks up at the screen when their number is not
+ * near, so it is worth having, and it is the clinic's to change on a
+ * Saturday night without anybody touching the ERP's code.
+ *
+ * The image lives in the database rather than beside the code, for the same
+ * reason an expense bill does: this container is rebuilt on every deploy,
+ * and a poster written to disk is gone by the next release.
+ */
+CREATE TABLE IF NOT EXISTS display_slides (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  title      TEXT,
+  mime       TEXT NOT NULL,
+  bytes      INTEGER NOT NULL,
+  content    BLOB NOT NULL,
+  -- How long it stays up before the next one, in seconds.
+  seconds    INTEGER NOT NULL DEFAULT 12,
+  -- NULL shows it on every floor's screen; a floor name pins it to one.
+  floor      TEXT,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  active     INTEGER NOT NULL DEFAULT 1,
+  uploaded_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_slides_order ON display_slides(active, sort_order);

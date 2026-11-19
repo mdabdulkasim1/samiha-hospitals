@@ -1005,50 +1005,77 @@ tbody tr.panel-head.panel-sub td { background: transparent; border-top: 1px soli
 /* ---------------------------------------------------------- the television
    Read from across a room, never operated. Dark, because a waiting room is
    lit from above and a white screen on a wall is a lamp pointed at people.
-   Sizes are in vw/vh so one page fits a 32-inch screen and a 55-inch one. */
-/* Above the ghosted logo: on a dark panel that tint reads as a smudge across
-   the very number people are trying to read from the back of the room. */
-.tv { background: #0C1418; color: #fff; border-radius: 12px; padding: 2.2vh 2vw 1.6vh;
-  min-height: 72vh; display: flex; flex-direction: column; gap: 1.6vh;
+   Sizes are in vw/vh so one page fits a 32-inch screen and a 55-inch one.
+
+   The split is the whole layout: numbers on the left, the clinic's poster on
+   the right. The left half is a table of two columns because the question a
+   patient is asking — "where do I go with 08-004" — is answered by a table
+   and hunted for in a grid of panels. */
+.tv { background: #0C1418; color: #fff; border-radius: 12px; padding: 2vh 1.6vw 1.4vh;
+  min-height: 78vh; display: flex; flex-direction: column; gap: 1.2vh;
   position: relative; z-index: 6; }
-.tv-fs { border-radius: 0; height: 100vh; min-height: 100vh; padding: 3vh 3vw; }
+.tv-fs { border-radius: 0; height: 100vh; min-height: 100vh; padding: 2.4vh 2vw; }
 
 .tv-head { display: flex; justify-content: space-between; align-items: baseline; gap: 2vw;
-  border-bottom: 1px solid #22323A; padding-bottom: 1.2vh; }
-.tv-badge { font-size: 2.1vw; font-weight: 800; letter-spacing: .06em; }
-.tv-floor { font-size: 1.7vw; color: #9FB4BD; }
-.tv-clock { font-size: 1.9vw; font-variant-numeric: tabular-nums; color: #9FB4BD; }
+  border-bottom: 1px solid #22323A; padding-bottom: 1vh; }
+.tv-badge { font-size: 2vw; font-weight: 800; letter-spacing: .06em; }
+.tv-floor { font-size: 1.6vw; color: #9FB4BD; }
+.tv-clock { font-size: 1.8vw; font-variant-numeric: tabular-nums; color: #9FB4BD; }
 
-/* The newest call, apart from the room panels, so nobody has to scan four
-   boxes to find which one changed. */
-.tv-now { background: #12232A; border: 1px solid #22323A; border-radius: 12px;
-  padding: 1.8vh 2vw; text-align: center; }
-.tv-now-label { font-size: 1.4vw; letter-spacing: .14em; text-transform: uppercase; color: #7FD4C1; }
-.tv-now-number { font-size: 11vw; line-height: 1; font-weight: 800;
-  font-variant-numeric: tabular-nums; margin: .4vh 0; }
-.tv-now-where { font-size: 2.6vw; font-weight: 700; }
-.tv-now-cat { font-size: 1.6vw; color: #9FB4BD; margin-top: .4vh; }
-.tv-idle .tv-now-where { font-weight: 400; color: #9FB4BD; font-size: 1.8vw; }
+.tv-split { flex: 1; display: grid; grid-template-columns: 1.3fr 1fr; gap: 1.4vw; min-height: 0; }
 
-.tv-grid { display: grid; gap: 1.2vw; grid-template-columns: repeat(auto-fit, minmax(22vw, 1fr)); flex: 1; }
-.tv-room { background: #12232A; border: 1px solid #22323A; border-radius: 12px; padding: 1.4vh 1.2vw; }
-.tv-room.lit { border-color: #2E8B7A; background: #13302C; }
-.tv-room-head { display: flex; justify-content: space-between; align-items: baseline; }
-.tv-room-head b { font-size: 2vw; }
-.tv-room-head span { font-size: 1.2vw; color: #9FB4BD; }
-.tv-room-spec { font-size: 1.15vw; color: #9FB4BD; margin-top: .3vh; min-height: 1.6vh; }
-.tv-room-number { font-size: 5.4vw; line-height: 1.05; font-weight: 800;
-  font-variant-numeric: tabular-nums; }
-.tv-room-cat { font-size: 1.2vw; color: #9FB4BD; }
-.tv-room-next { font-size: 1.25vw; color: #7FD4C1; font-variant-numeric: tabular-nums; margin-top: .4vh; }
+/* The board. One row per place a patient can be called to, in a fixed order
+   all day: a row that moves under somebody watching for it is a row they
+   have to find again. */
+.tv-board { background: #12232A; border: 1px solid #22323A; border-radius: 12px;
+  overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
+/* The rows share whatever height the screen has, so four of them on a quiet
+   morning and nine at eleven o'clock both fill the board without either
+   scrolling or leaving a gap at the bottom. Nothing on a television can be
+   scrolled to, so anything that does not fit is not there at all. */
+.tv-rows { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.tv-rows .tv-row { flex: 1 1 0; min-height: 0; }
+.tv-row { display: grid; grid-template-columns: 12.5vw 1fr; align-items: center;
+  gap: .8vw; padding: .9vh 1.2vw; border-bottom: 1px solid #1C2E36; }
+.tv-row:last-child { border-bottom: 0; }
+.tv-row-head { background: #0E1D23; color: #9FB4BD; font-size: 1.15vw;
+  letter-spacing: .1em; text-transform: uppercase; padding: .8vh 1.2vw; }
+.tv-row-head div { font-weight: 700; }
 
-.tv-counters { display: grid; gap: 1vw; grid-template-columns: repeat(auto-fit, minmax(14vw, 1fr)); }
-.tv-counter { background: #101D23; border: 1px solid #22323A; border-radius: 10px; padding: .9vh 1vw; }
-.tv-counter-name { font-size: 1.15vw; color: #9FB4BD; }
-.tv-counter-number { font-size: 2.6vw; font-weight: 700; font-variant-numeric: tabular-nums; }
-.tv-counter-next { font-size: 1vw; color: #7FD4C1; font-variant-numeric: tabular-nums; }
+/* One line, always. A token broken across two lines is read as two
+   numbers by somebody glancing up from the far side of the room. */
+.tv-token { font-size: 2.9vw; line-height: 1.05; font-weight: 800;
+  font-variant-numeric: tabular-nums; letter-spacing: 0; white-space: nowrap; }
+.tv-room-no { font-size: 2vw; line-height: 1.1; font-weight: 700; }
+.tv-sub { font-size: 1.05vw; color: #9FB4BD; line-height: 1.25; }
+.tv-next { font-size: 1vw; color: #7FD4C1; font-variant-numeric: tabular-nums; }
 
-.tv-foot { font-size: 1.1vw; color: #6B8290; text-align: center; }
+/* The one just called. Picked out rather than enlarged, so the row heights
+   stay put and nothing jumps while somebody is reading. */
+.tv-row.lit { background: #13302C; box-shadow: inset .35vw 0 0 #2E8B7A; }
+.tv-row.lit .tv-token { color: #8FE3CC; }
+.tv-row.idle .tv-token { color: #4A5E68; }
+.tv-row.idle .tv-room-no { color: #8FA3AC; }
+.tv-empty { padding: 6vh 2vw; text-align: center; color: #9FB4BD; font-size: 1.6vw; }
+
+/* The clinic's poster: the whole picture, never cropped — a package price
+   cut off at the edge is worse than a margin. */
+.tv-ad { background: #12232A; border: 1px solid #22323A; border-radius: 12px;
+  overflow: hidden; display: flex; align-items: center; justify-content: center; min-height: 0; }
+.tv-ad img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.tv-ad-none { text-align: center; padding: 2vh 1.5vw; }
+.tv-ad-badge { font-size: 2.2vw; font-weight: 800; letter-spacing: .05em; }
+.tv-ad-line { font-size: 1.2vw; color: #9FB4BD; margin-top: 1vh; letter-spacing: .08em; }
+.tv-ad-hint { font-size: 1vw; color: #7FD4C1; margin-top: 3vh; }
+
+/* The posters, as the clinic manages them. */
+.sl-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+.sl-card { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--surface); }
+.sl-card.off { opacity: .55; }
+.sl-card img { width: 100%; height: 150px; object-fit: contain; background: var(--bg); display: block; }
+.sl-meta { padding: 8px 10px; }
+
+
 
 /* The token slip, previewed on screen at roughly its printed size. */
 .tslip-preview { border: 1px solid var(--line); border-radius: 8px; background: #fff;
@@ -1059,8 +1086,6 @@ tbody tr.panel-head.panel-sub td { background: transparent; border-top: 1px soli
 .q-alloc { width: 100%; }
 .q-alloc td, .q-alloc th { padding: 6px 10px; }
 .q-alloc select { width: auto; min-width: 190px; }
-.tv-counter-where { color: #6B8290; }
-.tv-room-doc { font-size: 1.25vw; color: #fff; font-weight: 600; margin-top: .2vh; }
 .q-duty { font-size: 12.6px; line-height: 1.45; }
 .warn-text { color: var(--orange-dark); }
 

@@ -865,3 +865,64 @@ test('the waiting-room screen names the doctor sitting in that room now', () => 
   'the doctor whose hours cover this minute is named on the wall');
   clearHours();
 });
+
+// ============================================ the poster beside the numbers
+test('a poster is stored whole and served back as the image it was', async () => {
+  // A one-pixel PNG is enough: what is asserted is the round trip, not the
+  // picture. The clinic's real posters are a few hundred KB of JPEG.
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const made = await api('POST', '/api/queue/slides', {
+    data: `data:image/png;base64,${png}`, title: 'Sunday wellness package', seconds: 15,
+  }, 'reception');
+  assert.strictEqual(made.status, 201, JSON.stringify(made.body));
+  assert.strictEqual(made.body.mime, 'image/png');
+  assert.ok(made.body.bytes > 0);
+
+  const res = await fetch(`${base}/api/queue/slides/${made.body.id}/image`,
+    { headers: { Authorization: `Bearer ${tokens.reception}` } });
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.headers.get('content-type'), 'image/png');
+  const back = Buffer.from(await res.arrayBuffer());
+  assert.deepStrictEqual(back, Buffer.from(png, 'base64'), 'the bytes come back unchanged');
+
+  // And it reaches the screen with the numbers, in one call.
+  const screen = await api('GET', '/api/queue/display', undefined, 'reception');
+  assert.ok(screen.body.slides.some((s) => s.id === made.body.id));
+  assert.strictEqual(screen.body.slides.find((s) => s.id === made.body.id).seconds, 15);
+});
+
+test('a poster can be pinned to one floor, and taken off without deleting it', async () => {
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const made = await api('POST', '/api/queue/slides',
+    { data: `data:image/png;base64,${png}`, title: 'Dental camp', floor: 'First Floor' }, 'reception');
+  assert.strictEqual(made.status, 201);
+
+  const upstairs = await api('GET', '/api/queue/display?floor=First%20Floor', undefined, 'reception');
+  const downstairs = await api('GET', '/api/queue/display?floor=Ground%20Floor', undefined, 'reception');
+  assert.ok(upstairs.body.slides.some((s) => s.id === made.body.id));
+  assert.ok(!downstairs.body.slides.some((s) => s.id === made.body.id),
+    'the dental camp poster does not play on the other floor');
+
+  await api('PATCH', `/api/queue/slides/${made.body.id}`, { active: false }, 'reception');
+  const after = await api('GET', '/api/queue/display?floor=First%20Floor', undefined, 'reception');
+  assert.ok(!after.body.slides.some((s) => s.id === made.body.id),
+    'off the screen, still on the list to put back');
+  assert.ok((await api('GET', '/api/queue/slides', undefined, 'reception')).body.rows
+    .some((s) => s.id === made.body.id));
+});
+
+test('what cannot go on the screen is refused with a reason', async () => {
+  const pdf = await api('POST', '/api/queue/slides',
+    { data: 'data:application/pdf;base64,JVBERi0=', title: 'A PDF' }, 'reception');
+  assert.strictEqual(pdf.status, 400);
+  assert.match(pdf.body.error, /JPEG|PNG/i);
+
+  const nothing = await api('POST', '/api/queue/slides', { title: 'No file' }, 'reception');
+  assert.strictEqual(nothing.status, 400);
+
+  // The screen is readable by anybody signed in; what plays on it is not
+  // theirs to change.
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  assert.strictEqual((await api('POST', '/api/queue/slides',
+    { data: `data:image/png;base64,${png}` }, 'lab')).status, 403);
+});
