@@ -117,6 +117,8 @@
       </div>
       <div class="tv-room-spec">${p.room.specialties.length
         ? UI.esc(p.room.specialties.join(' · ')) : '&nbsp;'}</div>
+      ${p.room.doctors && p.room.doctors.length
+        ? `<div class="tv-room-doc">${UI.esc(p.room.doctors.join(' · '))}</div>` : ''}
       <div class="tv-room-number">${p.nowCalling ? UI.esc(p.nowCalling.label) : '—'}</div>
       ${p.nowCalling && p.nowCalling.category
         ? `<div class="tv-room-cat">${UI.esc(p.nowCalling.category)}</div>` : ''}

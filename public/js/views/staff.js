@@ -567,9 +567,20 @@
    * across a range — "Tuesdays and Fridays, 6 to 8, for the next month" is one
    * entry, not twelve.
    */
-  function openAvailability(doctor, onDone) {
+  async function openAvailability(doctor, onDone) {
     const today = UI.today();
     const monthOut = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+
+    /*
+     * The consulting rooms, offered here rather than on a screen of their
+     * own, because "when does this doctor sit" and "which door do their
+     * patients knock on" is one question asked once. Whatever is chosen is
+     * what the queue prints on the token slip and shows on the waiting-room
+     * screen for these hours.
+     */
+    let rooms = [];
+    try { rooms = (await API.get('/api/queue/rooms')).rows; } catch { rooms = []; }
+    const usual = rooms.find((r) => r.id === doctor.op_room_id);
 
     UI.modal({
       title: `Visiting hours — ${doctor.name}`,
@@ -605,6 +616,17 @@
             ${UI.field({ name: 'maxTokens', label: 'Maximum patients', type: 'number', min: 0, value: 0,
               hint: '0 = as many as the hours hold' })}
           </div>
+          ${rooms.length ? `<label class="field"><span>Consulting room for these hours</span>
+            <select name="roomId">
+              <option value="">${usual ? `Their usual room — ${UI.esc(usual.name)}, ${UI.esc(usual.floor)}`
+                : 'Wherever the specialty sits'}</option>
+              ${rooms.map((r) => `<option value="${r.id}">${UI.esc(r.name)} · ${UI.esc(r.floor)}${
+                r.categories.length ? ` — ${UI.esc(r.categories.map((c) => c.name).join(', '))}` : ''
+              }</option>`).join('')}
+            </select>
+            <small class="muted">This is the room printed on the patient's token slip and shown
+              on the waiting-room screen for these hours.</small>
+          </label>` : ''}
           ${UI.field({ name: 'note', label: 'Note', placeholder: 'Evening OPD, camp day…' })}
         </form>
         <div id="av-preview" class="alert ok"></div>`,
@@ -673,12 +695,14 @@
         const payload = {
           startTime: v.startTime, endTime: v.endTime,
           slotMinutes: v.slotMinutes, maxTokens: v.maxTokens, note: v.note,
+          roomId: v.roomId || null,
         };
         if (getMode() === 'single') payload.date = v.date;
         else Object.assign(payload, { from: v.from, to: v.to, weekdays: getWeekdays() });
 
         const res = await API.post(`/api/masters/doctors/${doctor.id}/availability`, payload);
-        UI.ok(`${res.added} visiting day(s) fixed.`);
+        const room = rooms.find((r) => String(r.id) === String(v.roomId));
+        UI.ok(`${res.added} visiting day(s) fixed${room ? ` in ${room.name}, ${room.floor}` : ''}.`);
         if (res.skipped.length) {
           UI.warn(`${res.skipped.length} day(s) skipped — hours already set: ` +
             res.skipped.slice(0, 3).map((x) => x.date).join(', ') + (res.skipped.length > 3 ? '…' : ''));
@@ -851,6 +875,11 @@
           `${r.note ? `<div class="muted small">${UI.esc(r.note)}</div>` : ''}` },
         { label: 'Hours', render: (r) => `${UI.esc(UI.to12h(r.start_time))} – ${UI.esc(UI.to12h(r.end_time))}` +
           `<div class="muted small">${UI.esc(r.slot_minutes)} min per patient</div>` },
+        // The door these hours send patients to, which is what the queue
+        // prints on the token slip.
+        { label: 'Room', render: (r) => (r.room_name
+          ? `${UI.esc(r.room_name)}<div class="muted small">${UI.esc(r.room_floor || '')}</div>`
+          : '<span class="muted">Usual room</span>') },
         { label: 'Holds', num: true, render: (r) => UI.num(r.capacity) },
         { label: 'Booked', num: true, render: (r) => UI.num(r.booked) },
         { label: 'Free', num: true, render: (r) => r.free

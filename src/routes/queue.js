@@ -133,6 +133,11 @@ router.post('/rooms/:id/doctors', requireRole(), wrap((req, res) => {
   res.json(row);
 }));
 
+/** Who is sitting for each specialty today, and in which room. */
+router.get('/duty', anyone, wrap((req, res) => {
+  res.json({ date: str(req.query.date) || today(), rows: queue.dutyBoard(str(req.query.date) || today()) });
+}));
+
 // ---------------------------------------------------------------- the tokens
 router.get('/board', counterRoles, wrap((req, res) => {
   res.json(queue.board(str(req.query.date) || today()));

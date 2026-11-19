@@ -832,6 +832,7 @@
         <div id="q-cats"></div>` : ''}`;
 
     drawAllocation(host, cats, rooms);
+    loadDuty(host);
     if (!isManagement()) return;
 
     host.querySelector('#q-cats').innerHTML = UI.table([
@@ -876,7 +877,8 @@
 
     host.querySelector('#q-alloc').innerHTML = `
       <div class="table-wrap"><table class="q-alloc">
-        <thead><tr><th>Code</th><th>Specialty</th><th>Room</th><th>Token</th></tr></thead>
+        <thead><tr><th>Code</th><th>Specialty</th><th>Room</th>
+          <th>Doctor on duty today</th><th>Token</th></tr></thead>
         <tbody>${consult.map((c) => `<tr>
           <td><span class="q-code">${UI.esc(c.code)}</span></td>
           <td>${UI.esc(c.name)}</td>
@@ -885,6 +887,7 @@
             ${rooms.map((r) => `<option value="${r.id}" ${where[c.id] === r.id ? 'selected' : ''}>
               ${UI.esc(r.name)} · ${UI.esc(r.floor)}</option>`).join('')}
           </select></td>
+          <td class="q-duty" data-duty="${c.id}"><span class="muted small">…</span></td>
           <td class="muted">${UI.esc(c.code)}-001</td>
         </tr>`).join('')}</tbody>
       </table></div>
@@ -896,6 +899,37 @@
       sel.dataset.was = sel.value;
       sel.addEventListener('change', () => moveSpecialty(host, sel, cats, rooms));
     });
+  }
+
+  /**
+   * Who is actually sitting today, read from the hours on the staff screen.
+   *
+   * The whole point of putting it on this line: the room is only half the
+   * answer to "where do I send this patient". A room with nobody's hours
+   * against it today is a door the desk should not be sending anybody to,
+   * and the only way to know is to join the two.
+   */
+  async function loadDuty(host) {
+    let rows;
+    try { rows = (await API.get('/api/queue/duty')).rows; } catch { return; }
+    for (const row of rows) {
+      const cell = host.querySelector(`[data-duty="${row.category.id}"]`);
+      if (!cell) continue;
+
+      if (!row.doctors.length) {
+        cell.innerHTML = '<span class="muted small">Nobody is sitting today</span>';
+        continue;
+      }
+      const one = (d) => `<div>${d.sittingNow ? '<b>' : ''}${UI.esc(d.name)}${d.sittingNow ? '</b>' : ''}
+        <span class="muted small">${UI.esc(d.hours || '')}</span>
+        ${d.sittingNow ? UI.badge('In now', 'teal') : ''}</div>`;
+      cell.innerHTML = row.doctors.map(one).join('')
+        + (row.elsewhere.length
+          ? `<div class="small warn-text">⚠ ${row.elsewhere.map((e) =>
+            `${UI.esc(e.name)} is set to sit in ${UI.esc(e.room)}`).join(', ')} — their patients
+            are sent there, not to ${UI.esc(row.room ? row.room.name : 'this room')}.</div>`
+          : '');
+    }
   }
 
   async function moveSpecialty(host, sel, cats, rooms) {

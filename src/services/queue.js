@@ -44,13 +44,28 @@
  */
 const { db } = require('../db');
 const { badRequest, notFound, conflict } = require('../lib/http');
+const scheduling = require('./scheduling');
 
 const now = () => new Date();
-const dateKey = (d) => new Date(d).toISOString().slice(0, 10);
-const stamp = (d) => new Date(d).toISOString().slice(0, 19).replace('T', ' ');
-/** SQLite datetimes are 'YYYY-MM-DD HH:MM:SS', written in UTC. */
-const toTime = (s) => (s ? new Date(`${String(s).replace(' ', 'T')}Z`).getTime() : null);
-const hhmm = (s) => (s ? String(s).slice(11, 16) : '');
+
+/*
+ * Two clocks, kept apart on purpose — see src/lib/clinicClock.js.
+ *
+ * `fromStamp` reads a timestamp the database wrote, which is UTC: when the
+ * patient arrived, when they were called. `fromWall` reads a time somebody
+ * typed, which is the clinic's wall clock with no zone in it: an
+ * appointment at 10:15, a doctor sitting from 18:00. Comparing those two
+ * without converting is how a queue decides that a ten o'clock booking is
+ * not due until half past three.
+ */
+const clock = require('../lib/clinicClock');
+const { dateKey, clockHHMM, fromStamp, fromWall } = clock;
+/** For display: the clinic's reading of a moment, 'YYYY-MM-DD HH:MM:SS'. */
+const stamp = (d) => clock.wallAt(d);
+/** The clinic's HH:MM for a stamp the database wrote. */
+const hhmm = (s) => (s ? clockHHMM(s) : '');
+/** The HH:MM of a time somebody typed; it is already the clinic's clock. */
+const hhmmWall = (s) => (s ? String(s).slice(11, 16) : '');
 const trim = (s) => (s === undefined || s === null || s === '' ? null : String(s).trim());
 
 /*
@@ -285,17 +300,134 @@ function setDoctorRoom(doctorId, roomId) {
        FROM users u LEFT JOIN op_rooms r ON r.id = u.op_room_id WHERE u.id = ?`).get(doctorId);
 }
 
+// =========================================================================
+// Who is sitting, and where, at this minute
+// =========================================================================
+
+/**
+ * The doctors who take this specialty, with the hours they are sitting for
+ * today and the room those hours name.
+ *
+ * This is the join the clinic asked for: the hours are fixed on the staff
+ * screen, and the queue reads them rather than being told the same thing
+ * twice. A doctor on leave is not sitting, whatever the rota says; a
+ * visiting consultant with hours fixed for today is, whatever the weekly
+ * pattern says — `sessionsFor` already settles that, and this stays out of
+ * it.
+ */
+function dutyFor(categoryId, { date = dateKey(now()), at = now() } = {}) {
+  const doctors = db.prepare(
+    `SELECT u.id, u.name, u.op_room_id
+       FROM users u JOIN departments d ON d.id = u.department_id
+      WHERE d.queue_category_id = ? AND u.role = 'doctor'
+        AND u.active = 1 AND u.erased_at IS NULL
+      ORDER BY u.name`).all(categoryId);
+
+  const atHHMM = clockHHMM(at);
+  const rows = [];
+  for (const doctor of doctors) {
+    if (scheduling.isOnLeave(doctor.id, date)) continue;
+    const sessions = scheduling.sessionsFor(doctor.id, date);
+    if (!sessions.length) continue;
+
+    const sitting = sessions.find((w) => w.start_time <= atHHMM && atHHMM < w.end_time) || null;
+    const next = sessions.find((w) => w.start_time > atHHMM) || null;
+    const session = sitting || next;
+    rows.push({
+      id: doctor.id,
+      name: doctor.name,
+      sittingNow: Boolean(sitting),
+      from: session ? session.start_time : null,
+      to: session ? session.end_time : null,
+      hours: sessions.map((w) => `${scheduling.to12h(w.start_time)} – ${scheduling.to12h(w.end_time)}`)
+        .join(', '),
+      // The room these particular hours name, if any. It is the strongest
+      // statement about which door: it was entered with the hours.
+      room: session && session.op_room_id
+        ? db.prepare('SELECT * FROM op_rooms WHERE id = ? AND active = 1').get(session.op_room_id) || null
+        : null,
+      defaultRoom: doctor.op_room_id
+        ? db.prepare('SELECT * FROM op_rooms WHERE id = ? AND active = 1').get(doctor.op_room_id) || null
+        : null,
+    });
+  }
+
+  const sittingNow = rows.filter((r) => r.sittingNow);
+  return {
+    doctors: rows,
+    now: sittingNow,
+    later: rows.filter((r) => !r.sittingNow),
+    /*
+     * Named on the token only when exactly one doctor is sitting for this
+     * specialty. Two consultants in the same clinic and the slip cannot
+     * honestly say which one the patient will see, and a name that turns
+     * out to be the wrong one is worse than no name at all.
+     */
+    only: sittingNow.length === 1 ? sittingNow[0]
+      : (rows.length === 1 ? rows[0] : null),
+  };
+}
+
+/**
+ * Who is sitting for every specialty today, and where.
+ *
+ * The one screen that answers "is anybody in for Cardiology this evening,
+ * and which door". It joins three things the clinic enters separately — the
+ * visiting hours, the doctor's room, and the room the specialty sits in —
+ * and says where they disagree, because a doctor whose hours name OP-1
+ * while their specialty sits in OP-4 will have patients knocking on the
+ * wrong door all morning.
+ */
+function dutyBoard(date = dateKey(now()), at = now()) {
+  return categories({ kind: 'consult' }).map((c) => {
+    const duty = dutyFor(c.id, { date, at });
+    const room = roomOfCategory(c.id);
+    const clash = duty.doctors.filter((d) => {
+      const theirs = d.room || d.defaultRoom;
+      return theirs && room && theirs.id !== room.id;
+    });
+    return {
+      category: { id: c.id, code: c.code, name: c.name },
+      room: room ? { id: room.id, name: room.name, floor: room.floor } : null,
+      doctors: duty.doctors,
+      now: duty.now,
+      later: duty.later,
+      /*
+       * Said plainly rather than silently resolved. The queue does send the
+       * patient to the doctor's room — that is the right answer — but a
+       * clinic allocation that nobody is actually sitting in is worth
+       * somebody's attention.
+       */
+      elsewhere: clash.map((d) => ({
+        name: d.name,
+        room: (d.room || d.defaultRoom).name,
+        floor: (d.room || d.defaultRoom).floor,
+      })),
+    };
+  });
+}
+
 /**
  * Where to send this token.
  *
- * The doctor's own room first, because a patient seeing Dr Imran goes where
- * Dr Imran is sitting. Failing that, a room the specialty sits in. Nothing
- * is invented: a clinic that has not yet said where Paediatrics sits gets a
- * token with no room on it, which is honest, rather than "OP 1", which
- * sends people upstairs for nothing.
+ * In order of how specific the statement is: the room entered against the
+ * hours the doctor is sitting right now; then the doctor's usual room,
+ * because a patient seeing Dr Imran goes where Dr Imran sits; then the room
+ * the specialty sits in. Nothing is invented — a clinic that has not said
+ * where Paediatrics sits gets a token with no room on it, which is honest,
+ * rather than "OP-1", which sends people upstairs for nothing.
  */
-function roomFor({ doctorId, categoryId }) {
+function roomFor({ doctorId, categoryId, date = dateKey(now()), at = now() }) {
   if (doctorId) {
+    const atHHMM = clockHHMM(at);
+    const sessions = scheduling.sessionsFor(doctorId, date);
+    const session = sessions.find((w) => w.start_time <= atHHMM && atHHMM < w.end_time)
+      || sessions.find((w) => w.start_time > atHHMM) || null;
+    if (session && session.op_room_id) {
+      const booked = db.prepare('SELECT * FROM op_rooms WHERE id = ? AND active = 1')
+        .get(session.op_room_id);
+      if (booked) return booked;
+    }
     const sat = db.prepare(
       `SELECT r.* FROM users u JOIN op_rooms r ON r.id = u.op_room_id
         WHERE u.id = ? AND r.active = 1`).get(doctorId);
@@ -366,7 +498,7 @@ const tokenOr404 = (id) => {
  */
 function issue({
   categoryId, patientId = null, visitId = null, doctorId = null, roomId = null,
-  note = null, userId = null, again = false, date = dateKey(now()),
+  note = null, userId = null, again = false, date = dateKey(now()), at = now(),
 } = {}) {
   const category = categoryOr404(categoryId);
   if (!category.active) throw badRequest(`${category.name} is switched off.`);
@@ -386,7 +518,22 @@ function issue({
     if (held) return tokenOr404(held.id);
   }
 
-  const room = roomId ? roomOr404(roomId) : roomFor({ doctorId, categoryId });
+  /*
+   * Who the patient will see, where nobody has said.
+   *
+   * Read from the hours the clinic fixed on the staff screen rather than
+   * asked for again here: if one doctor is sitting for this specialty at
+   * this minute, the token names them and goes to the room those hours
+   * name. If two are sitting, the token names neither — a slip that says
+   * the wrong doctor is worse than one that says none — but it still goes
+   * to the right room.
+   */
+  if (!doctorId && category.kind === 'consult') {
+    const duty = dutyFor(categoryId, { date, at });
+    if (duty.only) doctorId = duty.only.id;
+  }
+
+  const room = roomId ? roomOr404(roomId) : roomFor({ doctorId, categoryId, date, at });
 
   /*
    * The sequence: today's highest in this category, plus one. This is why
@@ -463,9 +610,10 @@ function tokenForVisit(visitId, { userId = null } = {}) {
  * twice.
  */
 function dueAt(row) {
-  const issued = toTime(row.arrived_at || row.created_at);
-  const base = row.scheduled_at ? Math.max(toTime(row.scheduled_at), issued) : issued;
-  return Math.max(base, toTime(row.passed_at) || 0);
+  const issued = fromStamp(row.arrived_at || row.created_at);
+  const slot = row.scheduled_at ? fromWall(row.scheduled_at) : null;
+  const base = slot === null ? issued : Math.max(slot, issued);
+  return Math.max(base, fromStamp(row.passed_at) || 0);
 }
 
 const isBooked = (row) => Boolean(row.scheduled_at);
@@ -480,7 +628,7 @@ const isBooked = (row) => Boolean(row.scheduled_at);
  * waiting room the lesson that being late is rewarded.
  */
 const wasLate = (row) => Boolean(row.scheduled_at
-  && toTime(row.arrived_at || row.created_at) > toTime(row.scheduled_at));
+  && fromStamp(row.arrived_at || row.created_at) > fromWall(row.scheduled_at));
 
 /**
  * The order the room will call them in, as it stands this minute.
@@ -491,16 +639,16 @@ const wasLate = (row) => Boolean(row.scheduled_at
  * "call next" button can never disagree about it.
  */
 function order(rows, at = now()) {
-  const clock = at.getTime();
+  const stampNow = at.getTime();
   const withDue = rows.map((r) => ({ ...r, due_at: dueAt(r), booked: isBooked(r) }));
 
-  const dueBooked = withDue.filter((r) => r.booked && r.due_at <= clock)
+  const dueBooked = withDue.filter((r) => r.booked && r.due_at <= stampNow)
     .sort((a, b) => a.due_at - b.due_at
       || (wasLate(a) ? 1 : 0) - (wasLate(b) ? 1 : 0)
-      || toTime(a.scheduled_at) - toTime(b.scheduled_at) || a.seq - b.seq);
+      || fromWall(a.scheduled_at) - fromWall(b.scheduled_at) || a.seq - b.seq);
   const walkIns = withDue.filter((r) => !r.booked)
     .sort((a, b) => a.due_at - b.due_at || a.seq - b.seq);
-  const laterBooked = withDue.filter((r) => r.booked && r.due_at > clock)
+  const laterBooked = withDue.filter((r) => r.booked && r.due_at > stampNow)
     .sort((a, b) => a.due_at - b.due_at || a.seq - b.seq);
 
   return [...dueBooked, ...walkIns, ...laterBooked].map((r, i) => ({
@@ -512,11 +660,11 @@ function order(rows, at = now()) {
      * overridden queue is no queue at all.
      */
     why: r.booked
-      ? (r.due_at <= clock
-        ? `Booked ${hhmm(r.scheduled_at)}${wasLate(r) ? ' · arrived late' : ''}`
-        : `Booked ${hhmm(r.scheduled_at)} — not due yet`)
+      ? (r.due_at <= stampNow
+        ? `Booked ${hhmmWall(r.scheduled_at)}${wasLate(r) ? ' · arrived late' : ''}`
+        : `Booked ${hhmmWall(r.scheduled_at)} — not due yet`)
       : `Walk-in · waiting since ${hhmm(r.arrived_at || r.created_at)}`,
-    callable: r.booked ? r.due_at <= clock : !dueBooked.length,
+    callable: r.booked ? r.due_at <= stampNow : !dueBooked.length,
   }));
 }
 
@@ -537,7 +685,7 @@ function queueFor({ categoryId = null, roomId = null, date = dateKey(now()) } = 
 
   const serving = rows.filter((r) => r.status === 'serving');
   const called = rows.filter((r) => r.status === 'called')
-    .sort((a, b) => toTime(b.called_at) - toTime(a.called_at));
+    .sort((a, b) => fromStamp(b.called_at) - fromStamp(a.called_at));
   const queue = order(rows.filter((r) => r.status === 'waiting'), at);
 
   /*
@@ -554,7 +702,7 @@ function queueFor({ categoryId = null, roomId = null, date = dateKey(now()) } = 
         AND t.serving_at IS NOT NULL AND t.done_at IS NOT NULL
         ${categoryId ? 'AND t.category_id = ?' : ''}
         ${roomId ? 'AND t.room_id = ?' : ''}`).all(...args);
-  const minutes = closed.map((t) => (toTime(t.done_at) - toTime(t.serving_at)) / 60000)
+  const minutes = closed.map((t) => (fromStamp(t.done_at) - fromStamp(t.serving_at)) / 60000)
     .filter((m) => m > 0 && m < 180);
   const average = minutes.length >= 3
     ? Math.round(minutes.reduce((t, m) => t + m, 0) / minutes.length) : null;
@@ -772,6 +920,13 @@ function slip(tokenId, at = now()) {
     // directory board says it is: "Ground Floor · Pharmacy".
     location: token.room_name ? null : (token.category_location || null),
     doctor: token.doctor_name || null,
+    /*
+     * The hours that doctor is sitting for today, so a patient holding
+     * 08-004 can see whether they are inside the clinic's hours or waiting
+     * for the evening session to open.
+     */
+    doctorHours: token.doctor_id
+      ? scheduling.windowLabel(token.doctor_id, token.issue_date) : null,
     booked: isBooked(token),
     scheduledAt: token.scheduled_at || null,
     ahead,
@@ -805,13 +960,36 @@ function display(floor, date = dateKey(now()), at = now()) {
     doctor: r.doctor_name || null, at: r.called_at || r.serving_at || null,
   });
 
+  /*
+   * Who is sitting anywhere in the building at this minute, worked out once
+   * from the hours the clinic fixed rather than per room.
+   */
+  const onDuty = categories({ kind: 'consult' })
+    .map((c) => ({ category: c, now: dutyFor(c.id, { date, at }).now }));
+
   const panels = wanted.map((room) => {
     const q = queueFor({ roomId: room.id, date }, at);
+    /*
+     * The doctor on the screen is the one sitting behind this door at this
+     * minute, not everybody whose name is against the room. A doctor whose
+     * hours name a room is in that room whatever their specialty is
+     * allocated to — which is the same rule the token slip follows, so the
+     * wall and the paper agree. A patient reading "Dr Sara Ahmed" on the
+     * screen should find Dr Sara Ahmed behind the door.
+     */
+    const sitting = [...new Set(onDuty.flatMap(({ category, now: doctors }) => {
+      const allocatedHere = room.categories.some((rc) => rc.id === category.id);
+      return doctors.filter((d) => {
+        const theirs = d.room || d.defaultRoom;
+        return theirs ? theirs.id === room.id : allocatedHere;
+      }).map((d) => d.name);
+    }))];
     return {
       room: {
         id: room.id, name: room.name, floor: room.floor, floorOrder: room.floor_order,
         specialties: room.categories.map((c) => c.name),
-        doctors: room.doctors.map((d) => d.name),
+        doctors: sitting.length ? sitting : room.doctors.map((d) => d.name),
+        sittingNow: sitting,
       },
       // The number on the wall right now: whoever was called last and has
       // not yet reached the door, or failing that whoever is inside.
@@ -861,9 +1039,12 @@ module.exports = {
   // tokens
   issue, tokenForVisit, tokensFor, tokenOr404,
   // the queue itself
-  queueFor, board, order, dueAt, roomFor,
+  queueFor, board, order, dueAt, roomFor, dutyFor, dutyBoard,
   categoryForDepartment, categoryForDoctor,
   call, callNext, pass, uncall, serving, done, cancel, moveRoom,
   // paper and glass
   slip, display, labelFor,
+  // The clinic's wall clock, exported so a caller comparing against a
+  // doctor's visiting hours reads the same clock this does.
+  clockHHMM, dateKey,
 };

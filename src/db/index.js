@@ -171,6 +171,16 @@ function migrate() {
    * have to tell a patient which floor to walk to.
    */
   ensureColumn('queue_categories', 'location', 'TEXT');
+  /*
+   * The room a doctor sits in for one set of hours.
+   *
+   * A doctor has a usual room, and a morning in OP-1 followed by an evening
+   * clinic upstairs in OP-4 is still an ordinary week — so the hours carry a
+   * room of their own, used when it is set and falling back to the doctor's
+   * usual room and then to wherever the specialty sits. Fixing the hours and
+   * saying which door is one act at the desk, so it is one row here.
+   */
+  ensureColumn('doctor_availability', 'op_room_id', 'INTEGER REFERENCES op_rooms(id)');
 
   ensureColumn('patients', 'guardian_name', 'TEXT');
   ensureColumn('patients', 'guardian_relation', 'TEXT');

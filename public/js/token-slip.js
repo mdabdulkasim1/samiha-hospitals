@@ -62,7 +62,8 @@
         </div>` : (slip.location
           ? `<div class="t-room">${esc(slip.location)}</div>`
           : '<div class="t-room t-ask">Ask at the front desk for your room</div>')}
-        ${slip.doctor ? `<div class="t-line">${esc(slip.doctor)}</div>` : ''}
+        ${slip.doctor ? `<div class="t-line t-doctor">${esc(slip.doctor)}</div>` : ''}
+        ${slip.doctorHours ? `<div class="t-line t-small">${esc(slip.doctorHours)}</div>` : ''}
         ${bookedLine(slip)}
         ${waitLine(slip)}
 
@@ -100,6 +101,7 @@
       .t-room { font-size: 15px; font-weight: 700; }
       .t-ask { font-size: 11px; font-weight: 400; }
       .t-line { font-size: 11px; margin-top: 1mm; }
+      .t-doctor { font-size: 12.5px; font-weight: 700; }
       .t-wait { font-weight: 700; }
       .t-small { font-size: 9.5px; }
       .t-foot { font-size: 9.5px; margin-top: 2mm; }

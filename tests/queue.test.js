@@ -61,7 +61,17 @@ async function api(method, p, body, as = 'reception') {
   return { status: res.status, body: json };
 }
 
-const at = (hhmm) => new Date(`${ids.date}T${hhmm}:00Z`);
+/*
+ * Every time in this file is the clinic's own clock, because that is the
+ * clock the desk and the appointment book are written in. What the database
+ * stores is UTC, so the helpers below convert — and a test that got that
+ * backwards would be asserting the very bug this exists to prevent.
+ */
+const clock = require('../src/lib/clinicClock');
+/** A clinic time of day on the test's date, as a moment. */
+const at = (hhmm) => new Date(clock.fromWall(`${ids.date} ${hhmm}:00`));
+/** The same, as the UTC stamp the database would have written. */
+const stampAt = (hhmm) => at(hhmm).toISOString().slice(0, 19).replace('T', ' ');
 
 /**
  * A token, planted directly with the times the case needs.
@@ -90,7 +100,7 @@ function plant({ category, arrived, booked = null, patient = null }) {
                            visit_type, status, token_no, arrived_at)
        VALUES (?, ?, ?, ?, ?, 'opd', 'waiting_room', ?, ?)`
     ).run(`VIS-T${seq}-${category}`, patient || ids.patient, apptId, ids.doctor, ids.dept,
-      seq, `${ids.date} ${arrived}:00`).lastInsertRowid;
+      seq, stampAt(arrived)).lastInsertRowid;
   }
 
   const id = db.prepare(
@@ -98,7 +108,7 @@ function plant({ category, arrived, booked = null, patient = null }) {
                                doctor_id, room_id, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(cat.id, ids.date, seq, queue.labelFor(cat.code, seq), patient || ids.patient,
-    visitId, ids.doctor, ids.room, `${ids.date} ${arrived}:00`).lastInsertRowid;
+    visitId, ids.doctor, ids.room, stampAt(arrived)).lastInsertRowid;
   return queue.tokenOr404(id);
 }
 
@@ -379,13 +389,12 @@ test('"call next" refuses to invent somebody when nobody is due', async () => {
    * hours out, and nobody else.
    */
   const soon = new Date(Date.now() + 3 * 3600 * 1000);
-  const todayKey = new Date().toISOString().slice(0, 10);
+  const todayKey = clock.dateKey();
   const apptId = db.prepare(
     `INSERT INTO appointments (appt_no, patient_id, doctor_id, department_id, scheduled_at,
                                slot_minutes, status, created_by)
      VALUES ('APT-LATER', ?, ?, ?, ?, 15, 'checked_in', 1)`
-  ).run(ids.other, ids.doctor, ids.dept,
-    soon.toISOString().slice(0, 19).replace('T', ' ')).lastInsertRowid;
+  ).run(ids.other, ids.doctor, ids.dept, clock.wallAt(soon)).lastInsertRowid;
   const visitId = db.prepare(
     `INSERT INTO visits (visit_no, patient_id, appointment_id, doctor_id, department_id,
                          visit_type, status, token_no, arrived_at)
@@ -446,7 +455,7 @@ test('an estimate appears only once the morning has been measured', () => {
   for (let i = 0; i < 3; i += 1) {
     const t = plant({ category: '08', arrived: '09:00' });
     db.prepare(`UPDATE queue_tokens SET status = 'done', serving_at = ?, done_at = ? WHERE id = ?`)
-      .run(`${ids.date} 09:00:00`, `${ids.date} 09:20:00`, t.id);
+      .run(stampAt('09:00'), stampAt('09:20'), t.id);
   }
   plant({ category: '08', arrived: '10:00' });
   const waiting = plant({ category: '08', arrived: '10:05', patient: ids.other });
@@ -463,7 +472,7 @@ test('the waiting-room screen shows one floor, with numbers and no names', () =>
   clear();
   const t = plant({ category: '08', arrived: '09:00' });
   db.prepare("UPDATE queue_tokens SET status = 'called', called_at = ? WHERE id = ?")
-    .run(`${ids.date} 09:05:00`, t.id);
+    .run(stampAt('09:05'), t.id);
   plant({ category: '08', arrived: '09:10', patient: ids.other });
 
   const first = queue.display('First Floor', ids.date, at('09:06'));
@@ -490,7 +499,7 @@ test('a counter with a queue of its own shows up on both floors\' screens', () =
   const lab = queue.categories().find((c) => c.code === '12');
   const t = queue.issue({ categoryId: lab.id, date: ids.date });
   db.prepare("UPDATE queue_tokens SET status = 'called', called_at = ? WHERE id = ?")
-    .run(`${ids.date} 09:05:00`, t.id);
+    .run(stampAt('09:05'), t.id);
 
   for (const floor of ['Ground Floor', 'First Floor']) {
     const d = queue.display(floor, ids.date, at('09:06'));
@@ -643,7 +652,7 @@ test('moving a clinic takes the people waiting in it to the new room', async () 
   const waiting = plant({ category: '08', arrived: '09:00' });
   const calledIn = plant({ category: '08', arrived: '09:10', patient: ids.other });
   db.prepare("UPDATE queue_tokens SET status = 'called', called_at = ? WHERE id = ?")
-    .run(`${ids.date} 09:12:00`, calledIn.id);
+    .run(stampAt('09:12'), calledIn.id);
   assert.strictEqual(queue.tokenOr404(waiting.id).room_name, 'OP-3');
 
   /*
@@ -703,4 +712,156 @@ test('the queue can be left behind when the move is only for later', async () =>
   assert.strictEqual(queue.tokenOr404(waiting.id).room_name, 'OP-3',
     'the people already holding a slip are left where the slip sent them');
   queue.assignCategoryRoom(ids.pedCat, ids.room);
+});
+
+// ====================================== the queue reads the doctor's hours
+/**
+ * Fix hours for a doctor on the test's date, optionally naming a room.
+ * This is the same row the staff screen writes.
+ */
+function fixHours(doctorId, from, to, roomId = null) {
+  return db.prepare(
+    `INSERT INTO doctor_availability
+       (doctor_id, avail_date, start_time, end_time, slot_minutes, max_tokens, op_room_id, created_by)
+     VALUES (?, ?, ?, ?, 15, 0, ?, 1)`
+  ).run(doctorId, ids.date, from, to, roomId).lastInsertRowid;
+}
+const clearHours = () => db.prepare('DELETE FROM doctor_availability').run();
+
+test('a ten o\'clock booking is due at ten, not at whatever UTC says', () => {
+  clear();
+  /*
+   * The appointment book stores wall clock — somebody typed 10:00 meaning
+   * ten in the morning in Melapalayam — while the database stamps arrivals
+   * in UTC. Compare the two without converting and a server running on UTC
+   * decides a ten o'clock patient is not due until half past three, holds
+   * every booking back all morning and lets the walk-ins past. That is the
+   * failure this asserts against.
+   */
+  const booked = plant({ category: '08', arrived: '09:50', booked: '10:00' });
+  const walkIn = plant({ category: '08', arrived: '08:00', patient: ids.other });
+
+  const before = queue.queueFor({ categoryId: ids.pedCat, date: ids.date }, at('09:55'));
+  assert.strictEqual(before.next.id, walkIn.id, 'at five to ten the walk-in still fills the gap');
+
+  const after = queue.queueFor({ categoryId: ids.pedCat, date: ids.date }, at('10:00'));
+  assert.strictEqual(after.next.id, booked.id, 'at ten the booking is due');
+  assert.match(after.queue[0].why, /^Booked 10:00/, 'and reads as the time it was booked for');
+});
+
+test('the token names the doctor whose hours cover this minute', () => {
+  clear();
+  clearHours();
+  const room = queue.rooms().find((r) => r.name === 'OP-1');
+  fixHours(ids.doctor, '09:00', '13:00', room.id);
+
+  const t = queue.issue({ categoryId: ids.pedCat, date: ids.date, at: at('10:00'), again: true });
+  assert.strictEqual(t.doctor_id, ids.doctor, 'read from the hours, not asked for again');
+  assert.strictEqual(t.room_name, 'OP-1', 'and the room those hours name');
+  assert.strictEqual(t.room_floor, 'Ground Floor');
+
+  const slip = queue.slip(t.id);
+  assert.strictEqual(slip.doctor, db.prepare('SELECT name FROM users WHERE id = ?')
+    .get(ids.doctor).name);
+  assert.match(slip.doctorHours, /9:00 AM – 1:00 PM/, 'the slip says when they sit');
+  assert.strictEqual(slip.room, 'OP-1');
+  clearHours();
+});
+
+test('the room on the hours beats the doctor\'s usual room and the specialty\'s', () => {
+  clear();
+  clearHours();
+  const op1 = queue.rooms().find((r) => r.name === 'OP-1');
+  const op4 = queue.rooms().find((r) => r.name === 'OP-4');
+
+  // Their usual room is OP-1; this evening's hours are upstairs in OP-4.
+  queue.setDoctorRoom(ids.doctor, op1.id);
+  fixHours(ids.doctor, '00:01', '23:59', op4.id);
+  assert.strictEqual(queue.issue({ categoryId: ids.pedCat, date: ids.date, at: at('10:00'),
+    again: true }).room_name, 'OP-4', 'the hours name the door');
+
+  // With no room on the hours it falls back to the usual room …
+  clearHours();
+  fixHours(ids.doctor, '00:01', '23:59', null);
+  assert.strictEqual(queue.issue({ categoryId: ids.pedCat, date: ids.date, at: at('10:00'),
+    again: true }).room_name, 'OP-1', 'then where the doctor usually sits');
+
+  // … and with neither, to wherever the specialty sits.
+  queue.setDoctorRoom(ids.doctor, null);
+  assert.strictEqual(queue.issue({ categoryId: ids.pedCat, date: ids.date, at: at('10:00'),
+    again: true }).room_name, 'OP-3', 'then where the specialty sits');
+  clearHours();
+});
+
+test('two doctors sitting at once means the slip names neither', () => {
+  clear();
+  clearHours();
+  const second = db.prepare(
+    `INSERT INTO users (staff_code, name, email, password_hash, role, department_id, active)
+     VALUES ('EMPQ1', 'Dr. Second Paediatrician', 'second@samiha.local', 'x', 'doctor', ?, 1)`
+  ).run(ids.dept).lastInsertRowid;
+  fixHours(ids.doctor, '00:01', '23:59');
+  fixHours(second, '00:01', '23:59');
+
+  const t = queue.issue({ categoryId: ids.pedCat, date: ids.date, at: at('10:00'), again: true });
+  assert.strictEqual(t.doctor_id, null,
+    'a slip naming the wrong doctor is worse than one naming none');
+  assert.strictEqual(t.room_name, 'OP-3', 'the room is still right');
+
+  db.prepare('DELETE FROM users WHERE id = ?').run(second);
+  clearHours();
+});
+
+test('a doctor on leave is not sitting, whatever the rota says', () => {
+  clearHours();
+  fixHours(ids.doctor, '00:01', '23:59');
+  assert.strictEqual(queue.dutyFor(ids.pedCat, { date: ids.date, at: at('10:00') }).now.length, 1);
+
+  db.prepare('INSERT INTO doctor_leaves (doctor_id, leave_date, reason) VALUES (?, ?, ?)')
+    .run(ids.doctor, ids.date, 'Family function');
+  assert.strictEqual(queue.dutyFor(ids.pedCat, { date: ids.date, at: at('10:00') }).now.length, 0);
+
+  db.prepare('DELETE FROM doctor_leaves WHERE doctor_id = ? AND leave_date = ?')
+    .run(ids.doctor, ids.date);
+  clearHours();
+});
+
+test('the duty board says where the hours and the allocation disagree', async () => {
+  clearHours();
+  const op1 = queue.rooms().find((r) => r.name === 'OP-1');
+  // Paediatrics sits in OP-3, but today's hours put the doctor in OP-1.
+  fixHours(ids.doctor, '00:01', '23:59', op1.id);
+
+  const board = queue.dutyBoard(ids.date, at('10:00'));
+  const ped = board.find((r) => r.category.code === '08');
+  assert.strictEqual(ped.room.name, 'OP-3', 'the specialty is allocated to OP-3');
+  assert.strictEqual(ped.now.length, 1, 'and somebody is sitting');
+  assert.strictEqual(ped.elsewhere.length, 1, 'but not in that room, and it says so');
+  assert.strictEqual(ped.elsewhere[0].room, 'OP-1');
+
+  // A specialty nobody is in for today reads as exactly that.
+  const ent = board.find((r) => r.category.code === '03');
+  assert.strictEqual(ent.now.length, 0);
+  assert.strictEqual(ent.doctors.length, 0);
+
+  const res = await api('GET', `/api/queue/duty?date=${ids.date}`, undefined, 'reception');
+  assert.strictEqual(res.status, 200);
+  assert.ok(res.body.rows.length >= 11);
+  clearHours();
+});
+
+test('the waiting-room screen names the doctor sitting in that room now', () => {
+  clear();
+  clearHours();
+  const op3 = queue.rooms().find((r) => r.name === 'OP-3');
+  fixHours(ids.doctor, '00:01', '23:59', op3.id);
+
+  const d = queue.display('First Floor', ids.date, at('10:00'));
+  const panel = d.panels.find((p) => p.room.name === 'OP-3');
+  // The dentist sits in this room too, on the weekly rota — so the screen
+  // names both, which is right: both are behind that door this morning.
+  assert.ok(panel.room.sittingNow.includes(
+    db.prepare('SELECT name FROM users WHERE id = ?').get(ids.doctor).name),
+  'the doctor whose hours cover this minute is named on the wall');
+  clearHours();
 });

@@ -255,8 +255,10 @@ router.get('/doctors/:id/availability', wrap((req, res) => {
   const from = str(req.query.from) || scheduling.dateKey(new Date());
   const to = str(req.query.to) || scheduling.dateKey(new Date(Date.now() + 60 * 86400000));
   const rows = db.prepare(
-    `SELECT a.*, u.name AS set_by FROM doctor_availability a
+    `SELECT a.*, u.name AS set_by, r.name AS room_name, r.floor AS room_floor
+       FROM doctor_availability a
        LEFT JOIN users u ON u.id = a.created_by
+       LEFT JOIN op_rooms r ON r.id = a.op_room_id
       WHERE a.doctor_id = ? AND a.avail_date BETWEEN ? AND ?
       ORDER BY a.avail_date, a.start_time`
   ).all(doctorId, from, to);
@@ -308,6 +310,15 @@ router.post('/doctors/:id/availability', requireRole('admin', 'reception'), wrap
   const slotMinutes = int(req.body.slotMinutes, 15) || 15;
   const maxTokens = int(req.body.maxTokens, 0);
   const note = str(req.body.note);
+  /*
+   * The room for these hours. Optional: without it the queue sends patients
+   * to the doctor's usual room, and failing that to wherever the specialty
+   * sits. With it, the token printed at the desk names this door.
+   */
+  const roomId = int(req.body.roomId) || null;
+  if (roomId && !db.prepare('SELECT 1 FROM op_rooms WHERE id = ? AND active = 1').get(roomId)) {
+    throw badRequest('That consulting room is not in use.');
+  }
 
   // Work out which dates this applies to.
   let dates = [];
@@ -343,14 +354,16 @@ router.post('/doctors/:id/availability', requireRole('admin', 'reception'), wrap
 
       const info = db.prepare(
         `INSERT INTO doctor_availability
-           (doctor_id, avail_date, start_time, end_time, slot_minutes, max_tokens, note, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-      ).run(doctorId, date, start, end, slotMinutes, maxTokens, note, req.user.id);
+           (doctor_id, avail_date, start_time, end_time, slot_minutes, max_tokens, note,
+            op_room_id, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(doctorId, date, start, end, slotMinutes, maxTokens, note, roomId, req.user.id);
       added.push({ id: info.lastInsertRowid, date });
     }
   })();
 
-  audit.log(req, 'set_availability', 'doctor', doctorId, { added: added.length, start, end });
+  audit.log(req, 'set_availability', 'doctor', doctorId,
+    { added: added.length, start, end, roomId });
   res.status(201).json({ added: added.length, skipped, dates: added });
 }));
 
