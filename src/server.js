@@ -63,6 +63,7 @@ app.use('/api/patients', require('./routes/patients'));
 app.use('/api/enquiries', require('./routes/enquiries'));
 app.use('/api/appointments', require('./routes/appointments'));
 app.use('/api/visits', require('./routes/visits'));
+app.use('/api/queue', require('./routes/queue'));
 app.use('/api/financial', require('./routes/financial'));
 app.use('/api/lab', require('./routes/lab'));
 app.use('/api/prescriptions', require('./routes/prescriptions'));

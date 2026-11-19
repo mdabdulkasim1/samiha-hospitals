@@ -52,8 +52,10 @@ router.get('/departments', wrap((req, res) => {
   res.json(db.prepare(
     `SELECT d.*,
             (SELECT COUNT(*) FROM users u
-              WHERE u.department_id = d.id AND u.role = 'doctor' AND u.active = 1) AS doctor_count
+              WHERE u.department_id = d.id AND u.role = 'doctor' AND u.active = 1) AS doctor_count,
+            q.code AS queue_category_code, q.name AS queue_category_name
        FROM departments d
+       LEFT JOIN queue_categories q ON q.id = d.queue_category_id
       WHERE d.active = 1 AND (? IS NULL OR d.kind = ?)
       ORDER BY d.sort_order, d.name`
   ).all(kind, kind));
@@ -76,10 +78,14 @@ router.get('/staff', wrap((req, res) => {
             d.name AS department_name, dp.doctor_code, dp.qualification, dp.specialization,
             dp.consult_fee, dp.follow_up_fee, dp.slot_minutes, dp.room_no,
             u.password_set_at, u.last_login_at, setter.name AS password_set_by_name,
-            u.erased_at
+            u.erased_at,
+            -- Which consulting room they sit in, so the queue can send
+            -- their patients to the right door without being told twice.
+            u.op_room_id, r.name AS op_room_name, r.floor AS op_room_floor
        FROM users u
        LEFT JOIN users setter ON setter.id = u.password_set_by
        LEFT JOIN departments d ON d.id = u.department_id
+       LEFT JOIN op_rooms r ON r.id = u.op_room_id
        LEFT JOIN doctor_profiles dp ON dp.user_id = u.id
       WHERE (? IS NULL OR u.role = ?)
       ORDER BY u.role, u.name`

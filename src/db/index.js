@@ -151,6 +151,20 @@ function migrate() {
    * of the same name apart at a counter. Kept separate from the emergency
    * contact, which is who to ring and not who somebody is.
    */
+
+  /*
+   * Which queue category a department's patients are called under, and
+   * which room a doctor sits in.
+   *
+   * Both are links to the clinic's own lists rather than facts about the
+   * department or the doctor, and both are nullable on purpose. General and
+   * Internal Medicine share one category, so the link cannot live on the
+   * category; a locum with no fixed room is sent wherever their specialty
+   * sits, so the room cannot be compulsory.
+   */
+  ensureColumn('departments', 'queue_category_id', 'INTEGER REFERENCES queue_categories(id)');
+  ensureColumn('users', 'op_room_id', 'INTEGER REFERENCES op_rooms(id)');
+
   ensureColumn('patients', 'guardian_name', 'TEXT');
   ensureColumn('patients', 'guardian_relation', 'TEXT');
 

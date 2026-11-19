@@ -1873,3 +1873,111 @@ CREATE TABLE IF NOT EXISTS consumable_movements (
 );
 CREATE INDEX IF NOT EXISTS idx_cons_moves ON consumable_movements(item_id, moved_on);
 CREATE INDEX IF NOT EXISTS idx_cons_moves_when ON consumable_movements(moved_on);
+
+-- ===========================================================================
+-- The queue: categories, consulting rooms, and the tokens handed out
+-- ===========================================================================
+
+/*
+ * The clinic's own category list, as it issued it.
+ *
+ * Twenty categories, each with a two-digit code, and a token is that code
+ * and a sequence: 08-001 is the first Paediatrics patient of the day,
+ * 08-002 the next, and 12-001 is the first at the laboratory. The code is
+ * what makes a number spoken in a waiting room mean something — two
+ * counters calling "number 7" tells nobody anything, and 08-007 tells the
+ * right person everything.
+ *
+ * It is a table rather than a list in the code because the clinic will
+ * change it: ENT and Urology are on it before either has a department here,
+ * Oncology is off it, and General and Internal Medicine share one code.
+ * Those are the clinic's decisions about its own front desk.
+ */
+CREATE TABLE IF NOT EXISTS queue_categories (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  -- '01' .. '20'. Text, not a number, because the leading zero is part of
+  -- what is printed and 1-001 is not the token the clinic issued.
+  code       TEXT NOT NULL UNIQUE,
+  name       TEXT NOT NULL,
+  -- 'consult' categories are seen in a consulting room; 'service'
+  -- categories are counters — the lab, the pharmacy, the injection room.
+  kind       TEXT NOT NULL DEFAULT 'consult' CHECK (kind IN ('consult','service')),
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  active     INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+/*
+ * The consulting rooms: two on the ground floor, two on the first.
+ *
+ * Which specialties sit in a room is a separate table, because a room takes
+ * several — four or more — and because it changes when the clinic moves a
+ * clinic around. Nothing about the building is assumed here: the rooms are
+ * entered, and what the patient is told afterwards is read back from them,
+ * so the slip in their hand and the screen on the wall cannot disagree.
+ *
+ * `floor_order` is what the screens sort by, because "First Floor" comes
+ * before "Ground Floor" in the alphabet and after it in the building.
+ */
+CREATE TABLE IF NOT EXISTS op_rooms (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL,                     -- 'OP 1', as painted on the door
+  floor       TEXT NOT NULL,                     -- 'Ground Floor', as a patient says it
+  floor_order INTEGER NOT NULL DEFAULT 0,
+  note        TEXT,
+  active      INTEGER NOT NULL DEFAULT 1,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (floor, name)
+);
+
+/* Which specialties sit in which room. Many per room, by design. */
+CREATE TABLE IF NOT EXISTS op_room_categories (
+  room_id     INTEGER NOT NULL REFERENCES op_rooms(id) ON DELETE CASCADE,
+  category_id INTEGER NOT NULL REFERENCES queue_categories(id) ON DELETE CASCADE,
+  sort_order  INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (room_id, category_id)
+);
+
+/*
+ * A token, as handed over.
+ *
+ * One row per token rather than a number stamped on the visit, because the
+ * clinic's own rule is a separate token for each service a patient goes to:
+ * a child seen in Paediatrics and sent for a blood test holds 08-004 and
+ * then 12-011, and both are real queue positions in different rooms. A
+ * column on the visit could hold one of those two.
+ *
+ * The sequence restarts each morning because it is counted within the issue
+ * date, which means no nightly job can forget to reset it. Past 999 it
+ * simply carries on to 1000, as the clinic's note says.
+ *
+ * `status` is the token's own life, kept here rather than on the visit so
+ * that a service token — a laboratory token with no consultation behind it
+ * — is as callable as any other.
+ */
+CREATE TABLE IF NOT EXISTS queue_tokens (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  category_id  INTEGER NOT NULL REFERENCES queue_categories(id),
+  issue_date   TEXT NOT NULL,                    -- 'YYYY-MM-DD'
+  seq          INTEGER NOT NULL,                 -- 1, 2, 3 … within the category, that day
+  label        TEXT NOT NULL,                    -- '08-001', as printed
+  patient_id   INTEGER REFERENCES patients(id),
+  visit_id     INTEGER REFERENCES visits(id),
+  doctor_id    INTEGER REFERENCES users(id),
+  room_id      INTEGER REFERENCES op_rooms(id),
+  status       TEXT NOT NULL DEFAULT 'waiting'
+                 CHECK (status IN ('waiting','called','serving','done','cancelled')),
+  called_at    TEXT,
+  called_by    INTEGER REFERENCES users(id),
+  call_count   INTEGER NOT NULL DEFAULT 0,
+  passed_at    TEXT,                             -- last time nobody answered
+  serving_at   TEXT,
+  done_at      TEXT,
+  note         TEXT,
+  issued_by    INTEGER REFERENCES users(id),
+  created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (category_id, issue_date, seq)
+);
+CREATE INDEX IF NOT EXISTS idx_queue_tokens_day ON queue_tokens(issue_date, category_id, seq);
+CREATE INDEX IF NOT EXISTS idx_queue_tokens_room ON queue_tokens(issue_date, room_id, status);
+CREATE INDEX IF NOT EXISTS idx_queue_tokens_visit ON queue_tokens(visit_id);

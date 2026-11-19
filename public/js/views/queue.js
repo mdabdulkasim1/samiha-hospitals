@@ -29,28 +29,80 @@
 
   let timer = null;
 
+  const isManagement = () => Boolean(APP.user && ['owner', 'admin'].includes(APP.user.role));
+
   APP.register('queue', {
     title: 'Patient Queue',
-    subtitle: 'Live board — arrival through to exit',
+    subtitle: 'Tokens, the rooms they are called to, and the clinic floor',
 
     async render(el, params) {
       const date = params.date || UI.today();
 
+      /*
+       * Three views of the same morning, in the order somebody at the desk
+       * needs them. "Now calling" is the queue itself — the numbers, who is
+       * next, and the buttons that call them. "Clinic floor" is the older
+       * lane board, which answers a different question: not who is next but
+       * where in the building everybody has got to. Set-up is the rooms and
+       * the category codes, which is a decision about the building and
+       * belongs to admin.
+       */
+      const tabs = {
+        calling: (host) => drawQueue(host, date),
+        floor: (host) => draw(host, date),
+        setup: (host) => drawSetup(host),
+      };
+      const open = tabs[params.tab] && (params.tab !== 'setup' || isManagement())
+        ? params.tab : 'calling';
+
       APP.actions([
         ...(APP.can(['reception']) ? [{ id: 'arrive', label: '+ Patient arrived', kind: '', onClick: () => openArrival() }] : []),
+        ...(APP.can(['reception', 'lab', 'pharmacy', 'nurse']) ? [{ id: 'token', label: 'Issue a token', onClick: () => openIssueToken() }] : []),
+        { id: 'tv', label: 'Waiting-room screen', onClick: () => APP.navigate('display', {}) },
         { id: 'refresh', label: 'Refresh', onClick: () => APP.reload() },
       ]);
 
-      await draw(el, date);
+      el.innerHTML = `
+        <div class="tabs" id="q-tabs">
+          <button data-tab="calling" class="${open === 'calling' ? 'active' : ''}">Now calling</button>
+          <button data-tab="floor" class="${open === 'floor' ? 'active' : ''}">Clinic floor</button>
+          ${isManagement() ? `<button data-tab="setup" class="${open === 'setup' ? 'active' : ''}">Set-up</button>` : ''}
+        </div>
+        <div id="q-body">${UI.loading()}</div>`;
 
-      // Keep the board live without hammering the server.
-      clearInterval(timer);
-      timer = setInterval(() => {
-        if (APP.route !== 'queue') return clearInterval(timer);
-        draw(el, date, true).catch(() => {});
-      }, 20000);
+      const body = el.querySelector('#q-body');
+      el.querySelectorAll('#q-tabs button').forEach((b) => b.addEventListener('click', () => {
+        el.querySelectorAll('#q-tabs button').forEach((x) => x.classList.toggle('active', x === b));
+        clearInterval(timer);
+        body.innerHTML = UI.loading();
+        current = b.dataset.tab;
+        tabs[current](body);
+        live(body, date, tabs, current);
+      }));
+
+      let current = open;
+      await tabs[open](body);
+      live(body, date, tabs, current);
     },
   });
+
+  /*
+   * Keep whichever board is open live without hammering the server. Ten
+   * seconds on the queue, because a receptionist watching for the doctor to
+   * finish should not have to press anything; twenty on the lane board,
+   * which nobody stares at.
+   */
+  function live(body, date, tabs, tab) {
+    clearInterval(timer);
+    if (tab === 'setup') return;
+    timer = setInterval(() => {
+      if (APP.route !== 'queue') return clearInterval(timer);
+      // A modal open over the board means somebody is mid-decision; redrawing
+      // under them would close it.
+      if (document.querySelector('#modal-root .modal')) return;
+      tabs[tab](body).catch(() => {});
+    }, tab === 'calling' ? 10000 : 20000);
+  }
 
   async function draw(el, date, quiet) {
     if (!quiet) el.innerHTML = UI.loading();
@@ -188,7 +240,24 @@
         const values = UI.formValues(e.target);
         const res = await API.post('/api/visits/arrive', { patientId: patient.id, ...values });
         UI.closeModal();
-        UI.ok(`${patient.first_name} added to the queue — token #${res.visit.token_no}.`);
+
+        /*
+         * The slip goes to the printer straight away, because the patient is
+         * standing at the desk now and the number means nothing to them
+         * until it is in their hand. Where the department has no category
+         * yet, the reply says so and the desk is told rather than left
+         * wondering why nothing printed.
+         */
+        if (res.queueToken) {
+          UI.ok(`${patient.first_name} added to the queue — token ${res.queueToken.label}`
+            + `${res.queueToken.room_name ? ` · ${res.queueToken.room_floor}, ${res.queueToken.room_name}` : ''}.`);
+          try { await TokenSlip.printToken(res.queueToken.id); }
+          catch (err) { UI.warn(`Token ${res.queueToken.label} issued, but the slip did not print.`); }
+        } else {
+          UI.ok(`${patient.first_name} added to the queue — token #${res.visit.token_no}.`);
+          if (res.queueNote) UI.warn(res.queueNote);
+        }
+
         if (res.flags && res.flags.mayNeedFinancialHelp) {
           // A note, not a diversion — they carry on to the counter either way.
           UI.warn('Uninsured or changed circumstances — worth offering financial assistance.');
@@ -214,12 +283,21 @@
       body: `
         <div class="row-between mb">
           <div>
-            <span class="badge crimson">Token #${UI.esc(visit.token_no || '—')}</span>
+            ${visit.queueToken
+              ? `<span class="badge crimson">${UI.esc(visit.queueToken.label)}</span>
+                 ${visit.queueToken.room_name
+                   ? `<span class="badge teal">${UI.esc(visit.queueToken.room_floor)} · ${UI.esc(visit.queueToken.room_name)}</span>`
+                   : ''}`
+              : `<span class="badge crimson">Token #${UI.esc(visit.token_no || '—')}</span>`}
             ${UI.statusBadge(visit.status)}
             ${visit.is_new_patient ? UI.badge('New patient', 'crimson') : ''}
             ${visit.screening_due ? UI.badge('Yearly screening due', 'orange') : ''}
           </div>
-          <a class="btn ghost sm" href="#/patients?id=${visit.patient_id}" onclick="UI.closeAllModals()">Open patient record</a>
+          <div class="row-gap">
+            ${APP.can(['reception', 'nurse', 'doctor', 'lab', 'pharmacy'])
+              ? '<button class="btn ghost sm" data-act="slip">Print token slip</button>' : ''}
+            <a class="btn ghost sm" href="#/patients?id=${visit.patient_id}" onclick="UI.closeAllModals()">Open patient record</a>
+          </div>
         </div>
 
         ${visit.allergies ? `<div class="alert danger">⚠ <b>Allergies:</b> ${UI.esc(visit.allergies)}</div>` : ''}
@@ -288,6 +366,16 @@
         `<button class="btn ${a.kind || 'ghost'}" data-act="${a.id}">${UI.esc(a.label)}</button>`).join('') +
         `<button class="btn ghost" data-act="__close">Close</button>`,
       onAction(act) {
+        /*
+         * Reprinting the slip: a patient who has lost theirs, or a second
+         * copy for a relative gone to fetch the car. It is the same token,
+         * never a new one — issuing a second number would put the same
+         * person in the queue twice.
+         */
+        if (act === 'slip') {
+          TokenSlip.printForVisit(visit.id).catch((err) => UI.err(err.message));
+          return 'keep';
+        }
         const action = actions.find((a) => a.id === act);
         if (!action) return;
         action.run(visit);
@@ -446,6 +534,450 @@
     </div>`;
     UI.print(html, `Results page ${p.visit.visit_no}`);
   }
+
+
+  // =======================================================================
+  // "Now calling" — the queue itself
+  // =======================================================================
+
+  /**
+   * One lane per category that has anybody in it today.
+   *
+   * The lane is read top to bottom the way the room works: who is in with
+   * the doctor, who has been called and is walking over, then the line in
+   * the order it will be called. Each waiting row says why it is where it
+   * is — "Booked 10:15", "Walk-in · waiting since 09:50" — because a
+   * receptionist who cannot see the reason overrides the queue, and an
+   * overridden queue is no queue at all.
+   */
+  async function drawQueue(host, date) {
+    const board = await API.get('/api/queue/board' + API.qs({ date }));
+    APP.setSubtitle(`${UI.num(board.totals.issued)} token(s) today · `
+      + `${UI.num(board.totals.waiting)} waiting · ${UI.num(board.totals.done)} seen`);
+
+    if (!board.lanes.length) {
+      host.innerHTML = UI.empty(
+        'No tokens issued today. Record an arrival, or press "Issue a token" for somebody '
+        + 'walking up to a counter.', '🎫');
+      return;
+    }
+
+    host.innerHTML = `<div class="q-lanes">${board.lanes.map(lane).join('')}</div>`;
+    wireQueue(host, date);
+  }
+
+  function lane(l) {
+    const calling = l.called.concat(l.serving);
+    return `<section class="q-lane" data-category="${l.category.id}">
+      <header>
+        <div>
+          <span class="q-code">${UI.esc(l.category.code)}</span>
+          <b>${UI.esc(l.category.name)}</b>
+          ${l.category.kind === 'service' ? UI.badge('Counter', 'teal') : ''}
+        </div>
+        <div class="muted small">${UI.num(l.counts.waiting)} waiting${l.averageMinutes
+          ? ` · about ${UI.num(l.averageMinutes)} min each` : ''}</div>
+      </header>
+
+      <div class="q-now">
+        ${calling.length ? calling.map(nowRow).join('')
+          : '<div class="muted small">Nobody in the room.</div>'}
+      </div>
+
+      ${l.next ? `<div class="q-next">
+        <div><span class="muted small">Next</span> <b>${UI.esc(l.next.label)}</b>
+          <span class="muted small">${UI.esc(l.next.why)}</span></div>
+        ${APP.can(['reception', 'nurse', 'doctor']) ? `<button class="btn sm teal"
+          data-callnext="${l.category.id}">Call next</button>` : ''}
+      </div>` : (l.counts.waiting ? `<div class="q-next">
+        <div class="muted small">Nobody is due yet — the next booking has not come round.</div>
+      </div>` : '')}
+
+      <div class="q-line">${l.queue.map(waitingRow).join('')
+        || '<div class="muted small" style="padding:6px 0">The line is empty.</div>'}</div>
+    </section>`;
+  }
+
+  function nowRow(t) {
+    const label = `<b class="q-label">${UI.esc(t.label)}</b>`;
+    const who = t.patient_name
+      ? `${UI.esc(t.patient_name)}<span class="muted small"> · ${UI.esc(t.uhid || '')}</span>`
+      : '<span class="muted small">No patient attached</span>';
+    return `<div class="q-row ${t.status}" data-token="${t.id}">
+      <div>${label} ${t.status === 'serving' ? UI.badge('In the room', 'teal')
+        : UI.badge(`Called${t.call_count > 1 ? ` ×${t.call_count}` : ''}`, 'orange')}</div>
+      <div class="q-who">${who}${t.room_name
+        ? `<span class="muted small"> · ${UI.esc(t.room_floor || '')} ${UI.esc(t.room_name)}</span>` : ''}</div>
+      <div class="q-acts">
+        ${APP.can(['reception', 'nurse', 'doctor']) ? `
+          ${t.status === 'called' ? `<button class="btn sm ghost" data-act="serving" data-id="${t.id}">Came in</button>
+            <button class="btn sm ghost" data-act="recall" data-id="${t.id}">Call again</button>
+            <button class="btn sm ghost" data-act="pass" data-id="${t.id}">No answer</button>` : ''}
+          <button class="btn sm" data-act="done" data-id="${t.id}">Done</button>` : ''}
+      </div>
+    </div>`;
+  }
+
+  function waitingRow(t) {
+    return `<div class="q-row waiting" data-token="${t.id}">
+      <div><span class="q-pos">${UI.num(t.position)}</span> <b class="q-label">${UI.esc(t.label)}</b>
+        ${t.booked ? UI.badge('Booked', 'teal') : UI.badge('Walk-in', '')}
+        ${t.call_count ? UI.badge('Called before', 'warn') : ''}</div>
+      <div class="q-who">${t.patient_name
+        ? `${UI.esc(t.patient_name)}<span class="muted small"> · ${UI.esc(t.uhid || '')}</span>`
+        : '<span class="muted small">No patient attached</span>'}
+        <span class="muted small"> · ${UI.esc(t.why)}</span></div>
+      <div class="q-acts">
+        ${APP.can(['reception', 'nurse', 'doctor'])
+          ? `<button class="btn sm ${t.callable ? 'teal' : 'ghost'}" data-act="call" data-id="${t.id}">Call</button>` : ''}
+        <button class="btn sm ghost" data-act="slip" data-id="${t.id}">Slip</button>
+        ${t.visit_id ? `<button class="btn sm ghost" data-act="visit" data-id="${t.visit_id}">Visit</button>` : ''}
+      </div>
+    </div>`;
+  }
+
+  function wireQueue(host, date) {
+    host.querySelectorAll('[data-callnext]').forEach((b) => b.addEventListener('click', async () => {
+      b.disabled = true;
+      try {
+        const out = await API.post('/api/queue/call-next', { categoryId: Number(b.dataset.callnext) });
+        UI.ok(`Calling ${out.token.label}.`);
+        drawQueue(host, date);
+      } catch (err) { UI.err(err.message); b.disabled = false; }
+    }));
+
+    host.querySelectorAll('[data-act]').forEach((b) => b.addEventListener('click', async () => {
+      const id = Number(b.dataset.id);
+      try {
+        if (b.dataset.act === 'slip') return void await TokenSlip.printToken(id);
+        if (b.dataset.act === 'visit') return void openVisit(id);
+        if (b.dataset.act === 'pass') return void askPass(id, host, date);
+        b.disabled = true;
+        if (b.dataset.act === 'call' || b.dataset.act === 'recall') {
+          const out = await API.post(`/api/queue/tokens/${id}/call`, {});
+          UI.ok(`Calling ${out.token.label}.`);
+          /*
+           * Taken out of turn: said once, plainly, and not refused. The desk
+           * can see the eight-month pregnant woman standing up; the software
+           * cannot.
+           */
+          if (out.outOfTurn && out.expected) {
+            UI.warn(`Out of turn — ${out.expected.label} was next (${out.expected.why}).`);
+          }
+        } else {
+          await API.post(`/api/queue/tokens/${id}/${b.dataset.act}`, {});
+        }
+        drawQueue(host, date);
+      } catch (err) { UI.err(err.message); b.disabled = false; }
+    }));
+  }
+
+  /** Nobody answered. The reason is offered, not demanded. */
+  function askPass(tokenId, host, date) {
+    UI.modal({
+      title: 'Nobody answered',
+      size: 'narrow',
+      body: `<div class="alert info">They stay in the queue. Their place is counted from now,
+          so the people behind them are not overtaken twice when they come back.</div>
+        <form id="qp-form">${UI.field({ name: 'reason', label: 'Note (optional)',
+          placeholder: 'Did not answer · stepped out · at the pharmacy' })}</form>`,
+      footer: `<button class="btn ghost" data-act="__close">Cancel</button>
+               <button class="btn" data-act="go">Put them back in the queue</button>`,
+      async onAction(act, modal) {
+        if (act !== 'go') return;
+        await API.post(`/api/queue/tokens/${tokenId}/pass`,
+          UI.formValues(modal.querySelector('#qp-form')));
+        UI.closeModal();
+        drawQueue(host, date);
+      },
+    });
+  }
+
+  // =======================================================================
+  // Issuing a token at a counter
+  // =======================================================================
+
+  /**
+   * The button for somebody who walks up to a counter.
+   *
+   * A patient is optional on purpose. The laboratory queue moves faster
+   * than anybody can type a name into it, and a token with no name is still
+   * a fair place in a line — which is the whole job. Where a name is
+   * attached, pressing the button twice returns the same token rather than
+   * issuing a second one and leaving a gap in the queue.
+   */
+  async function openIssueToken(preset) {
+    const cats = (await API.get('/api/queue/categories')).rows;
+    const consult = cats.filter((c) => c.kind === 'consult');
+    const service = cats.filter((c) => c.kind === 'service');
+    const opt = (c) => `<option value="${c.id}">${UI.esc(c.code)} · ${UI.esc(c.name)}</option>`;
+
+    UI.modal({
+      title: 'Issue a token',
+      size: '',
+      body: `
+        <form id="qi-form">
+          <label>Queue
+            <select name="categoryId" required>
+              <option value="">— choose —</option>
+              <optgroup label="Consultations">${consult.map(opt).join('')}</optgroup>
+              <optgroup label="Counters &amp; services">${service.map(opt).join('')}</optgroup>
+            </select>
+          </label>
+          ${UI.field({ name: 'note', label: 'Note (optional)', placeholder: 'e.g. fasting sample' })}
+        </form>
+        <fieldset class="mt"><legend>Patient (optional)</legend>
+          <div class="search-row"><input type="search" id="qi-q" placeholder="Name, UHID or phone…"></div>
+          <div id="qi-pick" class="muted small">No patient attached — the token is just a place in the line.</div>
+          <div id="qi-results"></div>
+        </fieldset>
+        <div id="qi-out"></div>`,
+      footer: `<button class="btn ghost" data-act="__close">Cancel</button>
+               <button class="btn" data-act="issue">Issue &amp; print</button>`,
+      onMount(modal) {
+        if (preset && preset.categoryId) modal.querySelector('[name=categoryId]').value = preset.categoryId;
+        modal.dataset.patient = (preset && preset.patientId) || '';
+        const input = modal.querySelector('#qi-q');
+        let t;
+        input.addEventListener('input', () => {
+          clearTimeout(t);
+          t = setTimeout(async () => {
+            const q = input.value.trim();
+            const out = modal.querySelector('#qi-results');
+            if (q.length < 2) return void (out.innerHTML = '');
+            const res = await API.get('/api/patients' + API.qs({ q, limit: 6 }));
+            out.innerHTML = res.rows.length ? res.rows.map((p) =>
+              `<button type="button" class="btn sm ghost mt" data-p="${p.id}">
+                 ${UI.esc(p.first_name)} ${UI.esc(p.last_name || '')} · ${UI.esc(p.uhid)}</button>`).join(' ')
+              : '<div class="muted small mt">No patient matched.</div>';
+            out.querySelectorAll('[data-p]').forEach((b) => b.addEventListener('click', () => {
+              modal.dataset.patient = b.dataset.p;
+              modal.querySelector('#qi-pick').innerHTML = `<b>${b.textContent.trim()}</b>`;
+              out.innerHTML = '';
+              input.value = '';
+            }));
+          }, 220);
+        });
+      },
+      async onAction(act, modal) {
+        if (act !== 'issue') return;
+        const form = modal.querySelector('#qi-form');
+        if (!form.reportValidity()) return 'keep';
+        const values = UI.formValues(form);
+        try {
+          const token = await API.post('/api/queue/tokens', {
+            ...values, patientId: modal.dataset.patient || null,
+          });
+          UI.closeModal();
+          UI.ok(`Token ${token.label}${token.room_name
+            ? ` — ${token.room_floor}, ${token.room_name}` : ''}.`);
+          await TokenSlip.printToken(token.id);
+          APP.reload();
+        } catch (err) {
+          modal.querySelector('#qi-out').innerHTML = `<div class="alert danger mt">${UI.esc(err.message)}</div>`;
+          return 'keep';
+        }
+      },
+    });
+  }
+
+  // =======================================================================
+  // Set-up: the rooms, and the category codes
+  // =======================================================================
+
+  /**
+   * What the clinic enters once.
+   *
+   * Two things, and the order matters: the category codes, which are what
+   * gets printed on a token, and the rooms, which are where the token sends
+   * people. Everything the patient is told afterwards is read back from
+   * here, so the slip in their hand and the screen on the wall cannot
+   * disagree about which floor Paediatrics is on.
+   */
+  async function drawSetup(host) {
+    const [setup, depts] = await Promise.all([
+      API.get('/api/queue/setup'),
+      API.get('/api/masters/departments'),
+    ]);
+    const doctors = await API.get('/api/masters/staff?role=doctor');
+    const cats = setup.categories;
+
+    host.innerHTML = `
+      <div class="alert info">A token is the category code and a number that starts again each
+        morning — <b>08-001</b> is the day's first Paediatrics patient. Enter which specialties sit
+        in which room, and the room goes on the slip and the waiting-room screen by itself.</div>
+
+      <h3>Consulting rooms</h3>
+      <div class="q-rooms">${setup.rooms.map((r) => roomCard(r, cats, doctors)).join('')}</div>
+      <button class="btn ghost mt" id="q-add-room">+ Add a room</button>
+
+      <h3 class="mt">Category codes</h3>
+      <div id="q-cats"></div>`;
+
+    host.querySelector('#q-cats').innerHTML = UI.table([
+      { label: 'Code', render: (c) => `<span class="q-code">${UI.esc(c.code)}</span>` },
+      { label: 'Queue', key: 'name' },
+      { label: 'Kind', render: (c) => (c.kind === 'service' ? 'Counter' : 'Consultation') },
+      { label: 'Fed by', render: (c) => (c.departments
+        ? UI.esc(c.departments)
+        : '<span class="muted">no department points here yet</span>') },
+      { label: 'Example', render: (c) => `${UI.esc(c.code)}-001` },
+      { label: '', render: (c) => `${c.active ? '' : UI.badge('Off', 'warn')}
+        <button class="btn sm ghost" data-cat="${c.id}">Edit</button>` },
+    ], cats);
+
+    host.querySelector('#q-add-room').addEventListener('click', () => editRoom(null, cats));
+    host.querySelectorAll('[data-cat]').forEach((b) => b.addEventListener('click', () =>
+      editCategory(cats.find((c) => c.id === Number(b.dataset.cat)), depts)));
+    host.querySelectorAll('[data-room]').forEach((b) => b.addEventListener('click', () =>
+      editRoom(setup.rooms.find((r) => r.id === Number(b.dataset.room)), cats)));
+    host.querySelectorAll('[data-room-doc]').forEach((sel) => sel.addEventListener('change', async () => {
+      await API.post(`/api/queue/rooms/${sel.dataset.roomDoc}/doctors`,
+        { doctorId: Number(sel.value) });
+      UI.ok('Saved.');
+      drawSetup(host);
+    }));
+  }
+
+  function roomCard(r, cats, doctors) {
+    const free = doctors.filter((d) => !d.op_room_id || d.op_room_id === r.id);
+    return `<div class="q-room ${r.active ? '' : 'off'}">
+      <header>
+        <div><b>${UI.esc(r.floor)}</b> · ${UI.esc(r.name)} ${r.active ? '' : UI.badge('Off', 'warn')}</div>
+        <button class="btn sm ghost" data-room="${r.id}">Edit</button>
+      </header>
+      <div class="small">${r.categories.length
+        ? r.categories.map((c) => `<span class="q-chip">${UI.esc(c.code)} ${UI.esc(c.name)}</span>`).join(' ')
+        : '<span class="muted">No specialty set — tokens for this room have nowhere to send people.</span>'}</div>
+      <div class="mt small">${r.doctors.length
+        ? `Sitting here: ${r.doctors.map((d) => UI.esc(d.name)).join(', ')}`
+        : '<span class="muted">No doctor fixed to this room.</span>'}</div>
+      <label class="mt small">Add a doctor
+        <select data-room-doc="${r.id}">
+          <option value="">— choose —</option>
+          ${free.filter((d) => d.op_room_id !== r.id).map((d) =>
+            `<option value="${d.id}">${UI.esc(d.name)}</option>`).join('')}
+        </select>
+      </label>
+    </div>`;
+  }
+
+  function editRoom(room, cats) {
+    const chosen = new Set((room ? room.categories : []).map((c) => c.id));
+    UI.modal({
+      title: room ? `${room.floor} · ${room.name}` : 'Add a consulting room',
+      size: '',
+      body: `
+        <form id="qr-form">
+          <div class="grid c2">
+            ${UI.field({ name: 'floor', label: 'Floor', required: true,
+              value: room ? room.floor : '', placeholder: 'Ground Floor' })}
+            ${UI.field({ name: 'name', label: 'Room', required: true,
+              value: room ? room.name : '', placeholder: 'OP 1' })}
+          </div>
+          ${UI.field({ name: 'floorOrder', label: 'Floor order (1 = ground)', type: 'number',
+            value: room ? room.floor_order : 1 })}
+          ${UI.field({ name: 'note', label: 'Note', value: room ? (room.note || '') : '' })}
+        </form>
+        <fieldset><legend>Specialties that sit in this room</legend>
+          <div class="muted small mb">Tick as many as use the room — four or more is normal.</div>
+          <div class="q-pick">${cats.filter((c) => c.kind === 'consult').map((c) =>
+            `<label class="q-tick"><input type="checkbox" value="${c.id}"
+              ${chosen.has(c.id) ? 'checked' : ''}> ${UI.esc(c.code)} ${UI.esc(c.name)}</label>`).join('')}</div>
+        </fieldset>
+        ${room ? `<label class="mt"><input type="checkbox" id="qr-active"
+          ${room.active ? 'checked' : ''}> In use</label>` : ''}
+        <div id="qr-out"></div>`,
+      footer: `<button class="btn ghost" data-act="__close">Cancel</button>
+        ${room ? '<button class="btn ghost" data-act="remove">Remove</button>' : ''}
+        <button class="btn" data-act="save">Save</button>`,
+      async onAction(act, modal) {
+        if (act === 'remove') {
+          const out = await API.del(`/api/queue/rooms/${room.id}`);
+          UI.ok(out.deactivated
+            ? `${room.name} switched off — ${UI.num(out.tokens)} token(s) still point at it.`
+            : `${room.name} removed.`);
+          UI.closeModal();
+          return void APP.reload();
+        }
+        if (act !== 'save') return;
+        const form = modal.querySelector('#qr-form');
+        if (!form.reportValidity()) return 'keep';
+        const body = {
+          ...UI.formValues(form),
+          categories: [...modal.querySelectorAll('.q-pick input:checked')].map((i) => Number(i.value)),
+        };
+        if (room) body.active = modal.querySelector('#qr-active').checked;
+        try {
+          if (room) await API.patch(`/api/queue/rooms/${room.id}`, body);
+          else await API.post('/api/queue/rooms', body);
+          UI.ok('Saved.');
+          UI.closeModal();
+          APP.reload();
+        } catch (err) {
+          modal.querySelector('#qr-out').innerHTML = `<div class="alert danger mt">${UI.esc(err.message)}</div>`;
+          return 'keep';
+        }
+      },
+    });
+  }
+
+  function editCategory(cat, depts) {
+    const mine = new Set(depts.filter((d) => d.queue_category_id === cat.id).map((d) => d.id));
+    UI.modal({
+      title: `${cat.code} · ${cat.name}`,
+      size: '',
+      body: `
+        <form id="qc-form">
+          <div class="grid c2">
+            ${UI.field({ name: 'code', label: 'Code (two digits)', required: true, value: cat.code })}
+            ${UI.field({ name: 'name', label: 'Queue name', required: true, value: cat.name })}
+          </div>
+          <div class="muted small">Tokens will read <b id="qc-eg">${UI.esc(cat.code)}-001</b>,
+            ${UI.esc(cat.code)}-002, and so on, starting again each morning.</div>
+        </form>
+        <fieldset class="mt"><legend>Departments that feed this queue</legend>
+          <div class="muted small mb">A patient arriving under one of these is given a token in this
+            queue automatically. General and Internal Medicine share one code, which is why this is a
+            list rather than a single choice.</div>
+          <div class="q-pick">${depts.map((d) =>
+            `<label class="q-tick"><input type="checkbox" value="${d.id}" ${mine.has(d.id) ? 'checked' : ''}
+              ${d.queue_category_id && d.queue_category_id !== cat.id
+                ? `disabled title="Already on ${UI.esc(String(d.queue_category_code || 'another code'))}"` : ''}>
+              ${UI.esc(d.name)}</label>`).join('')}</div>
+        </fieldset>
+        <label class="mt"><input type="checkbox" id="qc-active" ${cat.active ? 'checked' : ''}> In use</label>
+        <div id="qc-out"></div>`,
+      footer: `<button class="btn ghost" data-act="__close">Cancel</button>
+               <button class="btn" data-act="save">Save</button>`,
+      onMount(modal) {
+        const code = modal.querySelector('[name=code]');
+        code.addEventListener('input', () => {
+          modal.querySelector('#qc-eg').textContent = `${code.value}-001`;
+        });
+      },
+      async onAction(act, modal) {
+        if (act !== 'save') return;
+        const form = modal.querySelector('#qc-form');
+        if (!form.reportValidity()) return 'keep';
+        try {
+          await API.patch(`/api/queue/categories/${cat.id}`, {
+            ...UI.formValues(form),
+            active: modal.querySelector('#qc-active').checked,
+            departments: [...modal.querySelectorAll('.q-pick input:checked')].map((i) => Number(i.value)),
+          });
+          UI.ok('Saved.');
+          UI.closeModal();
+          APP.reload();
+        } catch (err) {
+          modal.querySelector('#qc-out').innerHTML = `<div class="alert danger mt">${UI.esc(err.message)}</div>`;
+          return 'keep';
+        }
+      },
+    });
+  }
+
+  APP.openIssueToken = openIssueToken;
 
   APP.openVisit = openVisit;
 })();

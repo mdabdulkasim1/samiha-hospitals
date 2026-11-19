@@ -955,3 +955,102 @@ tbody tr.panel-head.panel-sub td { background: transparent; border-top: 1px soli
 .pk-item b { font-variant-numeric: tabular-nums; color: var(--ink-2); font-weight: 600; }
 .pk-sum { margin: 9px 0 4px; font-size: 12.6px; line-height: 1.5;
   background: var(--teal-soft); border: 1px solid #CFE4E8; border-radius: 7px; padding: 8px 10px; }
+
+/* ======================================================================
+   The queue: lanes at the desk, the set-up cards, and the television
+   ====================================================================== */
+
+/* One lane per category. Wide enough that a name and a reason fit on one
+   line, because a wrapped reason is a reason nobody reads. */
+.q-lanes { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); }
+.q-lane { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+.q-lane > header { display: flex; justify-content: space-between; align-items: baseline;
+  gap: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--line-2); }
+.q-lane > header b { font-size: 14.5px; }
+
+/* The category code, as it is printed on the token. */
+.q-code { display: inline-block; min-width: 26px; padding: 1px 6px; margin-right: 6px;
+  border-radius: 5px; background: var(--crimson); color: #fff;
+  font-size: 11.5px; font-weight: 700; font-variant-numeric: tabular-nums; text-align: center; }
+
+.q-now { padding: 8px 0; border-bottom: 1px solid var(--line-2); }
+.q-next { display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  padding: 8px 0; border-bottom: 1px solid var(--line-2); }
+.q-line { padding-top: 6px; max-height: 340px; overflow-y: auto; }
+
+.q-row { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; padding: 6px 0;
+  border-bottom: 1px solid var(--line-2); }
+.q-row:last-child { border-bottom: 0; }
+.q-row .q-who { grid-column: 1; font-size: 12.4px; color: var(--ink-2); }
+.q-row .q-acts { grid-row: 1 / span 2; grid-column: 2; align-self: center;
+  display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+.q-row.serving { background: var(--teal-soft); border-radius: 7px; padding: 6px 8px; }
+.q-row.called { background: var(--orange-soft); border-radius: 7px; padding: 6px 8px; }
+.q-label { font-size: 15px; font-variant-numeric: tabular-nums; letter-spacing: .01em; }
+.q-pos { display: inline-block; min-width: 20px; color: var(--ink-3);
+  font-size: 11.5px; font-variant-numeric: tabular-nums; }
+
+/* Set-up: the rooms, and what sits in them. */
+.q-rooms { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+.q-room { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+.q-room.off { opacity: .6; }
+.q-room > header { display: flex; justify-content: space-between; align-items: center;
+  gap: 8px; margin-bottom: 8px; }
+.q-chip { display: inline-block; margin: 2px 2px 0 0; padding: 2px 7px; border-radius: 999px;
+  background: var(--teal-soft); border: 1px solid #CFE4E8; font-size: 11.5px; }
+.q-pick { display: grid; gap: 4px 12px; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+.q-tick { display: flex; align-items: center; gap: 6px; font-size: 12.8px; font-weight: 400; }
+.q-tick input { width: auto; margin: 0; }
+
+/* ---------------------------------------------------------- the television
+   Read from across a room, never operated. Dark, because a waiting room is
+   lit from above and a white screen on a wall is a lamp pointed at people.
+   Sizes are in vw/vh so one page fits a 32-inch screen and a 55-inch one. */
+/* Above the ghosted logo: on a dark panel that tint reads as a smudge across
+   the very number people are trying to read from the back of the room. */
+.tv { background: #0C1418; color: #fff; border-radius: 12px; padding: 2.2vh 2vw 1.6vh;
+  min-height: 72vh; display: flex; flex-direction: column; gap: 1.6vh;
+  position: relative; z-index: 6; }
+.tv-fs { border-radius: 0; height: 100vh; min-height: 100vh; padding: 3vh 3vw; }
+
+.tv-head { display: flex; justify-content: space-between; align-items: baseline; gap: 2vw;
+  border-bottom: 1px solid #22323A; padding-bottom: 1.2vh; }
+.tv-badge { font-size: 2.1vw; font-weight: 800; letter-spacing: .06em; }
+.tv-floor { font-size: 1.7vw; color: #9FB4BD; }
+.tv-clock { font-size: 1.9vw; font-variant-numeric: tabular-nums; color: #9FB4BD; }
+
+/* The newest call, apart from the room panels, so nobody has to scan four
+   boxes to find which one changed. */
+.tv-now { background: #12232A; border: 1px solid #22323A; border-radius: 12px;
+  padding: 1.8vh 2vw; text-align: center; }
+.tv-now-label { font-size: 1.4vw; letter-spacing: .14em; text-transform: uppercase; color: #7FD4C1; }
+.tv-now-number { font-size: 11vw; line-height: 1; font-weight: 800;
+  font-variant-numeric: tabular-nums; margin: .4vh 0; }
+.tv-now-where { font-size: 2.6vw; font-weight: 700; }
+.tv-now-cat { font-size: 1.6vw; color: #9FB4BD; margin-top: .4vh; }
+.tv-idle .tv-now-where { font-weight: 400; color: #9FB4BD; font-size: 1.8vw; }
+
+.tv-grid { display: grid; gap: 1.2vw; grid-template-columns: repeat(auto-fit, minmax(22vw, 1fr)); flex: 1; }
+.tv-room { background: #12232A; border: 1px solid #22323A; border-radius: 12px; padding: 1.4vh 1.2vw; }
+.tv-room.lit { border-color: #2E8B7A; background: #13302C; }
+.tv-room-head { display: flex; justify-content: space-between; align-items: baseline; }
+.tv-room-head b { font-size: 2vw; }
+.tv-room-head span { font-size: 1.2vw; color: #9FB4BD; }
+.tv-room-spec { font-size: 1.15vw; color: #9FB4BD; margin-top: .3vh; min-height: 1.6vh; }
+.tv-room-number { font-size: 5.4vw; line-height: 1.05; font-weight: 800;
+  font-variant-numeric: tabular-nums; }
+.tv-room-cat { font-size: 1.2vw; color: #9FB4BD; }
+.tv-room-next { font-size: 1.25vw; color: #7FD4C1; font-variant-numeric: tabular-nums; margin-top: .4vh; }
+
+.tv-counters { display: grid; gap: 1vw; grid-template-columns: repeat(auto-fit, minmax(14vw, 1fr)); }
+.tv-counter { background: #101D23; border: 1px solid #22323A; border-radius: 10px; padding: .9vh 1vw; }
+.tv-counter-name { font-size: 1.15vw; color: #9FB4BD; }
+.tv-counter-number { font-size: 2.6vw; font-weight: 700; font-variant-numeric: tabular-nums; }
+.tv-counter-next { font-size: 1vw; color: #7FD4C1; font-variant-numeric: tabular-nums; }
+
+.tv-foot { font-size: 1.1vw; color: #6B8290; text-align: center; }
+
+/* The token slip, previewed on screen at roughly its printed size. */
+.tslip-preview { border: 1px solid var(--line); border-radius: 8px; background: #fff;
+  display: inline-block; padding: 4px; }
+.row-gap { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }

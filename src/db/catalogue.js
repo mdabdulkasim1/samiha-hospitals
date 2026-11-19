@@ -65,6 +65,59 @@ function sync({ quiet = false } = {}) {
     upsert('departments', 'code', { code, name, kind, sort_order });
   }
 
+  // ------------------------------------------------------- the queue categories
+  /*
+   * The twenty queue categories the clinic issued, with their codes.
+   *
+   * A token is the code and a daily sequence — 08-001 is the morning's
+   * first Paediatrics patient — so these codes are printed on paper and
+   * read off a wall, and they are the clinic's to set. Only a code the
+   * table has never seen is added: a category renamed, reordered or
+   * switched off stays exactly as the clinic left it.
+   *
+   * The list is not the department list and is not meant to be. ENT and
+   * Urology are on it before either has a doctor here, General and
+   * Internal Medicine share one code, and Oncology is deliberately off it.
+   */
+  for (const [code, name, kind, depts] of require('./queueCategories').CATEGORIES) {
+    const existing = db.prepare('SELECT id FROM queue_categories WHERE code = ?').get(code);
+    const id = existing ? existing.id : db.prepare(
+      'INSERT INTO queue_categories (code, name, kind, sort_order) VALUES (?, ?, ?, ?)')
+      .run(code, name, kind, Number(code)).lastInsertRowid;
+
+    /*
+     * Point the matching departments at it, where they exist and are not
+     * already pointed somewhere. Never repointed: a clinic that has moved
+     * its General Practice patients onto another category meant to.
+     */
+    for (const deptCode of depts) {
+      db.prepare(`UPDATE departments SET queue_category_id = ?
+                   WHERE code = ? AND queue_category_id IS NULL`).run(id, deptCode);
+    }
+  }
+
+  // -------------------------------------------------------- the four OP rooms
+  /*
+   * The building: two consulting rooms on the ground floor, two on the
+   * first, as the clinic described them.
+   *
+   * They are put in empty — no specialties against them — because which
+   * clinics sit in which room is the clinic's own to enter and will change:
+   * a room takes four specialties or more, and they move. What the rooms
+   * being here buys is that admin opens the screen to four rows to fill in
+   * rather than a blank page and a question about what a room record is.
+   */
+  for (const [floor, floor_order, name] of [
+    ['Ground Floor', 1, 'OP 1'], ['Ground Floor', 1, 'OP 2'],
+    ['First Floor', 2, 'OP 1'], ['First Floor', 2, 'OP 2'],
+  ]) {
+    const seen = db.prepare('SELECT id FROM op_rooms WHERE floor = ? AND name = ?').get(floor, name);
+    if (!seen) {
+      db.prepare('INSERT INTO op_rooms (floor, floor_order, name) VALUES (?, ?, ?)')
+        .run(floor, floor_order, name);
+    }
+  }
+
   // ------------------------------------------------------------------- assets
   /*
    * The equipment the clinic bought, from its purchase orders. Matched on the

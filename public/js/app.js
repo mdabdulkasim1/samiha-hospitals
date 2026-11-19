@@ -17,6 +17,12 @@
     { group: 'Front office', items: [
       { id: 'dashboard',   label: 'Dashboard',        icon: '▦', roles: '*' },
       { id: 'queue',       label: 'Patient Queue',    icon: '⛭', roles: '*' },
+      /*
+       * The screen for the televisions in the two waiting rooms. It is in
+       * the menu because somebody has to open it on the television once a
+       * day; it shows numbers and rooms and no names, so any account may.
+       */
+      { id: 'display',     label: 'Waiting-room TV',  icon: '▣', roles: '*' },
       { id: 'enquiries',   label: 'Enquiries',        icon: '☏', roles: ['admin','reception','counselor','cashier'] },
       { id: 'appointments',label: 'Appointments',     icon: '▤', roles: ['admin','reception','nurse','doctor','counselor','cashier'] },
       { id: 'patients',    label: 'Patients',         icon: '☺', roles: '*' },
