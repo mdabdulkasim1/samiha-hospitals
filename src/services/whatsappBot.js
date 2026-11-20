@@ -3,6 +3,7 @@ const { db } = require('../db');
 const config = require('../config');
 const { generate } = require('../lib/ids');
 const scheduling = require('./scheduling');
+const dutyChart = require('./dutyChart');
 const staffAlerts = require('./staffAlerts');
 const whatsapp = require('./whatsapp');
 
@@ -355,15 +356,45 @@ function logEnquiry({ waNumber, patient, subject, notes, followUp = false }) {
   return enquiryNo;
 }
 
+/**
+ * Who is in today, read off the duty chart.
+ *
+ * This used to be two lines of OPD timings typed into the code, which is
+ * the sort of thing that is wrong within a month and wrong in a way nobody
+ * notices: the clinic changes the chart on the wall and the WhatsApp line
+ * keeps promising the old hours. It now answers from the same rota the
+ * appointment book books against, so a patient is told what the desk would
+ * tell them.
+ *
+ * Somebody whose doctor is not in today is told when they next are, because
+ * "not today" on its own is the answer that makes them ring the landline.
+ */
+function todaysDoctors() {
+  const today = scheduling.dateKey(new Date());
+  const duty = dutyChart.onDate(today);
+
+  const sitting = duty.sitting.length
+    ? duty.sitting.map((d) => `• *${d.specialty}* — ${d.doctor}\n   🕒 ${d.hours}`
+      + `${d.room ? `\n   📍 ${d.room}, ${d.floor}` : ''}`).join('\n')
+    : '_No doctor is sitting today._';
+
+  // At most four, and only those we can say something useful about: a wall
+  // of "not in today" is not information.
+  const later = duty.away.filter((d) => d.next).slice(0, 4)
+    .map((d) => `• *${d.specialty}* — ${d.doctor}: ${d.next.day} ${d.next.hours}`);
+
+  return { day: duty.day, date: today, sitting, later };
+}
+
 function clinicInfo() {
-  const departments = departmentsWithDoctors();
+  const duty = todaysDoctors();
   return `*${config.clinic.name}*\n_Care • Compassion • Commitment_\n\n` +
     `📍 ${config.clinic.address}\n☎️ ${config.clinic.whatsappNumber}\n✉️ ${config.clinic.email}\n\n` +
-    `*Specialities*\n${departments.map((d) => `• ${d.name}`).join('\n')}\n\n` +
-    `*Diagnostics*\n• Laboratory  • X-Ray  • Ultrasound (USG)\n\n` +
-    `*OPD timings*\nMon–Sat: 9:00 AM – 1:00 PM and 5:00 PM – 8:00 PM\nSunday: 9:00 AM – 12:00 PM\n\n` +
-    `*Diagnostics*: 7:00 AM – 8:00 PM (fasting samples until 10:00 AM)\n` +
-    `*Pharmacy*: 8:00 AM – 9:00 PM\n*Day care & ward*: 24×7\n\nReply *MENU* for other options.`;
+    `*Doctors in today* (${duty.day})\n${duty.sitting}\n` +
+    (duty.later.length ? `\n*Next in*\n${duty.later.join('\n')}\n` : '') +
+    `\n*Diagnostics*\n• Laboratory  • X-Ray  • Ultrasound (USG)\n` +
+    `*Pharmacy*: 8:00 AM – 9:00 PM\n*Day care & ward*: 24×7\n\n` +
+    `Reply *1* to book an appointment, or *MENU* for other options.`;
 }
 
 // ---------------------------------------------------------------- main router
@@ -495,10 +526,31 @@ function handleIncoming(waNumber, rawText) {
       ctx = { ...ctx, departmentId: dept.id, departmentName: dept.name,
         doctors: doctors.map((d) => ({ id: d.id, name: d.name, qualification: d.qualification,
           specialization: d.specialization, fee: d.consult_fee, slotMinutes: d.slot_minutes })) };
+      /*
+       * Whether each doctor is in today, and when they next are.
+       *
+       * Asked here rather than after the patient has chosen, because "Dr
+       * Nayaki, Tuesday 7–9 PM" is what decides which name they pick. The
+       * answer comes off the duty chart, so it is the same one the desk
+       * would give on the phone.
+       */
+      const todayKey = scheduling.dateKey(new Date());
+      const standing = (id) => {
+        if (scheduling.isOnLeave(id, todayKey)) return '🔴 Not available today (on leave)';
+        const sessions = scheduling.sessionsFor(id, todayKey);
+        if (sessions.length) {
+          return `🟢 Available today ${sessions.map((w) =>
+            `${scheduling.to12h(w.start_time)}–${scheduling.to12h(w.end_time)}`).join(', ')}`;
+        }
+        const next = dutyChart.nextDay(id, todayKey);
+        return next ? `🔸 Next: ${next.day} ${next.hours}` : '🔴 No consulting hours set';
+      };
+
       return respond(
         `👨‍⚕️ *${dept.name}*\n\nPlease choose the doctor number from the list below:\n\n` +
         numbered(ctx.doctors, (d) => `${d.name}${d.qualification ? `\n   _${d.qualification}_` : ''}` +
           `${d.specialization ? `\n   ${d.specialization}` : ''}` +
+          `\n   ${standing(d.id)}` +
           `\n   Consultation ${config.clinic.currencySymbol}${d.fee || 0}`) +
         `\n\nReply with the number.`,
         'book_doctor', ctx);

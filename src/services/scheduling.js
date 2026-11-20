@@ -43,8 +43,7 @@ function sessionsFor(doctorId, dateStr) {
 
   const weekday = parseDateKey(dateStr).getDay();
   return db.prepare(
-    `SELECT id, start_time, end_time, slot_minutes, max_tokens, NULL AS note,
-            NULL AS op_room_id, 'weekly' AS origin
+    `SELECT id, start_time, end_time, slot_minutes, max_tokens, note, op_room_id, 'weekly' AS origin
        FROM doctor_schedules WHERE doctor_id = ? AND weekday = ? AND active = 1 ORDER BY start_time`
   ).all(doctorId, weekday);
 }

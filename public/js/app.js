@@ -92,6 +92,12 @@
       { id: 'workflow',    label: 'Workflow Map',     icon: '⇄', roles: '*' },
       { id: 'staff',       label: 'Staff & Doctors',  icon: '⚕', roles: ['admin'] },
       /*
+       * The duty chart. Admin and the owner edit it; everybody else who has
+       * to answer "when is the dentist in" can read it, which is why it
+       * sits here rather than behind the staff records.
+       */
+      { id: 'schedule',    label: "Doctors' Timing",  icon: '⏱', roles: '*' },
+      /*
        * The owner's own, and this one really is theirs alone — so it carries
        * ownerOnly rather than a role list. APP.can waves an administrator
        * through every role gate, which would have put this in their menu and

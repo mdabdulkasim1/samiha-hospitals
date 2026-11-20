@@ -181,6 +181,17 @@ function migrate() {
    * saying which door is one act at the desk, so it is one row here.
    */
   ensureColumn('doctor_availability', 'op_room_id', 'INTEGER REFERENCES op_rooms(id)');
+  /*
+   * The same two facts on the weekly rota.
+   *
+   * The duty chart the clinic keeps is a weekly pattern — Dr Prathiba sits
+   * in OP-3 from four to nine, Monday to Saturday — and the room belongs to
+   * the pattern rather than to the doctor, because the evening clinic
+   * upstairs and the morning one downstairs are the same doctor. `note` is
+   * for what the chart's own cells carry: "alternate weeks", "camp day".
+   */
+  ensureColumn('doctor_schedules', 'op_room_id', 'INTEGER REFERENCES op_rooms(id)');
+  ensureColumn('doctor_schedules', 'note', 'TEXT');
 
   /*
    * The asset's own code, the one printed on the sticker stuck to the thing
