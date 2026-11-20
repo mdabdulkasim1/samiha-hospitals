@@ -34,33 +34,20 @@
   const mayEdit = () => isManagement() || APP.can(['reception']);
 
   /*
-   * How big the television actually is.
+   * The screens are 32-inch sets, so that is what everything here is sized
+   * for and there is nothing to choose.
    *
-   * A 32-inch set in a small waiting room is usually 1366 × 768 — fewer
-   * pixels across than a laptop — while a 55-inch set is 1920 × 1080. Sized
-   * from the screen alone, the small television would show the smaller
-   * numbers, which is exactly backwards: both are read from across the same
-   * room, and the physically smaller one needs the bigger type.
+   * A 32-inch panel is usually 1366 × 768 — fewer pixels across than a
+   * laptop — and it is read from the far side of the same waiting room as
+   * any larger one, so it needs the bigger type rather than the smaller.
+   * Every size on the screen is a multiple of one unit (--u in app.css)
+   * that mixes the viewport's width and height, so a set that turns out to
+   * be 1920 × 1080 simply draws the same layout larger.
    *
-   * So whoever hangs it says what it is, once. The answer is kept in that
-   * television's own browser, because it is a fact about that television
-   * and not about the clinic — the desk's screen and the two wall sets can
-   * each be set differently and none of it travels to the others.
+   * Six lines, because a television cannot be scrolled: a seventh row only
+   * shrinks the numbers that are the whole point.
    */
-  const SIZES = [
-    { id: '32', label: '32-inch', zoom: 1.3, rows: 6 },
-    { id: '43', label: '43-inch', zoom: 1.12, rows: 7 },
-    { id: '55', label: '55-inch +', zoom: 1, rows: 9 },
-  ];
-  const sizeKey = 'samiha.tv.size';
-  const screenSize = () => SIZES.find((s) => s.id === readSize()) || SIZES[2];
-
-  function readSize() {
-    try { return localStorage.getItem(sizeKey) || '55'; } catch { return '55'; }
-  }
-  function writeSize(id) {
-    try { localStorage.setItem(sizeKey, id); } catch { /* private window; this screen still works */ }
-  }
+  const TV_ROWS = 6;
 
   APP.register('display', {
     title: 'Waiting-room screen',
@@ -94,11 +81,9 @@
           ${floors.map((f) => `<button class="btn ${f === floor ? '' : 'ghost'}"
             data-floor="${UI.esc(f)}">${UI.esc(f)}</button>`).join('')}
           <button class="btn ${floor === '' ? '' : 'ghost'}" data-floor="">All floors</button>
-          <span class="muted small" style="align-self:center;margin-left:10px">Screen</span>
-          ${SIZES.map((sz) => `<button class="btn sm ${sz.id === readSize() ? '' : 'ghost'}"
-            data-size="${sz.id}">${UI.esc(sz.label)}</button>`).join('')}
           <span class="muted small" style="align-self:center">
-            Set this on the television itself, then press Full screen. It refreshes itself.</span>
+            Laid out for the 32-inch screens. Press Full screen on the television —
+            it refreshes itself.</span>
         </div>
         <div class="tv" id="tv"></div>`;
 
@@ -106,15 +91,6 @@
         APP.navigate('display', { floor: b.dataset.floor })));
 
       const host = el.querySelector('#tv');
-      el.querySelectorAll('[data-size]').forEach((b) => b.addEventListener('click', () => {
-        writeSize(b.dataset.size);
-        el.querySelectorAll('[data-size]').forEach((x) =>
-          x.classList.toggle('ghost', x.dataset.size !== b.dataset.size));
-        applySize(host);
-        paint(host, floor).catch(() => {});
-      }));
-
-      applySize(host);
       await paint(host, floor);
 
       /*
@@ -140,7 +116,7 @@
      * the type until the numbers stop being readable from the back of the
      * room, which is the one thing this screen has to do.
      */
-    const rows = tableRows(d).slice(0, screenSize().rows);
+    const rows = tableRows(d).slice(0, TV_ROWS);
     const newest = rows.filter((r) => r.at).sort((a, b) =>
       String(b.at).localeCompare(String(a.at)))[0] || null;
 
@@ -311,11 +287,6 @@
     show(slideAt);
   }
 
-  /** The one number every size on the screen is a multiple of. */
-  function applySize(host) {
-    if (host) host.style.setProperty('--tv-zoom', String(screenSize().zoom));
-  }
-
   const adFallback = () => `<div class="tv-ad-none">
     <img class="tv-ad-logo" src="/assets/logo.svg" alt="">
     <div class="tv-ad-badge">SAMIHA HEALTHCARE</div>
@@ -370,9 +341,11 @@
       body: `
         <div class="alert info">A picture — JPEG or PNG, up to 6 MB — sits on the right half of
           the television beside the numbers, and several take turns.
-          <b>Design it slightly taller than wide, about 8:9</b> — 1200 × 1350 px is a good size,
-          1600 × 1800 for a sharper screen. The whole picture is always shown, never cropped, so
-          any other shape simply sits inside that space with a margin.</div>
+          <b>Design it nearly square, a touch taller than wide — 1200 × 1280 px.</b>
+          On the clinic's 32-inch screens that half measures about 557 × 594 points, so 1200 × 1280
+          prints sharp with room to spare. The whole picture is always shown, never cropped, so
+          any other shape simply sits inside that space with a margin — keep the price and the
+          phone number away from the last few millimetres in case a set overscans.</div>
 
         <div class="sl-bar">
           <label class="sl-all"><input type="checkbox" id="sl-check-all"> Select all</label>

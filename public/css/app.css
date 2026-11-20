@@ -1015,17 +1015,19 @@ tbody tr.panel-head.panel-sub td { background: transparent; border-top: 1px soli
    Dark ground, because a waiting room is lit from above and a white screen
    on a wall is a lamp pointed at the people sitting under it.
 
-   EVERY SIZE HERE IS A MULTIPLE OF --u, and that is the important part. A
-   32-inch set in a small waiting room is usually 1366 × 768, and sizing in
-   vw alone would shrink every number on it to two-thirds of what the same
-   page shows on a 55-inch screen — exactly backwards, since the small
-   screen is the one whose characters need help. --u mixes width and height
-   so the type follows the shape of the screen, and --tv-zoom lets whoever
-   hangs the television say how big it actually is. The rule of thumb being
-   met: a character wants about one centimetre of height for every three
-   metres somebody reads it from. */
+   EVERY SIZE HERE IS A MULTIPLE OF --u, and that is the important part. The
+   clinic's sets are 32-inch, usually 1366 × 768 — fewer pixels across than
+   a laptop — and they are read from the far side of the same room as any
+   larger screen, so they need the bigger type rather than the smaller.
+   Sizing in vw alone would have given them two-thirds of what a 55-inch
+   screen shows, which is exactly backwards. --u mixes width and height so
+   the layout follows the shape of the screen, and the zoom is set for the
+   size the clinic actually hung. The rule of thumb being met: a character
+   wants about one centimetre of height for every three metres somebody
+   reads it from. */
 .tv {
-  --tv-zoom: 1;
+  /* The clinic's sets are 32-inch, which is the size this is drawn for. */
+  --tv-zoom: 1.3;
   --u: calc((0.62vw + 0.55vh) * var(--tv-zoom));
   background: linear-gradient(165deg, #0F4C58 0%, #0B3D47 58%, #10343C 100%);
   color: #fff; border-radius: 12px; padding: calc(1.1 * var(--u)) calc(1.2 * var(--u));
