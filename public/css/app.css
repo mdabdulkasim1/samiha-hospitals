@@ -1120,10 +1120,26 @@ tbody tr.panel-head.panel-sub td { background: transparent; border-top: 1px soli
 
 /* The posters, as the clinic manages them. */
 .sl-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
-.sl-card { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--surface); }
+.sl-card { border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
+  background: var(--surface); position: relative; }
 .sl-card.off { opacity: .55; }
+/* The ones actually on the wall this minute, so the library reads at a
+   glance rather than by working the dates out. */
+.sl-card.live { border-color: var(--ok); box-shadow: 0 0 0 1px var(--ok) inset; }
 .sl-card img { width: 100%; height: 150px; object-fit: contain; background: var(--bg); display: block; }
 .sl-meta { padding: 8px 10px; }
+.sl-when { color: var(--teal); font-variant-numeric: tabular-nums; }
+.sl-pick { position: absolute; top: 6px; left: 6px; background: #fff; border: 1px solid var(--line);
+  border-radius: 6px; padding: 3px 5px; line-height: 0; }
+.sl-pick input { width: auto; margin: 0; }
+
+/* One row of buttons over the whole library: tick what should change, then
+   say what to do with it. A campaign is a set of posters, not one. */
+.sl-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 10px; margin-bottom: 10px; border: 1px solid var(--line);
+  border-radius: 9px; background: var(--bg); position: sticky; top: 0; z-index: 2; }
+.sl-all { display: flex; align-items: center; gap: 6px; font-size: 12.8px; font-weight: 600; }
+.sl-all input { width: auto; margin: 0; }
 
 
 

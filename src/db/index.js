@@ -171,6 +171,21 @@ function migrate() {
    * have to tell a patient which floor to walk to.
    */
   ensureColumn('queue_categories', 'location', 'TEXT');
+
+  /*
+   * When a poster plays.
+   *
+   * The clinic's posters are campaigns — an opening offer that runs from
+   * the 29th to the 10th, a doctor's evening clinic that is only worth
+   * announcing in the evening — so the library keeps many and each one
+   * carries the dates it runs between and the hours of the day it is worth
+   * showing. All four are optional: a poster with none set plays whenever
+   * it is switched on, which is what most of them do.
+   */
+  ensureColumn('display_slides', 'from_date', 'TEXT');
+  ensureColumn('display_slides', 'to_date', 'TEXT');
+  ensureColumn('display_slides', 'from_time', 'TEXT');
+  ensureColumn('display_slides', 'to_time', 'TEXT');
   /*
    * The room a doctor sits in for one set of hours.
    *

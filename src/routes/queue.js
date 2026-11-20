@@ -16,6 +16,7 @@
  */
 const express = require('express');
 const { db } = require('../db');
+const clinicClock = require('../lib/clinicClock');
 const { wrap, badRequest } = require('../lib/http');
 const { requireRole } = require('../lib/auth');
 const { str, int, bool } = require('../lib/validate');
@@ -263,6 +264,38 @@ const slideBody = express.json({ limit: '8mb' });
 const MAX_SLIDE = 6 * 1024 * 1024;
 const SLIDE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 
+const SLIDE_COLS = `id, title, mime, bytes, seconds, floor, sort_order, active,
+                    from_date, to_date, from_time, to_time, created_at`;
+
+/**
+ * Is this poster in its window right now?
+ *
+ * Two windows, both optional and both answering a different question. The
+ * dates are the campaign — an opening offer that runs from the 29th to the
+ * 10th stops on the 11th without anybody remembering to take it down. The
+ * times are the hours of the day it is worth showing: a poster for an
+ * evening clinic is noise at nine in the morning.
+ *
+ * A window that runs past midnight (21:00 to 06:00) is read as the clinic
+ * would read it — through the night — rather than as an empty span.
+ */
+function playingNow(slide, at = new Date()) {
+  if (!slide.active) return false;
+  const today = clinicClock.dateKey(at);
+  if (slide.from_date && today < slide.from_date) return false;
+  if (slide.to_date && today > slide.to_date) return false;
+
+  if (slide.from_time && slide.to_time) {
+    const now = clinicClock.clockHHMM(at);
+    return slide.from_time <= slide.to_time
+      ? (now >= slide.from_time && now < slide.to_time)
+      : (now >= slide.from_time || now < slide.to_time);
+  }
+  if (slide.from_time && clinicClock.clockHHMM(at) < slide.from_time) return false;
+  if (slide.to_time && clinicClock.clockHHMM(at) >= slide.to_time) return false;
+  return true;
+}
+
 /*
  * Which posters play on this screen.
  *
@@ -271,24 +304,35 @@ const SLIDE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
  * what the clinic's televisions all show — carries everything: a poster
  * pinned to the first floor would otherwise be invisible on the only board
  * anybody is looking at.
+ *
+ * Whatever the floor, only the ones inside their dates and hours play. The
+ * clinic keeps a library and the screen shows today's part of it.
  */
-const slideList = (floor) => (floor
-  ? db.prepare(
-    `SELECT id, title, mime, bytes, seconds, floor, sort_order, active, created_at
-       FROM display_slides
-      WHERE active = 1 AND (floor IS NULL OR floor = ?)
-      ORDER BY sort_order, id`).all(floor)
-  : db.prepare(
-    `SELECT id, title, mime, bytes, seconds, floor, sort_order, active, created_at
-       FROM display_slides WHERE active = 1 ORDER BY sort_order, id`).all());
+const slideList = (floor, at = new Date()) => db.prepare(
+  `SELECT ${SLIDE_COLS} FROM display_slides
+    WHERE active = 1 ${floor ? 'AND (floor IS NULL OR floor = ?)' : ''}
+    ORDER BY sort_order, id`).all(...(floor ? [floor] : []))
+  .filter((s) => playingNow(s, at));
 
+/**
+ * The whole library, with what is playing now marked.
+ *
+ * The clinic keeps far more posters than are up at any moment — last
+ * month's offer, next month's camp — so the management screen lists them
+ * all and says which are on the wall this minute. That is the one thing
+ * somebody standing at the desk cannot work out by reading dates.
+ */
 router.get('/slides', anyone, wrap((req, res) => {
+  const now = new Date();
   res.json({
+    now: clinicClock.wallAt(now),
     rows: db.prepare(
       `SELECT s.id, s.title, s.mime, s.bytes, s.seconds, s.floor, s.sort_order, s.active,
-              s.created_at, u.name AS uploaded_by_name
+              s.from_date, s.to_date, s.from_time, s.to_time, s.created_at,
+              u.name AS uploaded_by_name
          FROM display_slides s LEFT JOIN users u ON u.id = s.uploaded_by
-        ORDER BY s.sort_order, s.id`).all(),
+        ORDER BY s.sort_order, s.id`).all()
+      .map((s) => ({ ...s, playing: playingNow(s, now) })),
   });
 }));
 
@@ -301,6 +345,31 @@ router.get('/slides/:id/image', anyone, wrap((req, res) => {
   res.setHeader('Cache-Control', 'private, max-age=3600');
   res.end(row.content);
 }));
+
+const isDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
+const isClock = (v) => /^([01]\d|2[0-3]):[0-5]\d$/.test(String(v || ''));
+
+/** The four window fields, read off a request and checked. */
+function windowFields(body) {
+  const out = {};
+  for (const [key, col, ok, what] of [
+    ['fromDate', 'from_date', isDate, 'a date (YYYY-MM-DD)'],
+    ['toDate', 'to_date', isDate, 'a date (YYYY-MM-DD)'],
+    ['fromTime', 'from_time', isClock, 'a time (HH:MM)'],
+    ['toTime', 'to_time', isClock, 'a time (HH:MM)'],
+  ]) {
+    if (body[key] === undefined) continue;
+    const value = str(body[key]);
+    // Empty clears it, which is how "no limit" is said.
+    if (!value) { out[col] = null; continue; }
+    if (!ok(value)) throw badRequest(`${key} should be ${what}.`);
+    out[col] = value;
+  }
+  if (out.from_date && out.to_date && out.to_date < out.from_date) {
+    throw badRequest('The poster\'s last day is before its first.');
+  }
+  return out;
+}
 
 router.post('/slides', deskRoles, slideBody, wrap((req, res) => {
   const data = String(req.body.data || '');
@@ -317,13 +386,17 @@ router.post('/slides', deskRoles, slideBody, wrap((req, res) => {
       + `Save it smaller — up to ${MAX_SLIDE / 1048576} MB.`);
   }
 
+  const win = windowFields(req.body);
   const next = db.prepare('SELECT COALESCE(MAX(sort_order), 0) + 1 AS n FROM display_slides').get().n;
   const info = db.prepare(
-    `INSERT INTO display_slides (title, mime, bytes, content, seconds, floor, sort_order, uploaded_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO display_slides (title, mime, bytes, content, seconds, floor, sort_order,
+       from_date, to_date, from_time, to_time, uploaded_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(str(req.body.title) || null, mime, content.length, content,
     Math.min(Math.max(int(req.body.seconds) || 12, 3), 120),
-    str(req.body.floor) || null, next, req.user.id);
+    str(req.body.floor) || null, next,
+    win.from_date || null, win.to_date || null, win.from_time || null, win.to_time || null,
+    req.user.id);
 
   audit.log(req, 'queue.slide.add', 'display_slide', info.lastInsertRowid,
     { title: str(req.body.title), bytes: content.length });
@@ -344,12 +417,55 @@ router.patch('/slides/:id', deskRoles, wrap((req, res) => {
   if (req.body.floor !== undefined) { sets.push('floor = ?'); args.push(str(req.body.floor) || null); }
   if (req.body.sortOrder !== undefined) { sets.push('sort_order = ?'); args.push(int(req.body.sortOrder) || 0); }
   if (req.body.active !== undefined) { sets.push('active = ?'); args.push(bool(req.body.active) ? 1 : 0); }
+  for (const [col, value] of Object.entries(windowFields(req.body))) {
+    sets.push(`${col} = ?`);
+    args.push(value);
+  }
   if (!sets.length) throw badRequest('Nothing to change.');
   db.prepare(`UPDATE display_slides SET ${sets.join(', ')} WHERE id = ?`).run(...args, id);
   audit.log(req, 'queue.slide.update', 'display_slide', id, req.body);
   res.json(db.prepare(
     'SELECT id, title, mime, bytes, seconds, floor, sort_order, active FROM display_slides WHERE id = ?')
     .get(id));
+}));
+
+/**
+ * The same change to everything that was ticked.
+ *
+ * The clinic puts up a set of posters for a campaign and takes the set
+ * down again, so the dates, the hours and the on-and-off switch are things
+ * done to several at once. One call rather than one per poster, so the
+ * screen cannot be left half-changed.
+ */
+router.post('/slides/bulk', deskRoles, wrap((req, res) => {
+  const ids = [...new Set((req.body.ids || []).map(Number).filter(Boolean))];
+  if (!ids.length) throw badRequest('Tick the posters first.');
+  const holes = ids.map(() => '?').join(',');
+
+  if (str(req.body.action) === 'remove') {
+    const { changes } = db.prepare(`DELETE FROM display_slides WHERE id IN (${holes})`).run(...ids);
+    audit.log(req, 'queue.slide.remove', 'display_slide', null, { ids, removed: changes });
+    return res.json({ removed: changes });
+  }
+
+  const sets = [];
+  const args = [];
+  if (req.body.active !== undefined) { sets.push('active = ?'); args.push(bool(req.body.active) ? 1 : 0); }
+  if (req.body.seconds !== undefined) {
+    sets.push('seconds = ?');
+    args.push(Math.min(Math.max(int(req.body.seconds) || 12, 3), 120));
+  }
+  if (req.body.floor !== undefined) { sets.push('floor = ?'); args.push(str(req.body.floor) || null); }
+  for (const [col, value] of Object.entries(windowFields(req.body))) {
+    sets.push(`${col} = ?`);
+    args.push(value);
+  }
+  if (!sets.length) throw badRequest('Nothing to change.');
+
+  const { changes } = db.prepare(
+    `UPDATE display_slides SET ${sets.join(', ')} WHERE id IN (${holes})`).run(...args, ...ids);
+  audit.log(req, 'queue.slide.update', 'display_slide', null, { ids, changed: changes });
+  res.json({ changed: changes });
 }));
 
 router.delete('/slides/:id', deskRoles, wrap((req, res) => {

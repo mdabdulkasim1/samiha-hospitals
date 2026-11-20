@@ -362,7 +362,6 @@
    * touching this system's code.
    */
   async function openSlides() {
-    const { rows } = await API.get('/api/queue/slides');
     const floors = (await API.get('/api/queue/display')).floors;
 
     UI.modal({
@@ -374,37 +373,56 @@
           <b>Design it slightly taller than wide, about 8:9</b> — 1200 × 1350 px is a good size,
           1600 × 1800 for a sharper screen. The whole picture is always shown, never cropped, so
           any other shape simply sits inside that space with a margin.</div>
-        <div id="sl-list">${slideCards(rows)}</div>
+
+        <div class="sl-bar">
+          <label class="sl-all"><input type="checkbox" id="sl-check-all"> Select all</label>
+          <span class="muted small" id="sl-count">none selected</span>
+          <span style="flex:1"></span>
+          <button class="btn sm ghost" data-bulk="on">Put on the screen</button>
+          <button class="btn sm ghost" data-bulk="off">Take off</button>
+          <button class="btn sm" data-bulk="when">Set dates &amp; times…</button>
+          <button class="btn sm ghost" data-bulk="remove">Remove</button>
+        </div>
+
+        <div id="sl-list">${UI.loading()}</div>
+
         <fieldset class="mt"><legend>Add a poster</legend>
           <form id="sl-form">
             <input type="file" id="sl-file" accept="image/jpeg,image/png,image/webp,image/gif">
             <div class="grid c3 mt">
-              ${UI.field({ name: 'title', label: 'What it is', placeholder: 'Sunday wellness package' })}
+              ${UI.field({ name: 'title', label: 'What it is', placeholder: 'Opening offer — ₹300 package' })}
               ${UI.field({ name: 'seconds', label: 'Seconds on screen', type: 'number', value: 12, min: 3, max: 120 })}
               ${UI.field({ name: 'floor', label: 'Which screen',
-    options: [{ value: '', label: 'Both floors' }].concat(floors.map((f) => ({ value: f, label: f }))) })}
+    options: [{ value: '', label: 'Every screen' }].concat(floors.map((f) => ({ value: f, label: f }))) })}
             </div>
+            <div class="grid c4">
+              ${UI.field({ name: 'fromDate', label: 'Runs from', type: 'date' })}
+              ${UI.field({ name: 'toDate', label: 'Until', type: 'date' })}
+              ${UI.field({ name: 'fromTime', label: 'From (time of day)', type: 'time' })}
+              ${UI.field({ name: 'toTime', label: 'Until (time of day)', type: 'time' })}
+            </div>
+            <div class="muted small">Leave the dates and times empty and it plays whenever it is
+              on the screen.</div>
           </form>
           <div id="sl-out"></div>
         </fieldset>`,
       footer: `<button class="btn ghost" data-act="__close">Close</button>
                <button class="btn" data-act="add">Add the poster</button>`,
-      onMount(modal) { wireSlides(modal); },
+      async onMount(modal) { await refreshSlides(modal); },
       async onAction(act, modal) {
         if (act !== 'add') return;
         const file = modal.querySelector('#sl-file').files[0];
         if (!file) { UI.err('Choose an image first.'); return 'keep'; }
         const v = UI.formValues(modal.querySelector('#sl-form'));
         try {
-          const data = await readFile(file);
           await API.post('/api/queue/slides', {
-            data, title: v.title || file.name, seconds: v.seconds, floor: v.floor,
+            data: await readFile(file), title: v.title || file.name, seconds: v.seconds,
+            floor: v.floor, fromDate: v.fromDate, toDate: v.toDate,
+            fromTime: v.fromTime, toTime: v.toTime,
           });
           UI.ok('Poster added.');
-          const fresh = await API.get('/api/queue/slides');
-          modal.querySelector('#sl-list').innerHTML = slideCards(fresh.rows);
           modal.querySelector('#sl-file').value = '';
-          wireSlides(modal);
+          await refreshSlides(modal);
           return 'keep';
         } catch (err) {
           modal.querySelector('#sl-out').innerHTML = `<div class="alert danger mt">${UI.esc(err.message)}</div>`;
@@ -414,43 +432,145 @@
     });
   }
 
-  const slideCards = (rows) => (rows.length
-    ? `<div class="sl-grid">${rows.map((s) => `
-        <div class="sl-card ${s.active ? '' : 'off'}">
-          <img data-poster="${s.id}" alt="">
-          <div class="sl-meta">
-            <b>${UI.esc(s.title || 'Untitled')}</b>
-            <div class="muted small">${UI.esc(s.seconds)}s · ${UI.esc(s.floor || 'both floors')}
-              · ${UI.esc((s.bytes / 1024).toFixed(0))} KB</div>
-            <div class="mt">
-              <button class="btn ghost sm" data-slide-toggle="${s.id}" data-on="${s.active}">
-                ${s.active ? 'Take it off' : 'Put it back'}</button>
-              <button class="btn ghost sm" data-slide-del="${s.id}">Remove</button>
-            </div>
-          </div>
-        </div>`).join('')}</div>`
-    : UI.empty('No posters yet — the other half of the screen carries the clinic name.', '🖼'));
+  /**
+   * The library, with what is on the wall this minute marked.
+   *
+   * The clinic keeps far more posters than are up at any moment — last
+   * month's offer, next month's camp — so the list is everything it holds
+   * and the badge says which are playing. Dates alone cannot be read at a
+   * glance to work that out.
+   */
+  async function refreshSlides(modal) {
+    const { rows } = await API.get('/api/queue/slides');
+    modal.querySelector('#sl-list').innerHTML = rows.length
+      ? `<div class="sl-grid">${rows.map(slideCard).join('')}</div>`
+      : UI.empty('No posters yet — the other half of the screen carries the clinic name.', '🖼');
+    wireSlides(modal, rows);
+  }
 
-  function wireSlides(modal) {
-    // Thumbnails are fetched the same way the screen fetches the poster.
+  const windowText = (s) => {
+    const bits = [];
+    if (s.from_date || s.to_date) {
+      bits.push(`${s.from_date ? UI.date(s.from_date) : 'any day'} – ${s.to_date ? UI.date(s.to_date) : 'no end'}`);
+    }
+    if (s.from_time || s.to_time) {
+      bits.push(`${s.from_time ? UI.to12h(s.from_time) : 'all day'} – ${s.to_time ? UI.to12h(s.to_time) : 'close'}`);
+    }
+    return bits.join(' · ');
+  };
+
+  const slideCard = (s) => `
+    <div class="sl-card ${s.active ? '' : 'off'} ${s.playing ? 'live' : ''}">
+      <label class="sl-pick"><input type="checkbox" data-pick="${s.id}"></label>
+      <img data-poster="${s.id}" alt="">
+      <div class="sl-meta">
+        <b>${UI.esc(s.title || 'Untitled')}</b>
+        <div class="muted small">${UI.esc(s.seconds)}s · ${UI.esc(s.floor || 'every screen')}
+          · ${UI.esc((s.bytes / 1024).toFixed(0))} KB</div>
+        ${windowText(s) ? `<div class="small sl-when">${UI.esc(windowText(s))}</div>` : ''}
+        <div class="mt">${s.playing ? UI.badge('On the screen now', 'ok')
+    : UI.badge(s.active ? 'Waiting for its dates' : 'Off', s.active ? 'warn' : '')}</div>
+      </div>
+    </div>`;
+
+  function wireSlides(modal, rows) {
+    const picked = () => [...modal.querySelectorAll('[data-pick]:checked')].map((i) => Number(i.dataset.pick));
+    const count = () => {
+      const n = picked().length;
+      modal.querySelector('#sl-count').textContent = n ? `${n} selected` : 'none selected';
+    };
+
     modal.querySelectorAll('[data-poster]').forEach(async (img) => {
       try { img.src = await posterUrl(Number(img.dataset.poster)); } catch { img.remove(); }
     });
+    modal.querySelectorAll('[data-pick]').forEach((i) => i.addEventListener('change', count));
 
-    const refresh = async () => {
-      const fresh = await API.get('/api/queue/slides');
-      modal.querySelector('#sl-list').innerHTML = slideCards(fresh.rows);
-      wireSlides(modal);
+    const all = modal.querySelector('#sl-check-all');
+    all.checked = false;
+    all.onchange = () => {
+      modal.querySelectorAll('[data-pick]').forEach((i) => { i.checked = all.checked; });
+      count();
     };
-    modal.querySelectorAll('[data-slide-toggle]').forEach((b) => b.addEventListener('click', async () => {
-      await API.patch(`/api/queue/slides/${b.dataset.slideToggle}`, { active: b.dataset.on !== '1' });
-      await refresh();
-    }));
-    modal.querySelectorAll('[data-slide-del]').forEach((b) => b.addEventListener('click', async () => {
-      await API.del(`/api/queue/slides/${b.dataset.slideDel}`);
-      UI.ok('Poster removed.');
-      await refresh();
-    }));
+    count();
+
+    modal.querySelectorAll('[data-bulk]').forEach((b) => {
+      b.onclick = async () => {
+        const ids = picked();
+        if (!ids.length) return UI.err('Tick the posters first.');
+        const what = b.dataset.bulk;
+        if (what === 'when') return setWindow(modal, ids, rows);
+        if (what === 'remove') {
+          return UI.modal({
+            title: `Remove ${ids.length} poster(s)?`,
+            size: 'narrow',
+            body: '<div class="alert warn">The pictures are deleted. Taking them off the screen '
+              + 'instead keeps them for next time.</div>',
+            footer: `<button class="btn ghost" data-act="__close">Cancel</button>
+                     <button class="btn" data-act="go">Remove them</button>`,
+            async onAction(act) {
+              if (act !== 'go') return;
+              await API.post('/api/queue/slides/bulk', { ids, action: 'remove' });
+              UI.closeModal();
+              UI.ok(`${ids.length} poster(s) removed.`);
+              await refreshSlides(modal);
+            },
+          });
+        }
+        await API.post('/api/queue/slides/bulk', { ids, active: what === 'on' });
+        UI.ok(`${ids.length} poster(s) ${what === 'on' ? 'put on the screen' : 'taken off'}.`);
+        await refreshSlides(modal);
+      };
+    });
+  }
+
+  /**
+   * Dates and hours for everything ticked.
+   *
+   * A campaign is a set of posters with one set of dates, so they are given
+   * it together — and an offer that ends on the 10th comes down on the 11th
+   * without anybody having to remember.
+   */
+  function setWindow(modal, ids, rows) {
+    const first = rows.find((r) => r.id === ids[0]) || {};
+    UI.modal({
+      title: `When should ${ids.length} poster(s) play?`,
+      size: '',
+      body: `<form id="sw-form">
+          <div class="grid c2">
+            ${UI.field({ name: 'fromDate', label: 'Runs from', type: 'date', value: first.from_date || '' })}
+            ${UI.field({ name: 'toDate', label: 'Until (last day)', type: 'date', value: first.to_date || '' })}
+          </div>
+          <div class="grid c2">
+            ${UI.field({ name: 'fromTime', label: 'From (time of day)', type: 'time', value: first.from_time || '' })}
+            ${UI.field({ name: 'toTime', label: 'Until (time of day)', type: 'time', value: first.to_time || '' })}
+          </div>
+          ${UI.field({ name: 'seconds', label: 'Seconds on screen', type: 'number', min: 3, max: 120,
+    value: first.seconds || 12 })}
+        </form>
+        <div class="muted small">Clear a box to lift that limit. Dates with no times play all day;
+          times with no dates play every day.</div>
+        <div id="sw-out"></div>`,
+      footer: `<button class="btn ghost" data-act="__close">Cancel</button>
+               <button class="btn" data-act="save">Save for all ticked</button>`,
+      async onAction(act, sub) {
+        if (act !== 'save') return;
+        const v = UI.formValues(sub.querySelector('#sw-form'));
+        try {
+          await API.post('/api/queue/slides/bulk', {
+            ids,
+            fromDate: v.fromDate || '', toDate: v.toDate || '',
+            fromTime: v.fromTime || '', toTime: v.toTime || '',
+            seconds: v.seconds,
+          });
+          UI.closeModal();
+          UI.ok(`${ids.length} poster(s) updated.`);
+          await refreshSlides(modal);
+        } catch (err) {
+          sub.querySelector('#sw-out').innerHTML = `<div class="alert danger mt">${UI.esc(err.message)}</div>`;
+          return 'keep';
+        }
+      },
+    });
   }
 
   /** A file input hands back bytes; the server takes a data URL. */

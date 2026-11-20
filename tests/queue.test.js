@@ -999,3 +999,107 @@ test('a room with nothing in it stays off the television', () => {
   assert.ok(after.panels.some((p) => p.room.name === 'X-Ray'), 'and now it is on the board');
   db.prepare('DELETE FROM queue_tokens WHERE id = ?').run(t.id);
 });
+
+// ============================================ the poster library and its clock
+test('a poster plays only between its dates', async () => {
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const today = new Date().toISOString().slice(0, 10);
+  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+
+  const live = await api('POST', '/api/queue/slides',
+    { data: `data:image/png;base64,${png}`, title: 'Opening offer', fromDate: yesterday, toDate: tomorrow },
+    'reception');
+  const over = await api('POST', '/api/queue/slides',
+    { data: `data:image/png;base64,${png}`, title: 'Last month', fromDate: '2020-01-01', toDate: yesterday },
+    'reception');
+  const later = await api('POST', '/api/queue/slides',
+    { data: `data:image/png;base64,${png}`, title: 'Next month', fromDate: tomorrow },
+    'reception');
+
+  const screen = await api('GET', '/api/queue/display', undefined, 'reception');
+  const on = screen.body.slides.map((s) => s.id);
+  assert.ok(on.includes(live.body.id), 'the campaign that is running plays');
+  assert.ok(!on.includes(over.body.id), 'the one that ended does not');
+  assert.ok(!on.includes(later.body.id), 'nor the one that has not started');
+
+  // The library still holds all three, and says which is on the wall.
+  const lib = await api('GET', '/api/queue/slides', undefined, 'reception');
+  const byId = Object.fromEntries(lib.body.rows.map((r) => [r.id, r]));
+  assert.strictEqual(byId[live.body.id].playing, true);
+  assert.strictEqual(byId[over.body.id].playing, false);
+  assert.strictEqual(byId[later.body.id].active, 1, 'kept, not deleted');
+
+  await api('POST', '/api/queue/slides/bulk',
+    { ids: [live.body.id, over.body.id, later.body.id], action: 'remove' }, 'reception');
+});
+
+test('a poster can be given the hours of the day it is worth showing', async () => {
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const made = await api('POST', '/api/queue/slides',
+    { data: `data:image/png;base64,${png}`, title: 'Evening clinic' }, 'reception');
+
+  /*
+   * The clinic's clock, not the server's: a window of 17:00–22:00 means
+   * five in the evening in Melapalayam, and a server running on UTC would
+   * otherwise decide it is time at half past ten at night.
+   */
+  const clock = require('../src/lib/clinicClock');
+  const nowHHMM = clock.clockHHMM();
+  const plus = (mins) => {
+    const t = new Date(clock.fromWall(`${clock.dateKey()} ${nowHHMM}:00`) + mins * 60000);
+    return clock.clockHHMM(t);
+  };
+
+  await api('POST', '/api/queue/slides/bulk',
+    { ids: [made.body.id], fromTime: plus(60), toTime: plus(120) }, 'reception');
+  let screen = await api('GET', '/api/queue/display', undefined, 'reception');
+  assert.ok(!screen.body.slides.some((s) => s.id === made.body.id), 'not its hour yet');
+
+  await api('POST', '/api/queue/slides/bulk',
+    { ids: [made.body.id], fromTime: plus(-60), toTime: plus(60) }, 'reception');
+  screen = await api('GET', '/api/queue/display', undefined, 'reception');
+  assert.ok(screen.body.slides.some((s) => s.id === made.body.id), 'and now it is');
+
+  // Clearing the times lifts the limit.
+  await api('POST', '/api/queue/slides/bulk',
+    { ids: [made.body.id], fromTime: '', toTime: '' }, 'reception');
+  const lib = await api('GET', '/api/queue/slides', undefined, 'reception');
+  const row = lib.body.rows.find((r) => r.id === made.body.id);
+  assert.strictEqual(row.from_time, null);
+  assert.strictEqual(row.playing, true);
+
+  await api('POST', '/api/queue/slides/bulk', { ids: [made.body.id], action: 'remove' }, 'reception');
+});
+
+test('a set of posters is changed together, or not at all', async () => {
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const ids = [];
+  for (const title of ['Camp A', 'Camp B', 'Camp C']) {
+    ids.push((await api('POST', '/api/queue/slides',
+      { data: `data:image/png;base64,${png}`, title }, 'reception')).body.id);
+  }
+
+  const out = await api('POST', '/api/queue/slides/bulk',
+    { ids, fromDate: '2027-01-01', toDate: '2027-01-10', seconds: 20 }, 'reception');
+  assert.strictEqual(out.body.changed, 3);
+
+  const lib = await api('GET', '/api/queue/slides', undefined, 'reception');
+  for (const id of ids) {
+    const row = lib.body.rows.find((r) => r.id === id);
+    assert.strictEqual(row.from_date, '2027-01-01');
+    assert.strictEqual(row.seconds, 20);
+    assert.strictEqual(row.playing, false, 'a campaign next year is not on the wall today');
+  }
+
+  // A bad date changes none of them.
+  const bad = await api('POST', '/api/queue/slides/bulk',
+    { ids, fromDate: '2027-02-01', toDate: '2027-01-01' }, 'reception');
+  assert.strictEqual(bad.status, 400);
+  const after = await api('GET', '/api/queue/slides', undefined, 'reception');
+  assert.strictEqual(after.body.rows.find((r) => r.id === ids[0]).from_date, '2027-01-01');
+
+  assert.strictEqual((await api('POST', '/api/queue/slides/bulk',
+    { ids, active: false }, 'lab')).status, 403);
+  await api('POST', '/api/queue/slides/bulk', { ids, action: 'remove' }, 'reception');
+});
