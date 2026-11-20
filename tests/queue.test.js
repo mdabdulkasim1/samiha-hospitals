@@ -919,6 +919,14 @@ test('a poster can be pinned to one floor, and taken off without deleting it', a
   assert.ok(!downstairs.body.slides.some((s) => s.id === made.body.id),
     'the dental camp poster does not play on the other floor');
 
+  /*
+   * But it does play on the common board. Every television in the clinic
+   * shows all floors at once, so a poster pinned to one of them would
+   * otherwise never be seen on the only board anybody is looking at.
+   */
+  const everywhere = await api('GET', '/api/queue/display', undefined, 'reception');
+  assert.ok(everywhere.body.slides.some((s) => s.id === made.body.id));
+
   await api('PATCH', `/api/queue/slides/${made.body.id}`, { active: false }, 'reception');
   const after = await api('GET', '/api/queue/display?floor=First%20Floor', undefined, 'reception');
   assert.ok(!after.body.slides.some((s) => s.id === made.body.id),

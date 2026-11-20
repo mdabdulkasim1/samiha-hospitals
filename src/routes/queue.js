@@ -263,11 +263,24 @@ const slideBody = express.json({ limit: '8mb' });
 const MAX_SLIDE = 6 * 1024 * 1024;
 const SLIDE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 
-const slideList = (floor) => db.prepare(
-  `SELECT id, title, mime, bytes, seconds, floor, sort_order, active, created_at
-     FROM display_slides
-    WHERE active = 1 AND (floor IS NULL OR floor = ?)
-    ORDER BY sort_order, id`).all(floor || null);
+/*
+ * Which posters play on this screen.
+ *
+ * A screen pinned to a floor carries the posters for that floor and the
+ * ones meant for both. The common board — every floor at once, which is
+ * what the clinic's televisions all show — carries everything: a poster
+ * pinned to the first floor would otherwise be invisible on the only board
+ * anybody is looking at.
+ */
+const slideList = (floor) => (floor
+  ? db.prepare(
+    `SELECT id, title, mime, bytes, seconds, floor, sort_order, active, created_at
+       FROM display_slides
+      WHERE active = 1 AND (floor IS NULL OR floor = ?)
+      ORDER BY sort_order, id`).all(floor)
+  : db.prepare(
+    `SELECT id, title, mime, bytes, seconds, floor, sort_order, active, created_at
+       FROM display_slides WHERE active = 1 ORDER BY sort_order, id`).all());
 
 router.get('/slides', anyone, wrap((req, res) => {
   res.json({

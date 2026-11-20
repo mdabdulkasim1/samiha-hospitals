@@ -252,25 +252,56 @@
    * left blank — it carries the clinic's name and the number being called,
    * in large type, which is better than a grey rectangle on a wall.
    */
+  /*
+   * The poster, fetched with the session token rather than left to the
+   * browser's cookie.
+   *
+   * An <img src> cannot carry an Authorization header, so it relies on the
+   * session cookie — and a television left signed in for days outlives that
+   * cookie while the page itself carries on working off the token in local
+   * storage. The result is a screen whose numbers are live and whose poster
+   * is a broken-image box. Fetching the bytes ourselves and handing the
+   * <img> a blob removes that whole class of failure.
+   */
+  const posterCache = new Map();
+  async function posterUrl(id) {
+    if (posterCache.has(id)) return posterCache.get(id);
+    const token = API.getToken && API.getToken();
+    const res = await fetch(`/api/queue/slides/${id}/image`,
+      { headers: token ? { Authorization: `Bearer ${token}` } : {}, credentials: 'same-origin' });
+    if (!res.ok) throw new Error(`poster ${res.status}`);
+    const url = URL.createObjectURL(await res.blob());
+    posterCache.set(id, url);
+    return url;
+  }
+
   function paintAd(host, slides) {
     const ad = host.querySelector('#tv-ad');
     if (!ad) return;
     clearInterval(slideTimer);
 
     if (!slides.length) {
-      ad.innerHTML = `<div class="tv-ad-none">
-        <img class="tv-ad-logo" src="/assets/logo.svg" alt="">
-        <div class="tv-ad-badge">SAMIHA HEALTHCARE</div>
-        <div class="tv-ad-line">Care · Compassion · Commitment</div>
-        ${mayEdit() ? '<div class="tv-ad-hint">Posters → add an image to fill this half</div>' : ''}
-      </div>`;
+      ad.innerHTML = adFallback();
       return;
     }
 
-    const show = (i) => {
+    const show = async (i) => {
       slideAt = i % slides.length;
       const s = slides[slideAt];
-      ad.innerHTML = `<img src="/api/queue/slides/${s.id}/image" alt="${UI.esc(s.title || '')}">`;
+      try {
+        const url = await posterUrl(s.id);
+        // The board may have moved on while the bytes were coming.
+        if (slides[slideAt] && slides[slideAt].id === s.id) {
+          ad.innerHTML = `<img src="${url}" alt="${UI.esc(s.title || '')}">`;
+        }
+      } catch {
+        /*
+         * A poster that will not load is not worth a broken-image box on a
+         * wall: the clinic's own name goes there instead, and the next one
+         * in the rotation is tried when its turn comes.
+         */
+        ad.innerHTML = adFallback();
+      }
       clearInterval(slideTimer);
       // One image needs no timer at all; several change on their own seconds.
       if (slides.length > 1) {
@@ -284,6 +315,13 @@
   function applySize(host) {
     if (host) host.style.setProperty('--tv-zoom', String(screenSize().zoom));
   }
+
+  const adFallback = () => `<div class="tv-ad-none">
+    <img class="tv-ad-logo" src="/assets/logo.svg" alt="">
+    <div class="tv-ad-badge">SAMIHA HEALTHCARE</div>
+    <div class="tv-ad-line">Care · Compassion · Commitment</div>
+    ${mayEdit() ? '<div class="tv-ad-hint">Posters → add an image to fill this half</div>' : ''}
+  </div>`;
 
   function goFullScreen(el) {
     const target = el.querySelector('#tv') || el;
@@ -332,8 +370,10 @@
       size: 'wide',
       body: `
         <div class="alert info">A picture — JPEG or PNG, up to 6 MB — sits on the right half of
-          the television beside the numbers. Several take turns. Portrait or square images suit
-          that half best; a wide one is fitted inside it.</div>
+          the television beside the numbers, and several take turns.
+          <b>Design it slightly taller than wide, about 8:9</b> — 1200 × 1350 px is a good size,
+          1600 × 1800 for a sharper screen. The whole picture is always shown, never cropped, so
+          any other shape simply sits inside that space with a margin.</div>
         <div id="sl-list">${slideCards(rows)}</div>
         <fieldset class="mt"><legend>Add a poster</legend>
           <form id="sl-form">
@@ -377,7 +417,7 @@
   const slideCards = (rows) => (rows.length
     ? `<div class="sl-grid">${rows.map((s) => `
         <div class="sl-card ${s.active ? '' : 'off'}">
-          <img src="/api/queue/slides/${s.id}/image" alt="">
+          <img data-poster="${s.id}" alt="">
           <div class="sl-meta">
             <b>${UI.esc(s.title || 'Untitled')}</b>
             <div class="muted small">${UI.esc(s.seconds)}s · ${UI.esc(s.floor || 'both floors')}
@@ -392,6 +432,11 @@
     : UI.empty('No posters yet — the other half of the screen carries the clinic name.', '🖼'));
 
   function wireSlides(modal) {
+    // Thumbnails are fetched the same way the screen fetches the poster.
+    modal.querySelectorAll('[data-poster]').forEach(async (img) => {
+      try { img.src = await posterUrl(Number(img.dataset.poster)); } catch { img.remove(); }
+    });
+
     const refresh = async () => {
       const fresh = await API.get('/api/queue/slides');
       modal.querySelector('#sl-list').innerHTML = slideCards(fresh.rows);
