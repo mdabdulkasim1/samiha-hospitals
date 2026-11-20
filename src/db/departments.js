@@ -38,6 +38,12 @@ const DEPARTMENTS = [
   ['URO', 'Urology',            'specialist', 12],
   // On the clinic's own duty chart from the start, waiting for a consultant.
   ['DIA', 'Diabetology',        'specialist', 13],
+  /*
+   * Radiology is the doctor who reports the films, kept apart from the
+   * X-Ray and USG counters that take them. The counters are where a patient
+   * is sent; this is who reads the result and whom they see about it.
+   */
+  ['RAD', 'Radiology',          'specialist', 14],
   // Service counters rather than consulting rooms.
   ['LAB', 'Diagnostics / Lab',  'diagnostic', 20],
   ['PHA', 'Pharmacy',           'diagnostic', 21],

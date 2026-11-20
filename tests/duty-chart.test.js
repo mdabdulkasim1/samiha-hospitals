@@ -357,8 +357,8 @@ test('the whole chart can be wiped to enter the clinic\'s own timings', async ()
   assert.strictEqual((await api('DELETE', '/api/schedule', undefined, 'reception')).status, 403);
 });
 
-test('ENT, Urology and Diabetology are departments now, so consultants can be put in them', () => {
-  for (const [code, category] of [['ENT', '03'], ['URO', '04'], ['DIA', '21']]) {
+test('the departments the clinic has opened since take consultants of their own', () => {
+  for (const [code, category] of [['ENT', '03'], ['URO', '04'], ['DIA', '21'], ['RAD', '22']]) {
     const dept = db.prepare('SELECT * FROM departments WHERE code = ?').get(code);
     assert.ok(dept, `${code} is a department`);
     assert.strictEqual(dept.kind, 'specialist');
@@ -401,4 +401,22 @@ test('Diabetology counts past the printed sheet rather than disturbing it', () =
   // And its tokens read 21-001, like any other queue.
   const token = queue.issue({ categoryId: dia.id, date: '2026-04-01' });
   assert.strictEqual(token.label, '21-001');
+});
+
+test('the radiologist is a queue of their own, not the X-ray counter', () => {
+  /*
+   * A patient waiting for the X-ray machine and a patient seeing the
+   * radiologist about the films are two different lines in two different
+   * places. Sharing a code would call them both to the same door.
+   */
+  const rad = db.prepare("SELECT * FROM queue_categories WHERE code = '22'").get();
+  assert.strictEqual(rad.name, 'Radiology');
+  assert.strictEqual(rad.kind, 'consult', 'a consultation, not a counter');
+
+  const xray = db.prepare("SELECT * FROM queue_categories WHERE code = '19'").get();
+  assert.strictEqual(xray.kind, 'service');
+  assert.notStrictEqual(rad.id, xray.id);
+
+  assert.strictEqual(queue.issue({ categoryId: rad.id, date: '2026-04-02' }).label, '22-001');
+  assert.strictEqual(queue.issue({ categoryId: xray.id, date: '2026-04-02' }).label, '19-001');
 });

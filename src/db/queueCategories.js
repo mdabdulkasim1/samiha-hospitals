@@ -19,9 +19,10 @@
  *   - Oncology has no category. It is absent from the directory the codes
  *     were drawn from, and inventing an unused code is how a list stops
  *     matching the printed one it is supposed to be.
- *   - Diabetology is code 21, past the end of the printed sheet, because it
- *     is on the duty chart and its patients need a queue. Added at the end
- *     so that no number already on a sheet of paper moves.
+ *   - Diabetology (21) and Radiology (22) are past the end of the printed
+ *     sheet, because both are departments the clinic has opened since and
+ *     both need a queue of their own. Added at the end so that no number
+ *     already on a sheet of paper moves.
  *
  * Spelling follows the clinic's own sheet — Paediatrics, Orthopaedics,
  * Nebulization — because a staff member looking for a category searches for
@@ -58,6 +59,13 @@ const CATEGORIES = [
    * rather see those patients under another code.
    */
   ['21', 'Diabetology', 'consult', ['DIA']],
+  /*
+   * Radiology counts on from there, for the same reason and with the same
+   * care: a patient seeing the radiologist is not the same queue as a
+   * patient waiting for the X-ray machine, so 19 and 20 stay as they are
+   * and the consultation gets its own number.
+   */
+  ['22', 'Radiology', 'consult', ['RAD']],
 ];
 
 module.exports = { CATEGORIES };
