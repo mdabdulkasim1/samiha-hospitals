@@ -111,6 +111,15 @@ function sync({ quiet = false } = {}) {
   const ROOMS = [
     ['Ground Floor', 1, 'OP-1'], ['Ground Floor', 1, 'OP-2'],
     ['First Floor', 2, 'OP-3'], ['First Floor', 2, 'OP-4'],
+    /*
+     * The two imaging rooms, from the floor plan: the scan downstairs, the
+     * X-ray up. They are rooms a doctor can be allocated to — the
+     * radiologist sits in one — rather than consulting rooms, so they carry
+     * no specialty of their own and stay off the waiting-room board until
+     * somebody is actually called to them.
+     */
+    ['Ground Floor', 1, 'USG'],
+    ['First Floor', 2, 'X-Ray'],
   ];
 
   /*

@@ -618,12 +618,17 @@ test('a room that tokens point at is switched off rather than deleted', async ()
 });
 
 // ============================================ the clinic's own OP allocation
-test('the four rooms are numbered through the building, as the plan draws them', () => {
-  const rooms = queue.rooms();
+test('the consulting rooms are numbered through the building, as the plan draws them', () => {
+  const rooms = queue.rooms().filter((r) => r.name.startsWith('OP-'));
   assert.deepStrictEqual(
     rooms.map((r) => `${r.floor}:${r.name}`),
     ['Ground Floor:OP-1', 'Ground Floor:OP-2', 'First Floor:OP-3', 'First Floor:OP-4'],
     'OP-1 and OP-2 downstairs, OP-3 and OP-4 up — not one and two on each floor');
+
+  // The imaging rooms are on the list too, on the floors the plan puts them.
+  const all = queue.rooms().map((r) => `${r.floor}:${r.name}`);
+  assert.ok(all.includes('Ground Floor:USG'));
+  assert.ok(all.includes('First Floor:X-Ray'));
 });
 
 test('each specialty starts in the room the clinic allocated it', () => {
@@ -936,4 +941,53 @@ test('what cannot go on the screen is refused with a reason', async () => {
   const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
   assert.strictEqual((await api('POST', '/api/queue/slides',
     { data: `data:image/png;base64,${png}` }, 'lab')).status, 403);
+});
+
+// ======================================================= the imaging rooms
+test('the scan and the X-ray are rooms a doctor can be allocated to', () => {
+  const rooms = queue.rooms();
+  const usg = rooms.find((r) => r.name === 'USG');
+  const xray = rooms.find((r) => r.name === 'X-Ray');
+  assert.ok(usg, 'the scan room is on the list');
+  assert.ok(xray, 'and the X-ray room');
+  assert.strictEqual(usg.floor, 'Ground Floor', 'as the floor plan has them');
+  assert.strictEqual(xray.floor, 'First Floor');
+
+  /*
+   * The radiologist sits in one of them, and their patients are sent there
+   * — which is the whole reason the rooms exist in this list.
+   */
+  const radiology = queue.categories().find((c) => c.code === '22');
+  const doctorId = db.prepare(
+    `INSERT INTO users (staff_code, name, email, password_hash, role, department_id, active)
+     VALUES ('EMPRAD', 'Dr. Radiologist', 'rad@samiha.local', 'x', 'doctor',
+             (SELECT id FROM departments WHERE code = 'RAD'), 1)`).run().lastInsertRowid;
+  queue.setDoctorRoom(doctorId, xray.id);
+
+  const token = queue.issue({ categoryId: radiology.id, doctorId, date: '2026-05-05' });
+  assert.strictEqual(token.label, '22-001');
+  assert.strictEqual(token.room_name, 'X-Ray');
+  assert.strictEqual(token.room_floor, 'First Floor');
+
+  db.prepare('DELETE FROM queue_tokens WHERE id = ?').run(token.id);
+  db.prepare('DELETE FROM users WHERE id = ?').run(doctorId);
+});
+
+test('a room with nothing in it stays off the television', () => {
+  clear();
+  /*
+   * The imaging rooms are empty most of the morning, and a television
+   * cannot be scrolled: a line that says nothing is a line taken from one
+   * that does. They appear the moment somebody is called to them.
+   */
+  const before = queue.display('First Floor', ids.date, at('10:00'));
+  assert.ok(!before.panels.some((p) => p.room.name === 'X-Ray'));
+  assert.ok(before.panels.some((p) => p.room.name === 'OP-3'),
+    'a consulting room with a clinic allocated keeps its place all day');
+
+  const xray = queue.rooms().find((r) => r.name === 'X-Ray');
+  const t = queue.issue({ categoryId: ids.pedCat, roomId: xray.id, date: ids.date });
+  const after = queue.display('First Floor', ids.date, at('10:00'));
+  assert.ok(after.panels.some((p) => p.room.name === 'X-Ray'), 'and now it is on the board');
+  db.prepare('DELETE FROM queue_tokens WHERE id = ?').run(t.id);
 });

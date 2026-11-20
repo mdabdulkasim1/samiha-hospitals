@@ -967,7 +967,17 @@ function display(floor, date = dateKey(now()), at = now()) {
   const onDuty = categories({ kind: 'consult' })
     .map((c) => ({ category: c, now: dutyFor(c.id, { date, at }).now }));
 
-  const panels = wanted.map((room) => {
+  /*
+   * A room earns a line on the board by being in use: somebody called to
+   * it, somebody waiting for it, or a clinic allocated to it. The imaging
+   * rooms sit empty most of the morning and a television cannot scroll, so
+   * a row that says nothing is a row taken from one that does.
+   */
+  const panels = wanted.filter((room) => {
+    if (room.categories.length || room.doctors.length) return true;
+    const q = queueFor({ roomId: room.id, date }, at);
+    return q.counts.waiting + q.counts.called + q.counts.serving > 0;
+  }).map((room) => {
     const q = queueFor({ roomId: room.id, date }, at);
     /*
      * The doctor on the screen is the one sitting behind this door at this
