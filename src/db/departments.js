@@ -36,6 +36,8 @@ const DEPARTMENTS = [
    */
   ['ENT', 'ENT',                'specialist', 11],
   ['URO', 'Urology',            'specialist', 12],
+  // On the clinic's own duty chart from the start, waiting for a consultant.
+  ['DIA', 'Diabetology',        'specialist', 13],
   // Service counters rather than consulting rooms.
   ['LAB', 'Diagnostics / Lab',  'diagnostic', 20],
   ['PHA', 'Pharmacy',           'diagnostic', 21],

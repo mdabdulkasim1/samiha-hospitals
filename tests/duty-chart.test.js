@@ -357,8 +357,8 @@ test('the whole chart can be wiped to enter the clinic\'s own timings', async ()
   assert.strictEqual((await api('DELETE', '/api/schedule', undefined, 'reception')).status, 403);
 });
 
-test('ENT and Urology are departments now, so a consultant can be put in one', () => {
-  for (const [code, category] of [['ENT', '03'], ['URO', '04']]) {
+test('ENT, Urology and Diabetology are departments now, so consultants can be put in them', () => {
+  for (const [code, category] of [['ENT', '03'], ['URO', '04'], ['DIA', '21']]) {
     const dept = db.prepare('SELECT * FROM departments WHERE code = ?').get(code);
     assert.ok(dept, `${code} is a department`);
     assert.strictEqual(dept.kind, 'specialist');
@@ -380,4 +380,25 @@ test('ENT and Urology are departments now, so a consultant can be put in one', (
   assert.ok(!week.awaiting.some((c) => c.name === 'ENT'), 'it is covered now');
   assert.ok(week.doctors.some((d) => d.id === doctorId && d.category_name === 'ENT'));
   db.prepare('DELETE FROM users WHERE id = ?').run(doctorId);
+});
+
+test('Diabetology counts past the printed sheet rather than disturbing it', () => {
+  /*
+   * The clinic printed twenty codes. Diabetology is on its duty chart and
+   * was not on that sheet, so it takes 21 — a number nobody has in their
+   * hand — and every code that was printed still means what it did.
+   */
+  const dia = db.prepare("SELECT * FROM queue_categories WHERE code = '21'").get();
+  assert.strictEqual(dia.name, 'Diabetology');
+  assert.strictEqual(dia.kind, 'consult');
+
+  for (const [code, name] of [['08', 'Paediatrics'], ['12', 'Laboratory Services'],
+    ['19', 'X-Ray'], ['20', 'USG (Ultrasound)']]) {
+    assert.strictEqual(db.prepare('SELECT name FROM queue_categories WHERE code = ?').get(code).name,
+      name, `${code} still means what the sheet says`);
+  }
+
+  // And its tokens read 21-001, like any other queue.
+  const token = queue.issue({ categoryId: dia.id, date: '2026-04-01' });
+  assert.strictEqual(token.label, '21-001');
 });

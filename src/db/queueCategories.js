@@ -7,7 +7,7 @@
  * the code and a daily sequence — 08-001, 08-002 — so these codes end up on
  * paper in a patient's hand and in large type on a waiting-room screen.
  *
- * Three things about this list are deliberate and should not be "corrected"
+ * Four things about this list are deliberate and should not be "corrected"
  * to match the department table:
  *
  *   - ENT (03) and Urology (04) were here before the clinic had either
@@ -19,6 +19,9 @@
  *   - Oncology has no category. It is absent from the directory the codes
  *     were drawn from, and inventing an unused code is how a list stops
  *     matching the printed one it is supposed to be.
+ *   - Diabetology is code 21, past the end of the printed sheet, because it
+ *     is on the duty chart and its patients need a queue. Added at the end
+ *     so that no number already on a sheet of paper moves.
  *
  * Spelling follows the clinic's own sheet — Paediatrics, Orthopaedics,
  * Nebulization — because a staff member looking for a category searches for
@@ -46,6 +49,15 @@ const CATEGORIES = [
   ['18', 'Health Check-up Packages', 'service', []],
   ['19', 'X-Ray', 'service', ['XRY']],
   ['20', 'USG (Ultrasound)', 'service', ['USG']],
+  /*
+   * Diabetology is the one code that was not on the sheet of twenty. It is
+   * on the clinic's duty chart, so its patients need a queue of their own
+   * rather than being called under General Medicine — and a code that
+   * carries on from 20 is the only kind that does not disturb a number
+   * already printed. Switch it off on Queue → Set-up if the clinic would
+   * rather see those patients under another code.
+   */
+  ['21', 'Diabetology', 'consult', ['DIA']],
 ];
 
 module.exports = { CATEGORIES };

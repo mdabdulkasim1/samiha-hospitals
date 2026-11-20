@@ -173,7 +173,18 @@ test.after(() => {
 // ================================================================ numbering
 test('the clinic\'s own twenty categories are there, with its codes', () => {
   const cats = queue.categories();
-  assert.strictEqual(cats.length, 20);
+  /*
+   * The twenty the clinic printed, all present and all still meaning what
+   * the sheet says. Anything added since — Diabetology, which was on the
+   * duty chart but not on the sheet — counts past the end, so no number
+   * anybody is holding has moved.
+   */
+  for (let n = 1; n <= 20; n += 1) {
+    assert.ok(cats.some((c) => c.code === String(n).padStart(2, '0')),
+      `code ${n} is on the list`);
+  }
+  assert.ok(cats.length >= 20);
+  assert.ok(cats.filter((c) => Number(c.code) > 20).every((c) => c.code > '20'));
   assert.strictEqual(cats.find((c) => c.code === '08').name, 'Paediatrics');
   assert.strictEqual(cats.find((c) => c.code === '12').name, 'Laboratory Services');
 
