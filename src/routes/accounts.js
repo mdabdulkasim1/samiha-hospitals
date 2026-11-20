@@ -26,6 +26,7 @@ const { requireRole } = require('../lib/auth');
 const { required, str, int, money, oneOf, paging } = require('../lib/validate');
 const { generate } = require('../lib/ids');
 const audit = require('../lib/audit');
+const branches = require('../services/branches');
 
 const router = express.Router();
 
@@ -125,8 +126,15 @@ router.get('/entries', entryRoles, wrap((req, res) => {
   const q = str(req.query.q, '');
   const { limit, offset, page } = paging(req.query, 50);
 
+  /*
+   * The book is the branch's book. Somebody at the counter in one place has
+   * no business reading the other place's payments, and the owner comparing
+   * the two asks for one at a time.
+   */
+  const scope = branches.scope(req);
   const clauses = ['date(c.entry_date) BETWEEN date(?) AND date(?)'];
   const params = [from, to];
+  if (scope.branchId) clauses.push(`c.branch_id = ${Number(scope.branchId)}`);
   if (direction) { clauses.push('c.direction = ?'); params.push(direction); }
   if (category) { clauses.push('c.category = ?'); params.push(category); }
   if (q) {
@@ -151,6 +159,7 @@ router.get('/entries', entryRoles, wrap((req, res) => {
 
   res.json({
     from, to, page, limit, rows,
+    branch: scope.branch || null,
     total: db.prepare(`SELECT COUNT(*) AS c FROM cash_book c ${where}`).get(...params).c,
     totals: { ...totals, net: round2(totals.money_in - totals.money_out) },
   });
@@ -269,14 +278,15 @@ router.post('/entries/:id/void', entryRoles, wrap((req, res) => {
  * and they are kept as their own line so it is always visible how much of the
  * month was clinical work and how much was not.
  */
-const takingsBetween = (from, to) => ({
+const takingsBetween = (from, to, branchId = null) => ({
   billed: db.prepare(
-    'SELECT COALESCE(SUM(amount), 0) AS s FROM payments WHERE date(paid_at) BETWEEN date(?) AND date(?)'
+    `SELECT COALESCE(SUM(amount), 0) AS s FROM payments
+      WHERE date(paid_at) BETWEEN date(?) AND date(?)${branches.clause(branchId)}`
   ).get(from, to).s,
   counter: db.prepare(
     `SELECT COALESCE(SUM(paid_amount), 0) AS s FROM pharmacy_sales
       WHERE sale_type = 'counter' AND status != 'cancelled'
-        AND date(created_at) BETWEEN date(?) AND date(?)`
+        AND date(created_at) BETWEEN date(?) AND date(?)${branches.clause(branchId)}`
   ).get(from, to).s,
 });
 
@@ -304,6 +314,14 @@ router.get('/summary', overviewRoles, wrap((req, res) => {
   const from = str(req.query.from)
     || new Date(Date.now() - DEFAULT_SPAN[by] * 86400000).toISOString().slice(0, 10);
 
+  /*
+   * One branch at a time, the one the reader is signed in to, unless the
+   * owner asks for the group. A daily income that silently mixed two
+   * buildings would be the one number in the system nobody could act on.
+   */
+  const scope = branches.scope(req);
+  const B = (alias) => branches.clause(scope.branchId, alias);
+
   const series = new Map();
   const at = (key) => {
     if (!series.has(key)) {
@@ -314,20 +332,20 @@ router.get('/summary', overviewRoles, wrap((req, res) => {
 
   for (const r of db.prepare(
     `SELECT ${bucketExpr(by, 'paid_at')} AS at, COALESCE(SUM(amount), 0) AS s
-       FROM payments WHERE date(paid_at) BETWEEN date(?) AND date(?) GROUP BY at`
+       FROM payments WHERE date(paid_at) BETWEEN date(?) AND date(?)${B()} GROUP BY at`
   ).all(from, to)) at(r.at).billed = round2(r.s);
 
   for (const r of db.prepare(
     `SELECT ${bucketExpr(by, 'created_at')} AS at, COALESCE(SUM(paid_amount), 0) AS s
        FROM pharmacy_sales
       WHERE sale_type = 'counter' AND status != 'cancelled'
-        AND date(created_at) BETWEEN date(?) AND date(?) GROUP BY at`
+        AND date(created_at) BETWEEN date(?) AND date(?)${B()} GROUP BY at`
   ).all(from, to)) at(r.at).counter = round2(r.s);
 
   for (const r of db.prepare(
     `SELECT ${bucketExpr(by, 'entry_date')} AS at, direction, COALESCE(SUM(amount), 0) AS s
        FROM cash_book
-      WHERE voided_at IS NULL AND date(entry_date) BETWEEN date(?) AND date(?)
+      WHERE voided_at IS NULL AND date(entry_date) BETWEEN date(?) AND date(?)${B()}
       GROUP BY at, direction`
   ).all(from, to)) {
     if (r.direction === 'in') at(r.at).otherIncome = round2(r.s);
@@ -341,19 +359,19 @@ router.get('/summary', overviewRoles, wrap((req, res) => {
     })
     .sort((a, b) => String(a.at).localeCompare(String(b.at)));
 
-  const takings = takingsBetween(from, to);
+  const takings = takingsBetween(from, to, scope.branchId);
   const spend = db.prepare(
     `SELECT category, COUNT(*) AS entries, COALESCE(SUM(amount), 0) AS amount
        FROM cash_book
       WHERE direction = 'out' AND voided_at IS NULL
-        AND date(entry_date) BETWEEN date(?) AND date(?)
+        AND date(entry_date) BETWEEN date(?) AND date(?)${B()}
       GROUP BY category ORDER BY amount DESC`
   ).all(from, to);
   const otherIncome = db.prepare(
     `SELECT category, COUNT(*) AS entries, COALESCE(SUM(amount), 0) AS amount
        FROM cash_book
       WHERE direction = 'in' AND voided_at IS NULL
-        AND date(entry_date) BETWEEN date(?) AND date(?)
+        AND date(entry_date) BETWEEN date(?) AND date(?)${B()}
       GROUP BY category ORDER BY amount DESC`
   ).all(from, to);
 
@@ -363,6 +381,8 @@ router.get('/summary', overviewRoles, wrap((req, res) => {
 
   res.json({
     from, to, by, points, spend, otherIncome,
+    branch: scope.branch || null,
+    branches: branches.forUser(req.user),
     totals: {
       billed: round2(takings.billed),
       counter: round2(takings.counter),
@@ -373,7 +393,8 @@ router.get('/summary', overviewRoles, wrap((req, res) => {
       // What is still owed is not cash flow, but it is the first thing anybody
       // asks when the net looks thin.
       outstanding: db.prepare(
-        "SELECT COALESCE(SUM(balance), 0) AS s FROM invoices WHERE status IN ('unpaid','partial')"
+        `SELECT COALESCE(SUM(balance), 0) AS s FROM invoices
+          WHERE status IN ('unpaid','partial')${B()}`
       ).get().s,
     },
   });

@@ -5,6 +5,7 @@ const { wrap, badRequest, forbidden } = require('../lib/http');
 const { requireAuth, requireRole, MONEY_ROLES, seesMoney, seesPrices, hasFullAccess } = require('../lib/auth');
 const scheduling = require('../services/scheduling');
 const { str, int } = require('../lib/validate');
+const branches = require('../services/branches');
 
 const router = express.Router();
 const today = () => new Date().toISOString().slice(0, 10);
@@ -13,12 +14,28 @@ const today = () => new Date().toISOString().slice(0, 10);
 router.get('/dashboard', requireAuth, wrap((req, res) => {
   const date = str(req.query.date) || today();
 
+  /*
+   * The board belongs to the branch the person is standing in.
+   *
+   * Everybody signs in to one place, and "how is today going" is a question
+   * about that place — a receptionist at Melapalayam reading a visit count
+   * that quietly included the other branch would be looking at a number
+   * that matches nothing in front of her. The owner's group view is the
+   * owner's board, where the two are shown side by side on purpose.
+   *
+   * Figures that are not a branch's — beds, the drug shelf, insurance
+   * claims, the asset register — are left whole, because they are not kept
+   * per branch yet and a half-filtered total would be worse than an honest
+   * group one.
+   */
+  const B = (alias) => branches.clause(req.branchId, alias);
+
   const opd = db.prepare(
     `SELECT COUNT(*) AS visits,
             SUM(CASE WHEN status = 'checked_out' THEN 1 ELSE 0 END) AS completed,
             SUM(CASE WHEN status NOT IN ('checked_out','cancelled') THEN 1 ELSE 0 END) AS in_progress,
             SUM(is_new_patient) AS new_patients
-       FROM visits WHERE date(arrived_at) = ?`
+       FROM visits WHERE date(arrived_at) = ?${B()}`
   ).get(date);
 
   const appointments = db.prepare(
@@ -26,18 +43,18 @@ router.get('/dashboard', requireAuth, wrap((req, res) => {
             SUM(CASE WHEN source = 'whatsapp' THEN 1 ELSE 0 END) AS via_whatsapp,
             SUM(CASE WHEN status = 'no_show' THEN 1 ELSE 0 END) AS no_shows,
             SUM(CASE WHEN status IN ('booked','confirmed') THEN 1 ELSE 0 END) AS upcoming
-       FROM appointments WHERE date(scheduled_at) = ?`
+       FROM appointments WHERE date(scheduled_at) = ?${B()}`
   ).get(date);
 
   const revenue = db.prepare(
     `SELECT COALESCE(SUM(amount),0) AS collected, COUNT(*) AS receipts
-       FROM payments WHERE date(paid_at) = ?`
+       FROM payments WHERE date(paid_at) = ?${B()}`
   ).get(date);
 
   const billed = db.prepare(
     `SELECT COALESCE(SUM(net),0) AS billed, COALESCE(SUM(sliding_discount),0) AS sliding,
             COALESCE(SUM(assistance_covered),0) AS assistance
-       FROM invoices WHERE date(created_at) = ? AND status != 'cancelled'`
+       FROM invoices WHERE date(created_at) = ? AND status != 'cancelled'${B()}`
   ).get(date);
 
   const beds = db.prepare(
@@ -65,7 +82,7 @@ router.get('/dashboard', requireAuth, wrap((req, res) => {
        FROM users u
        LEFT JOIN departments dep ON dep.id = u.department_id
        LEFT JOIN doctor_profiles dp ON dp.user_id = u.id
-       LEFT JOIN appointments a ON a.doctor_id = u.id AND date(a.scheduled_at) = ?
+       LEFT JOIN appointments a ON a.doctor_id = u.id AND date(a.scheduled_at) = ?${B('a')}
       WHERE u.role = 'doctor' AND u.active = 1
       GROUP BY u.id
       ORDER BY booked DESC, u.name`
@@ -97,11 +114,14 @@ router.get('/dashboard', requireAuth, wrap((req, res) => {
     revenue: money ? {
       collected: revenue.collected, receipts: revenue.receipts,
       billed: billed.billed, slidingDiscount: billed.sliding, assistanceCovered: billed.assistance,
-      outstanding: db.prepare("SELECT COALESCE(SUM(balance),0) AS s FROM invoices WHERE status IN ('unpaid','partial')").get().s,
+      outstanding: db.prepare(`SELECT COALESCE(SUM(balance),0) AS s FROM invoices
+        WHERE status IN ('unpaid','partial')${B()}`).get().s,
     } : null,
     ipd: {
-      admittedToday: db.prepare("SELECT COUNT(*) AS c FROM admissions WHERE date(admitted_at) = ?").get(date).c,
-      dischargedToday: db.prepare('SELECT COUNT(*) AS c FROM admissions WHERE date(discharged_at) = ?').get(date).c,
+      admittedToday: db.prepare(
+        `SELECT COUNT(*) AS c FROM admissions WHERE date(admitted_at) = ?${B()}`).get(date).c,
+      dischargedToday: db.prepare(
+        `SELECT COUNT(*) AS c FROM admissions WHERE date(discharged_at) = ?${B()}`).get(date).c,
       currentInPatients: db.prepare("SELECT COUNT(*) AS c FROM admissions WHERE status = 'admitted'").get().c,
       beds: { ...beds, occupancyPct: beds.total ? Math.round((beds.occupied / beds.total) * 1000) / 10 : 0 },
     },
@@ -121,12 +141,13 @@ router.get('/dashboard', requireAuth, wrap((req, res) => {
     lab: db.prepare(
       `SELECT COUNT(*) AS ordered_today,
               SUM(CASE WHEN status IN ('ordered','sample_collected','in_process') THEN 1 ELSE 0 END) AS pending
-         FROM lab_orders WHERE date(ordered_at) = ?`
+         FROM lab_orders WHERE date(ordered_at) = ?${B()}`
     ).get(date),
     pharmacy: {
       // What the counter took is money; what is running out is the shelf's.
       salesToday: money
-        ? db.prepare('SELECT COALESCE(SUM(net),0) AS s FROM pharmacy_sales WHERE date(created_at) = ?').get(date).s
+        ? db.prepare(`SELECT COALESCE(SUM(net),0) AS s FROM pharmacy_sales
+            WHERE date(created_at) = ?${B()}`).get(date).s
         : null,
       lowStockCount: db.prepare(
         `SELECT COUNT(*) AS c FROM (
@@ -143,10 +164,12 @@ router.get('/dashboard', requireAuth, wrap((req, res) => {
         enquiry: byStage.enquiry || 0,
         registered: byStage.registered || 0,
         enquiryToday: db.prepare(
-          "SELECT COUNT(*) AS c FROM patients WHERE active = 1 AND stage = 'enquiry' AND date(enquiry_at) = ?"
+          `SELECT COUNT(*) AS c FROM patients
+            WHERE active = 1 AND stage = 'enquiry' AND date(enquiry_at) = ?${B()}`
         ).get(date).c,
         registeredToday: db.prepare(
-          "SELECT COUNT(*) AS c FROM patients WHERE active = 1 AND stage = 'registered' AND date(registered_at) = ?"
+          `SELECT COUNT(*) AS c FROM patients
+            WHERE active = 1 AND stage = 'registered' AND date(registered_at) = ?${B()}`
         ).get(date).c,
         // Who pays for themselves and who has an insurer behind them. Most of
         // an OPD is self-paying, and the cash counter is sized for that.
@@ -167,7 +190,7 @@ router.get('/dashboard', requireAuth, wrap((req, res) => {
     enquiries: db.prepare(
       `SELECT COUNT(*) AS total, SUM(CASE WHEN status = 'new' THEN 1 ELSE 0 END) AS open,
               SUM(CASE WHEN source = 'whatsapp' THEN 1 ELSE 0 END) AS via_whatsapp
-         FROM enquiries WHERE date(created_at) = ?`
+         FROM enquiries WHERE date(created_at) = ?${B()}`
     ).get(date),
     insurance: (() => {
       const pa = db.prepare(
@@ -205,18 +228,24 @@ router.get('/dashboard', requireAuth, wrap((req, res) => {
 /** Footfall and revenue over a date range, for the trend chart. */
 router.get('/trend', requireAuth, wrap((req, res) => {
   const days = Math.min(Math.max(int(req.query.days, 30) || 30, 7), 180);
+  // The same branch as the board it sits under, or the two would disagree
+  // about today on one screen.
+  const B = (alias) => branches.clause(req.branchId, alias);
   const rows = db.prepare(
     `WITH RECURSIVE d(day) AS (
        SELECT date('now', '-' || ? || ' days')
        UNION ALL SELECT date(day, '+1 day') FROM d WHERE day < date('now')
      )
      SELECT d.day,
-            (SELECT COUNT(*) FROM visits v WHERE date(v.arrived_at) = d.day) AS visits,
-            (SELECT COUNT(*) FROM appointments a WHERE date(a.scheduled_at) = d.day) AS appointments,
-            (SELECT COALESCE(SUM(p.amount),0) FROM payments p WHERE date(p.paid_at) = d.day) AS collected,
-            (SELECT COUNT(*) FROM admissions ad WHERE date(ad.admitted_at) = d.day) AS admissions,
+            (SELECT COUNT(*) FROM visits v WHERE date(v.arrived_at) = d.day${B('v')}) AS visits,
+            (SELECT COUNT(*) FROM appointments a
+              WHERE date(a.scheduled_at) = d.day${B('a')}) AS appointments,
+            (SELECT COALESCE(SUM(p.amount),0) FROM payments p
+              WHERE date(p.paid_at) = d.day${B('p')}) AS collected,
+            (SELECT COUNT(*) FROM admissions ad
+              WHERE date(ad.admitted_at) = d.day${B('ad')}) AS admissions,
             (SELECT COUNT(*) FROM lab_orders lo
-              WHERE date(lo.ordered_at) = d.day AND lo.status != 'cancelled') AS lab_orders
+              WHERE date(lo.ordered_at) = d.day AND lo.status != 'cancelled'${B('lo')}) AS lab_orders
        FROM d ORDER BY d.day`
   ).all(days - 1);
 

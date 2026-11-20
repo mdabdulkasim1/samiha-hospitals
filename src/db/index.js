@@ -172,6 +172,157 @@ function migrate() {
    */
   ensureColumn('queue_categories', 'location', 'TEXT');
 
+  // =======================================================================
+  // Branches
+  // =======================================================================
+  /*
+   * The clinic is becoming a group.
+   *
+   * One building today, Melapalayam; another location is planned, and the
+   * owner's question is what each one takes and what each one costs. That
+   * makes the branch a fact about almost everything that happens — a visit
+   * happened somewhere, a payment was taken somewhere, an expense was
+   * incurred somewhere — rather than a setting.
+   *
+   * So the branch is stamped on the record at the moment it is made, from
+   * the branch the person is signed in to. Never worked out afterwards from
+   * who entered it: staff move between branches, and a figure that changes
+   * when somebody transfers is not a figure anybody can act on.
+   */
+  ensureColumn('sessions', 'branch_id', 'INTEGER REFERENCES branches(id)');
+  /* Where a staff member normally works. The branches they MAY work in are
+   * a list of their own, below; this is the one they land in. */
+  ensureColumn('users', 'branch_id', 'INTEGER REFERENCES branches(id)');
+
+  db.exec(`CREATE TABLE IF NOT EXISTS user_branches (
+    user_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+    PRIMARY KEY (user_id, branch_id)
+  )`);
+
+  /*
+   * What happened, and where.
+   *
+   * These are the records the owner's questions are made of: who came, what
+   * was billed, what was collected, what was spent. Everything else in the
+   * system hangs off one of them.
+   */
+  const BRANCHED = ['patients', 'appointments', 'visits', 'queue_tokens', 'invoices',
+    'payments', 'pharmacy_sales', 'cash_book', 'expenses',
+    // The rest of the working day, stamped for the same reason: the owner's
+    // question is "how did each place do", and a test ordered or an enquiry
+    // answered is part of the answer.
+    'lab_orders', 'enquiries', 'admissions'];
+  for (const table of BRANCHED) {
+    ensureColumn(table, 'branch_id', 'INTEGER REFERENCES branches(id)');
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_${table}_branch ON ${table}(branch_id)`);
+  }
+
+  /*
+   * Where the stamping actually happens.
+   *
+   * There are some thirty places in this system that create one of the
+   * rows above, and more will be written. Adding `branch_id` to each insert
+   * by hand would work until somebody adds the thirty-first and forgets —
+   * and the failure is silent and expensive: a row with no branch simply
+   * stops appearing in the figures the owner reads, and nothing anywhere
+   * says so.
+   *
+   * So the database does it. `request_context` holds the branch of the
+   * request being served, set by one line of middleware; a trigger on each
+   * table fills in a branch that was left empty. This is safe because the
+   * whole ERP runs on one synchronous connection — a request's handler
+   * runs to completion before another begins, so the context cannot belong
+   * to somebody else's request halfway through an insert.
+   *
+   * Code that knows better still wins: a trigger only fires on NULL.
+   */
+  db.exec(`CREATE TABLE IF NOT EXISTS request_context (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+  )`);
+  for (const table of BRANCHED) {
+    db.exec(`DROP TRIGGER IF EXISTS trg_${table}_branch`);
+    db.exec(`CREATE TRIGGER trg_${table}_branch AFTER INSERT ON ${table}
+             WHEN NEW.branch_id IS NULL
+             BEGIN
+               UPDATE ${table}
+                  SET branch_id = (SELECT CAST(value AS INTEGER) FROM request_context
+                                    WHERE key = 'branch_id')
+                WHERE rowid = NEW.rowid;
+             END`);
+  }
+
+  /*
+   * Making room in the token number for the branch.
+   *
+   * A token was unique by category, day and sequence, which was right while
+   * there was one waiting room. With two, each calls its own numbers from
+   * 001 every morning, so Melapalayam's 08-001 and Cheranmahadevi's 08-001
+   * are different tokens and that constraint refuses the second one.
+   *
+   * SQLite cannot drop a table-level UNIQUE, so the table is rebuilt — once,
+   * guarded by the constraint's own presence — and the rule is reinstated as
+   * an index that counts the branch, with COALESCE so that rows which carry
+   * no branch still collide with each other rather than slipping past on
+   * SQLite's rule that two NULLs are different.
+   *
+   * Foreign keys are suspended for the swap and checked before the commit:
+   * either the table comes out whole or the database is exactly as it was.
+   */
+  const tokensSql = db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'queue_tokens'").get();
+  const UQ = /,?\s*UNIQUE\s*\(\s*category_id\s*,\s*issue_date\s*,\s*seq\s*\)/i;
+  if (tokensSql && UQ.test(tokensSql.sql)) {
+    const columns = db.prepare('PRAGMA table_info(queue_tokens)').all().map((c) => c.name);
+    const rebuilt = tokensSql.sql
+      .replace(/CREATE TABLE\s+(?:IF NOT EXISTS\s+)?["`]?queue_tokens["`]?/i,
+        'CREATE TABLE queue_tokens_rebuild')
+      .replace(UQ, '');
+    const wasOn = db.pragma('foreign_keys', { simple: true });
+    db.pragma('foreign_keys = OFF');
+    try {
+      db.exec('BEGIN');
+      db.exec(rebuilt);
+      const cols = columns.map((c) => `"${c}"`).join(', ');
+      db.exec(`INSERT INTO queue_tokens_rebuild (${cols}) SELECT ${cols} FROM queue_tokens`);
+      db.exec('DROP TABLE queue_tokens');
+      db.exec('ALTER TABLE queue_tokens_rebuild RENAME TO queue_tokens');
+      db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_queue_tokens_seq
+                 ON queue_tokens(category_id, issue_date, seq, COALESCE(branch_id, 0))`);
+      db.exec('CREATE INDEX IF NOT EXISTS idx_queue_tokens_day ON queue_tokens(issue_date, category_id, seq)');
+      db.exec('CREATE INDEX IF NOT EXISTS idx_queue_tokens_room ON queue_tokens(issue_date, room_id, status)');
+      db.exec('CREATE INDEX IF NOT EXISTS idx_queue_tokens_visit ON queue_tokens(visit_id)');
+      db.exec(`CREATE TRIGGER IF NOT EXISTS trg_queue_tokens_branch AFTER INSERT ON queue_tokens
+               WHEN NEW.branch_id IS NULL
+               BEGIN
+                 UPDATE queue_tokens
+                    SET branch_id = (SELECT CAST(value AS INTEGER) FROM request_context
+                                      WHERE key = 'branch_id')
+                  WHERE rowid = NEW.rowid;
+               END`);
+      const broken = db.pragma('foreign_key_check');
+      if (broken.length) throw new Error(`${broken.length} reference(s) would be orphaned`);
+      db.exec('COMMIT');
+      console.log('[migrate] token numbers now start again at 001 in each branch.');
+    } catch (err) {
+      try { db.exec('ROLLBACK'); } catch { /* already rolled back */ }
+      console.error('[migrate] token numbering migration failed, nothing changed:', err.message);
+    } finally {
+      if (wasOn) db.pragma('foreign_keys = ON');
+    }
+  }
+
+  /*
+   * One 08-001 per branch per day, for every install — the one above is
+   * inside the rebuild, this is the one a database that never had the old
+   * constraint gets. COALESCE so that rows carrying no branch still collide
+   * with each other, rather than slipping past on SQLite's rule that two
+   * NULLs are different.
+   */
+  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_queue_tokens_seq
+             ON queue_tokens(category_id, issue_date, seq, COALESCE(branch_id, 0))`);
+
   /*
    * When a poster plays.
    *

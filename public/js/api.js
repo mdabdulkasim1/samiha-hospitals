@@ -26,6 +26,23 @@
     let data = null;
     try { data = text ? JSON.parse(text) : null; } catch { data = text; }
 
+    /*
+     * Nothing may be recorded until the person has said which branch they
+     * are in. The server refuses the write; here the question is simply
+     * asked, so the answer to "why did that not save" is a dialog rather
+     * than a shrug.
+     */
+    if (res.status === 409 && data && data.needsBranch) {
+      if (window.APP && APP.openBranchPicker) {
+        APP.branches = data.branches || APP.branches;
+        APP.openBranchPicker({ mustChoose: true });
+      }
+      const err = new Error(data.error || 'Choose a branch first.');
+      err.status = 409;
+      err.needsBranch = true;
+      throw err;
+    }
+
     if (!res.ok) {
       const err = new Error((data && data.error) || `Request failed (${res.status})`);
       err.status = res.status;

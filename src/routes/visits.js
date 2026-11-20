@@ -110,8 +110,11 @@ router.get('/board', clinicalRoles, wrap((req, res) => {
        LEFT JOIN departments d ON d.id = v.department_id
        LEFT JOIN doctor_profiles dp ON dp.user_id = v.doctor_id
       WHERE date(v.arrived_at) = ?
+        -- The building this screen is in. A board mixing two branches shows
+        -- the desk patients who are not in the room.
+        AND (? IS NULL OR v.branch_id = ?)
       ORDER BY CASE v.status WHEN 'checked_out' THEN 1 ELSE 0 END, v.token_no, v.id`
-  ).all(date);
+  ).all(date, req.branchId, req.branchId);
 
   for (const r of rows) r.consultation_paid = Boolean(r.consultation_paid);
   // The "₹ due" flag on a card belongs to the desks that would collect it.
@@ -132,8 +135,9 @@ router.get('/', clinicalRoles, wrap((req, res) => {
     `SELECT v.*, p.uhid, (p.first_name || ' ' || COALESCE(p.last_name,'')) AS patient_name, u.name AS doctor_name
        FROM visits v JOIN patients p ON p.id = v.patient_id LEFT JOIN users u ON u.id = v.doctor_id
       WHERE (? IS NULL OR v.status = ?) AND (? IS NULL OR v.patient_id = ?)
+        AND (? IS NULL OR v.branch_id = ?)
       ORDER BY v.id DESC LIMIT ? OFFSET ?`
-  ).all(status, status, patientId, patientId, limit, offset);
+  ).all(status, status, patientId, patientId, req.branchId, req.branchId, limit, offset);
   res.json({ rows, page, limit });
 }));
 

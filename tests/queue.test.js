@@ -1003,9 +1003,15 @@ test('a room with nothing in it stays off the television', () => {
 // ============================================ the poster library and its clock
 test('a poster plays only between its dates', async () => {
   const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
-  const today = new Date().toISOString().slice(0, 10);
-  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-  const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+  /*
+   * The clinic's own days, not the server's. A poster's dates are read in
+   * clinic time, so a test that worked out "tomorrow" in UTC would, for the
+   * five and a half hours after midnight in Melapalayam, be asserting that
+   * today's poster is not up yet.
+   */
+  const day = (shift) => clock.dateKey(new Date(Date.now() + shift * 86400000));
+  const yesterday = day(-1);
+  const tomorrow = day(1);
 
   const live = await api('POST', '/api/queue/slides',
     { data: `data:image/png;base64,${png}`, title: 'Opening offer', fromDate: yesterday, toDate: tomorrow },

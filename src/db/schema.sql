@@ -1975,9 +1975,16 @@ CREATE TABLE IF NOT EXISTS queue_tokens (
   done_at      TEXT,
   note         TEXT,
   issued_by    INTEGER REFERENCES users(id),
-  created_at   TEXT NOT NULL DEFAULT (datetime('now')),
-  UNIQUE (category_id, issue_date, seq)
+  -- Which waiting room called it. Each branch numbers its own day from 001,
+  -- so the branch is part of what makes a token number unique.
+  branch_id    INTEGER REFERENCES branches(id),
+  created_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
+/*
+ * One 08-001 per branch per day — an index rather than a table constraint,
+ * created in src/db/index.js once the branch column is certain to exist on
+ * an install that predates it. See the note there.
+ */
 CREATE INDEX IF NOT EXISTS idx_queue_tokens_day ON queue_tokens(issue_date, category_id, seq);
 CREATE INDEX IF NOT EXISTS idx_queue_tokens_room ON queue_tokens(issue_date, room_id, status);
 CREATE INDEX IF NOT EXISTS idx_queue_tokens_visit ON queue_tokens(visit_id);

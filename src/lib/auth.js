@@ -22,12 +22,25 @@ function verifyPassword(password, stored) {
 }
 
 // ------------------------------------------------------------------- sessions
-function createSession(userId) {
+/**
+ * A session belongs to a person AND to a branch.
+ *
+ * Which branch somebody is standing in decides what they see and what
+ * their work is stamped with, so it is part of being signed in rather than
+ * a preference remembered somewhere. Null while the person has not chosen
+ * yet, which is the state the branch picker exists to resolve.
+ */
+function createSession(userId, branchId = null) {
   const token = crypto.randomBytes(32).toString('hex');
   const expires = new Date(Date.now() + config.session.ttlHours * 3600_000).toISOString();
-  db.prepare('INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)')
-    .run(token, userId, expires);
+  db.prepare('INSERT INTO sessions (token, user_id, branch_id, expires_at) VALUES (?, ?, ?, ?)')
+    .run(token, userId, branchId || null, expires);
   return { token, expiresAt: expires };
+}
+
+/** Move this session to another branch, once it is known to be allowed. */
+function setSessionBranch(token, branchId) {
+  db.prepare('UPDATE sessions SET branch_id = ? WHERE token = ?').run(branchId || null, token);
 }
 
 function destroySession(token) {
@@ -41,7 +54,8 @@ function purgeExpiredSessions() {
 function userForToken(token) {
   if (!token) return null;
   const row = db.prepare(
-    `SELECT u.id, u.staff_code, u.name, u.email, u.role, u.department_id, u.active, s.expires_at
+    `SELECT u.id, u.staff_code, u.name, u.email, u.role, u.department_id, u.active,
+            u.branch_id AS home_branch_id, s.branch_id, s.expires_at
        FROM sessions s JOIN users u ON u.id = s.user_id
       WHERE s.token = ? AND s.expires_at > datetime('now')`
   ).get(token);
@@ -63,6 +77,22 @@ function readToken(req) {
 function attachUser(req, _res, next) {
   req.sessionToken = readToken(req);
   req.user = userForToken(req.sessionToken);
+  /*
+   * The branch this request is happening in, on the request itself.
+   *
+   * Everything written during it is stamped with this, and the operational
+   * screens are scoped to it. It is read from the session rather than from
+   * the user's record, because staff move between branches and what
+   * matters is where they are standing now.
+   */
+  req.branchId = req.user ? (req.user.branch_id || null) : null;
+  /*
+   * Hand the branch to the database for the duration of this request, so
+   * that anything inserted during it is stamped without every insert site
+   * having to remember. See the triggers in src/db/index.js.
+   */
+  db.prepare('INSERT OR REPLACE INTO request_context (key, value) VALUES (?, ?)')
+    .run('branch_id', req.branchId === null ? null : String(req.branchId));
   next();
 }
 
@@ -199,6 +229,6 @@ module.exports = {
   MONEY_ROLES, seesMoney, PRICE_ROLES, seesPrices,
   hashPassword, verifyPassword, passwordProblems,
   createResetToken, userForResetToken, consumeResetToken, purgeExpiredResets, hashToken,
-  createSession, destroySession, purgeExpiredSessions, userForToken,
+  createSession, setSessionBranch, destroySession, purgeExpiredSessions, userForToken,
   attachUser, requireAuth, requireRole, requireOwner, readToken,
 };

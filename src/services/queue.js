@@ -45,6 +45,7 @@
 const { db } = require('../db');
 const { badRequest, notFound, conflict } = require('../lib/http');
 const scheduling = require('./scheduling');
+const branches = require('./branches');
 
 const now = () => new Date();
 
@@ -539,19 +540,26 @@ function issue({
    * The sequence: today's highest in this category, plus one. This is why
    * there is no nightly reset to forget — the morning's first patient finds
    * nothing above them from today and takes 001.
+   *
+   * Counted within the branch, because each waiting room calls its own
+   * numbers. Two branches sharing one series would have the new place
+   * opening its morning by calling 08-014, and a patient holding 08-002
+   * watching a board that is never going to reach them.
    */
+  const branchId = branches.current();
   const write = db.transaction(() => {
     const highest = db.prepare(
-      'SELECT MAX(seq) AS m FROM queue_tokens WHERE category_id = ? AND issue_date = date(?)')
-      .get(categoryId, date).m;
+      `SELECT MAX(seq) AS m FROM queue_tokens
+        WHERE category_id = ? AND issue_date = date(?) AND branch_id IS ?`)
+      .get(categoryId, date, branchId).m;
     const seq = (highest || 0) + 1;
     return db.prepare(
       `INSERT INTO queue_tokens
          (category_id, issue_date, seq, label, patient_id, visit_id, doctor_id, room_id,
-          note, issued_by)
-       VALUES (?, date(?), ?, ?, ?, ?, ?, ?, ?, ?)`
+          note, issued_by, branch_id)
+       VALUES (?, date(?), ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(categoryId, date, seq, labelFor(category.code, seq), patientId, visitId,
-      doctorId, room ? room.id : null, trim(note), userId).lastInsertRowid;
+      doctorId, room ? room.id : null, trim(note), userId, branchId).lastInsertRowid;
   });
 
   return tokenOr404(write());
@@ -676,12 +684,20 @@ const LIVE = "t.status IN ('waiting','called','serving')";
  * Returns who is being seen, who has been called and not yet appeared, and
  * who is waiting in the order they will be called.
  */
-function queueFor({ categoryId = null, roomId = null, date = dateKey(now()) } = {}, at = now()) {
-  const args = [date, ...(categoryId ? [categoryId] : []), ...(roomId ? [roomId] : [])];
+function queueFor({ categoryId = null, roomId = null, branchId = null,
+  date = dateKey(now()) } = {}, at = now()) {
+  /*
+   * Scoped to the branch the question is being asked from. A queue is a
+   * line of people standing in one building; a board that mixed two of
+   * them would call a number nobody in the room is holding.
+   */
+  const args = [date, ...(categoryId ? [categoryId] : []), ...(roomId ? [roomId] : []),
+    ...(branchId ? [branchId] : [])];
+  const where = `${categoryId ? 'AND t.category_id = ?' : ''}
+       ${roomId ? 'AND t.room_id = ?' : ''}
+       ${branchId ? 'AND t.branch_id = ?' : ''}`;
   const rows = db.prepare(
-    `${TOKENS} WHERE t.issue_date = date(?) AND ${LIVE}
-       ${categoryId ? 'AND t.category_id = ?' : ''}
-       ${roomId ? 'AND t.room_id = ?' : ''}`).all(...args);
+    `${TOKENS} WHERE t.issue_date = date(?) AND ${LIVE} ${where}`).all(...args);
 
   const serving = rows.filter((r) => r.status === 'serving');
   const called = rows.filter((r) => r.status === 'called')
@@ -699,9 +715,7 @@ function queueFor({ categoryId = null, roomId = null, date = dateKey(now()) } = 
   const closed = db.prepare(
     `SELECT t.serving_at, t.done_at FROM queue_tokens t
       WHERE t.issue_date = date(?) AND t.status = 'done'
-        AND t.serving_at IS NOT NULL AND t.done_at IS NOT NULL
-        ${categoryId ? 'AND t.category_id = ?' : ''}
-        ${roomId ? 'AND t.room_id = ?' : ''}`).all(...args);
+        AND t.serving_at IS NOT NULL AND t.done_at IS NOT NULL ${where}`).all(...args);
   const minutes = closed.map((t) => (fromStamp(t.done_at) - fromStamp(t.serving_at)) / 60000)
     .filter((m) => m > 0 && m < 180);
   const average = minutes.length >= 3
@@ -727,7 +741,7 @@ function queueFor({ categoryId = null, roomId = null, date = dateKey(now()) } = 
 }
 
 /** The whole desk: every category that has anybody in it today. */
-function board(date = dateKey(now()), at = now()) {
+function board(date = dateKey(now()), at = now(), { branchId = null } = {}) {
   const live = db.prepare(
     `SELECT c.id, c.code, c.name, c.kind,
             SUM(CASE WHEN t.status = 'waiting' THEN 1 ELSE 0 END) AS waiting,
@@ -737,10 +751,11 @@ function board(date = dateKey(now()), at = now()) {
             COUNT(*) AS issued, MAX(t.seq) AS last_seq
        FROM queue_tokens t JOIN queue_categories c ON c.id = t.category_id
       WHERE t.issue_date = date(?) AND t.status <> 'cancelled'
-      GROUP BY c.id ORDER BY c.sort_order, c.code`).all(date);
+        ${branchId ? 'AND t.branch_id = ?' : ''}
+      GROUP BY c.id ORDER BY c.sort_order, c.code`).all(...[date, ...(branchId ? [branchId] : [])]);
 
   const lanes = live.map((c) => {
-    const q = queueFor({ categoryId: c.id, date }, at);
+    const q = queueFor({ categoryId: c.id, date, branchId }, at);
     return {
       category: { id: c.id, code: c.code, name: c.name, kind: c.kind },
       issued: c.issued,
@@ -948,7 +963,7 @@ function slip(tokenId, at = now()) {
  * No names. A waiting room is a public place, and a number on a wall tells
  * the right person everything and everybody else nothing.
  */
-function display(floor, date = dateKey(now()), at = now()) {
+function display(floor, date = dateKey(now()), at = now(), { branchId = null } = {}) {
   const all = rooms();
   const floors = [...new Set(all.map((r) => r.floor))];
   const wanted = floor
@@ -975,10 +990,10 @@ function display(floor, date = dateKey(now()), at = now()) {
    */
   const panels = wanted.filter((room) => {
     if (room.categories.length || room.doctors.length) return true;
-    const q = queueFor({ roomId: room.id, date }, at);
+    const q = queueFor({ roomId: room.id, date, branchId }, at);
     return q.counts.waiting + q.counts.called + q.counts.serving > 0;
   }).map((room) => {
-    const q = queueFor({ roomId: room.id, date }, at);
+    const q = queueFor({ roomId: room.id, date, branchId }, at);
     /*
      * The doctor on the screen is the one sitting behind this door at this
      * minute, not everybody whose name is against the room. A doctor whose
@@ -1018,7 +1033,7 @@ function display(floor, date = dateKey(now()), at = now()) {
    * under the rooms, on every floor's screen.
    */
   const counters = categories({ kind: 'service' }).map((c) => {
-    const q = queueFor({ categoryId: c.id, date }, at);
+    const q = queueFor({ categoryId: c.id, date, branchId }, at);
     if (!q.counts.waiting && !q.counts.called && !q.counts.serving) return null;
     const head = q.called[0] || q.serving[0] || null;
     return {

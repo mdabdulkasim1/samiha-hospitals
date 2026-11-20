@@ -34,7 +34,9 @@ const counterRoles = requireRole('reception', 'nurse', 'doctor', 'lab', 'pharmac
 const anyone = requireRole('reception', 'nurse', 'doctor', 'lab', 'pharmacy',
   'cashier', 'counselor', 'accountant');
 
-const today = () => new Date().toISOString().slice(0, 10);
+// The clinic's today. A token is a fact about the clinic's day, and this is
+// the same date the queue service numbers against.
+const today = () => clinicClock.dateKey();
 
 // ---------------------------------------------------------------- the set-up
 router.get('/setup', anyone, wrap((req, res) => {
@@ -142,13 +144,14 @@ router.get('/duty', anyone, wrap((req, res) => {
 
 // ---------------------------------------------------------------- the tokens
 router.get('/board', counterRoles, wrap((req, res) => {
-  res.json(queue.board(str(req.query.date) || today()));
+  res.json(queue.board(str(req.query.date) || today(), new Date(), { branchId: req.branchId }));
 }));
 
 router.get('/queues', counterRoles, wrap((req, res) => {
   res.json(queue.queueFor({
     categoryId: int(req.query.categoryId) || null,
     roomId: int(req.query.roomId) || null,
+    branchId: req.branchId,
     date: str(req.query.date) || today(),
   }));
 }));
@@ -246,8 +249,14 @@ router.post('/tokens/:id/room', deskRoles, wrap((req, res) => {
 
 // ------------------------------------------------- the screen in the corridor
 router.get('/display', anyone, wrap((req, res) => {
+  /*
+   * The board shows the building the screen is hanging in. A television at
+   * one branch calling numbers issued at another is worse than a blank
+   * screen — somebody would stand up.
+   */
   res.json({
-    ...queue.display(str(req.query.floor), str(req.query.date) || today()),
+    ...queue.display(str(req.query.floor), str(req.query.date) || today(), new Date(),
+      { branchId: req.branchId }),
     slides: slideList(str(req.query.floor)),
   });
 }));

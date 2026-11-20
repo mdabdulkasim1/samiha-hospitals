@@ -30,6 +30,7 @@ const { str, oneOf, num, int, required } = require('../lib/validate');
 const commercial = require('../lib/commercial');
 const reports = require('../lib/reports');
 const audit = require('../lib/audit');
+const branches = require('../services/branches');
 
 const router = express.Router();
 
@@ -51,6 +52,22 @@ router.get('/overview', requireOwner, wrap((req, res) => {
     || new Date(Date.now() - SPAN[by] * 86400000).toISOString().slice(0, 10);
   const span = [from, to];
 
+  /*
+   * One branch, or all of them.
+   *
+   * The clinic is becoming a group, and "how did we do" is now two
+   * questions: how did this place do, and how did each of them do. The
+   * filter answers the first; `byBranch` at the end answers the second.
+   *
+   * The id is forced to a number and dropped straight into the SQL rather
+   * than bound, because every query below is already carrying a positional
+   * parameter list and threading one more through ten of them is how an
+   * off-by-one ends up silently reporting another branch's takings.
+   */
+  const branchId = int(req.query.branchId) || null;
+  if (branchId && !branches.byId(branchId)) throw badRequest('No such branch.');
+  const B = (alias) => (branchId ? ` AND ${alias}.branch_id = ${Number(branchId)}` : '');
+
   // ----------------------------------------------------------- the series
   const series = new Map();
   const at = (key) => {
@@ -65,17 +82,17 @@ router.get('/overview', requireOwner, wrap((req, res) => {
   const fold = (rows, field) => rows.forEach((r) => { at(r.at)[field] = r2(r.v); });
 
   fold(db.prepare(
-    `SELECT ${bucket(by, 'paid_at')} AS at, SUM(amount) AS v FROM payments
-      WHERE date(paid_at) BETWEEN date(?) AND date(?) GROUP BY at`).all(...span), 'billed');
+    `SELECT ${bucket(by, 'paid_at')} AS at, SUM(amount) AS v FROM payments p
+      WHERE date(paid_at) BETWEEN date(?) AND date(?)${B('p')} GROUP BY at`).all(...span), 'billed');
 
   fold(db.prepare(
-    `SELECT ${bucket(by, 'created_at')} AS at, SUM(paid_amount) AS v FROM pharmacy_sales
+    `SELECT ${bucket(by, 'created_at')} AS at, SUM(paid_amount) AS v FROM pharmacy_sales s
       WHERE sale_type = 'counter' AND status != 'cancelled'
-        AND date(created_at) BETWEEN date(?) AND date(?) GROUP BY at`).all(...span), 'counter');
+        AND date(created_at) BETWEEN date(?) AND date(?)${B('s')} GROUP BY at`).all(...span), 'counter');
 
   for (const row of db.prepare(
-    `SELECT ${bucket(by, 'entry_date')} AS at, direction, SUM(amount) AS v FROM cash_book
-      WHERE voided_at IS NULL AND date(entry_date) BETWEEN date(?) AND date(?)
+    `SELECT ${bucket(by, 'entry_date')} AS at, direction, SUM(amount) AS v FROM cash_book c
+      WHERE voided_at IS NULL AND date(entry_date) BETWEEN date(?) AND date(?)${B('c')}
       GROUP BY at, direction`).all(...span)) {
     if (row.direction === 'in') at(row.at).otherIncome = r2(row.v);
     else at(row.at).expense = r2(row.v);
@@ -97,17 +114,17 @@ router.get('/overview', requireOwner, wrap((req, res) => {
        FROM pharmacy_sale_items i
        JOIN pharmacy_sales s ON s.id = i.sale_id
        LEFT JOIN drug_batches b ON b.id = i.batch_id
-      WHERE s.status != 'cancelled' AND date(s.created_at) BETWEEN date(?) AND date(?)
+      WHERE s.status != 'cancelled' AND date(s.created_at) BETWEEN date(?) AND date(?)${B('s')}
       GROUP BY at`).all(...span), 'medicineCost');
 
   fold(db.prepare(
-    `SELECT ${bucket(by, 'arrived_at')} AS at, COUNT(*) AS v FROM visits
-      WHERE date(arrived_at) BETWEEN date(?) AND date(?) GROUP BY at`).all(...span), 'visits');
+    `SELECT ${bucket(by, 'arrived_at')} AS at, COUNT(*) AS v FROM visits v
+      WHERE date(arrived_at) BETWEEN date(?) AND date(?)${B('v')} GROUP BY at`).all(...span), 'visits');
 
   fold(db.prepare(
-    `SELECT ${bucket(by, 'registered_at')} AS at, COUNT(*) AS v FROM patients
+    `SELECT ${bucket(by, 'registered_at')} AS at, COUNT(*) AS v FROM patients p
       WHERE registered_at IS NOT NULL
-        AND date(registered_at) BETWEEN date(?) AND date(?) GROUP BY at`).all(...span), 'patients');
+        AND date(registered_at) BETWEEN date(?) AND date(?)${B('p')} GROUP BY at`).all(...span), 'patients');
 
   const points = [...series.values()].map((p) => {
     const sale = r2(p.billed + p.counter + p.otherIncome);
@@ -131,13 +148,13 @@ router.get('/overview', requireOwner, wrap((req, res) => {
   const byCategory = db.prepare(
     `SELECT COALESCE(ii.ref_type, 'other') AS category, SUM(ii.amount) AS amount, COUNT(*) AS lines
        FROM invoice_items ii JOIN invoices i ON i.id = ii.invoice_id
-      WHERE i.status != 'cancelled' AND date(i.created_at) BETWEEN date(?) AND date(?)
+      WHERE i.status != 'cancelled' AND date(i.created_at) BETWEEN date(?) AND date(?)${B('i')}
       GROUP BY category ORDER BY amount DESC`).all(...span);
 
   const spend = db.prepare(
-    `SELECT category, SUM(amount) AS amount, COUNT(*) AS entries FROM cash_book
+    `SELECT category, SUM(amount) AS amount, COUNT(*) AS entries FROM cash_book c
       WHERE direction = 'out' AND voided_at IS NULL
-        AND date(entry_date) BETWEEN date(?) AND date(?)
+        AND date(entry_date) BETWEEN date(?) AND date(?)${B('c')}
       GROUP BY category ORDER BY amount DESC`).all(...span);
 
   /*
@@ -157,7 +174,7 @@ router.get('/overview', requireOwner, wrap((req, res) => {
        FROM users u
        LEFT JOIN departments d ON d.id = u.department_id
        LEFT JOIN visits v ON v.doctor_id = u.id
-            AND date(v.arrived_at) BETWEEN date(?) AND date(?)
+            AND date(v.arrived_at) BETWEEN date(?) AND date(?)${B('v')}
        LEFT JOIN invoices i ON i.visit_id = v.id AND i.status != 'cancelled'
       WHERE u.role = 'doctor' AND u.active = 1
       GROUP BY u.id HAVING visits > 0 ORDER BY billed DESC`).all(...span);
@@ -177,8 +194,62 @@ router.get('/overview', requireOwner, wrap((req, res) => {
        LEFT JOIN drug_batches b ON b.id = i.batch_id
       WHERE s.status != 'cancelled' AND date(s.created_at) BETWEEN date(?) AND date(?)`).get(...span);
 
+  /**
+   * Each branch, side by side.
+   *
+   * The owner's question once there is more than one place is not "how did
+   * we do" but "how did each of them do", and the answer has to be the
+   * same arithmetic as the headline — takings in, costs out, what is left —
+   * or the two will disagree on a screen that shows both at once.
+   *
+   * Read for every branch whatever the filter above is set to: the
+   * comparison is the point, and filtering it to the branch already being
+   * looked at would leave a one-row table.
+   */
+  const byBranch = branches.list().map((b) => {
+    const only = ` AND x.branch_id = ${Number(b.id)}`;
+    const one = (sql) => r2(db.prepare(sql).get(...span).v || 0);
+
+    const billed = one(`SELECT SUM(amount) AS v FROM payments x
+      WHERE date(paid_at) BETWEEN date(?) AND date(?)${only}`);
+    const counter = one(`SELECT SUM(paid_amount) AS v FROM pharmacy_sales x
+      WHERE sale_type = 'counter' AND status != 'cancelled'
+        AND date(created_at) BETWEEN date(?) AND date(?)${only}`);
+    const otherIncome = one(`SELECT SUM(amount) AS v FROM cash_book x
+      WHERE direction = 'in' AND voided_at IS NULL
+        AND date(entry_date) BETWEEN date(?) AND date(?)${only}`);
+    const expense = one(`SELECT SUM(amount) AS v FROM cash_book x
+      WHERE direction = 'out' AND voided_at IS NULL
+        AND date(entry_date) BETWEEN date(?) AND date(?)${only}`);
+    const medicineCost = one(`SELECT SUM(i.qty * COALESCE(bt.purchase_price, 0)) AS v
+        FROM pharmacy_sale_items i
+        JOIN pharmacy_sales x ON x.id = i.sale_id
+        LEFT JOIN drug_batches bt ON bt.id = i.batch_id
+       WHERE x.status != 'cancelled'
+         AND date(x.created_at) BETWEEN date(?) AND date(?)${only}`);
+    const visits = one(`SELECT COUNT(*) AS v FROM visits x
+      WHERE date(arrived_at) BETWEEN date(?) AND date(?)${only}`);
+    const newPatients = one(`SELECT COUNT(*) AS v FROM patients x
+      WHERE registered_at IS NOT NULL
+        AND date(registered_at) BETWEEN date(?) AND date(?)${only}`);
+
+    const branchSale = r2(billed + counter + otherIncome);
+    const branchCost = r2(expense + medicineCost);
+    return {
+      id: b.id, code: b.code, name: b.name,
+      sale: branchSale, cost: branchCost,
+      profit: r2(branchSale - branchCost),
+      margin: pct(branchSale - branchCost, branchSale),
+      billed, counter, otherIncome, expense, medicineCost, visits, newPatients,
+      perVisit: visits ? r2(branchSale / visits) : 0,
+    };
+  });
+
   res.json({
     from, to, by, points,
+    branch: branches.byId(branchId),
+    branches: branches.list(),
+    byBranch,
     totals: {
       sale,
       cost,

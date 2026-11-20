@@ -1236,3 +1236,24 @@ tbody tr.panel-head.panel-sub td { background: transparent; border-top: 1px soli
   font-size: 11.5px; color: var(--crimson); }
 .sc-bar-row.awaiting .sc-track { background: var(--crimson-soft); }
 .sc-clear { width: 1%; white-space: nowrap; padding-left: 0 !important; }
+
+/* ----------------------------------------------------------- the branch
+   Which building this screen is showing. Beside the page title because it
+   decides what every figure on the page means, not in a settings screen. */
+.branch-chip { display: inline-flex; align-items: center; gap: 6px; height: 34px;
+  padding: 0 12px; border: 1px solid var(--line); border-radius: 999px;
+  background: var(--surface); color: var(--ink-2); font: inherit; font-size: 12.8px;
+  font-weight: 600; cursor: pointer; white-space: nowrap; }
+.branch-chip:hover { border-color: var(--teal); color: var(--teal); }
+.branch-chip .ico { font-size: 14px; }
+.branch-chip span:not(.ico) { max-width: 20ch; overflow: hidden; text-overflow: ellipsis; }
+.branch-chip.one { cursor: default; }
+.branch-chip.one:hover { border-color: var(--line); color: var(--ink-2); }
+.branch-chip.unset { border-color: var(--crimson); color: var(--crimson); }
+
+.branch-list { display: grid; gap: 8px; }
+.branch-opt { display: flex; flex-direction: column; gap: 2px; align-items: flex-start;
+  padding: 11px 13px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--surface); font: inherit; text-align: left; cursor: pointer; }
+.branch-opt:hover { border-color: var(--teal); background: var(--teal-soft); }
+.branch-opt.on { border-color: var(--teal); background: var(--teal-soft); }

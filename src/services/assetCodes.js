@@ -36,54 +36,20 @@ const PREFIX = process.env.ASSET_CODE_PREFIX || 'SHC';
 const clean = (s) => String(s || '').trim();
 const upper = (s) => clean(s).toUpperCase();
 
-// ---------------------------------------------------------------- branches
-const branches = ({ includeInactive = false } = {}) => db.prepare(
-  `SELECT * FROM branches ${includeInactive ? '' : 'WHERE active = 1'}
-    ORDER BY is_default DESC, code`).all();
-
-const defaultBranch = () => db.prepare(
-  'SELECT * FROM branches WHERE active = 1 ORDER BY is_default DESC, id LIMIT 1').get() || null;
-
-function saveBranch(id, fields) {
-  const code = fields.code === undefined ? undefined : upper(fields.code);
-  if (code !== undefined) {
-    // Two or three letters: MPM, CH. Long enough to read, short enough that
-    // the whole code still fits across a 50 mm sticker.
-    if (!/^[A-Z]{2,4}$/.test(code)) {
-      throw badRequest('A branch code is two to four letters, such as MPM or CH.');
-    }
-    const clash = db.prepare('SELECT id, name FROM branches WHERE code = ? AND id IS NOT ?')
-      .get(code, id || null);
-    if (clash) throw conflict(`${code} is already ${clash.name}.`);
-  }
-
-  const row = { code, name: fields.name === undefined ? undefined : clean(fields.name),
-    address: fields.address === undefined ? undefined : clean(fields.address),
-    is_default: fields.isDefault === undefined ? undefined : (fields.isDefault ? 1 : 0),
-    active: fields.active === undefined ? undefined : (fields.active ? 1 : 0) };
-  const given = Object.keys(row).filter((k) => row[k] !== undefined);
-  if (!given.length) throw badRequest('Nothing to change.');
-
-  const write = db.transaction(() => {
-    let branchId = id;
-    if (id) {
-      if (!db.prepare('SELECT 1 FROM branches WHERE id = ?').get(id)) throw notFound('Branch not found');
-      db.prepare(`UPDATE branches SET ${given.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`)
-        .run(...given.map((k) => row[k]), id);
-    } else {
-      if (!row.code || !row.name) throw badRequest('A branch needs a code and a name.');
-      branchId = db.prepare(
-        `INSERT INTO branches (${given.join(', ')}) VALUES (${given.map(() => '?').join(', ')})`
-      ).run(...given.map((k) => row[k])).lastInsertRowid;
-    }
-    // Only one default, or the next asset's branch is a coin toss.
-    if (row.is_default) {
-      db.prepare('UPDATE branches SET is_default = 0 WHERE id <> ?').run(branchId);
-    }
-    return branchId;
-  });
-  return db.prepare('SELECT * FROM branches WHERE id = ?').get(write());
-}
+/*
+ * The branches themselves live in src/services/branches.js.
+ *
+ * They started here, because the asset code was the first thing that needed
+ * to know which building an item belonged to. They are now the backbone of
+ * the whole system — everything recorded anywhere is stamped with one — so
+ * the register reads them from there rather than keeping a second copy of
+ * the rules. Two places deciding what a valid branch code is, is one place
+ * too many.
+ */
+const branchService = require('./branches');
+const branches = (opts) => branchService.list(opts);
+const defaultBranch = () => branchService.defaultBranch();
+const saveBranch = (id, fields) => branchService.save(id, fields);
 
 // ------------------------------------------------------------- item codes
 const itemCodes = ({ includeInactive = false, q } = {}) => db.prepare(

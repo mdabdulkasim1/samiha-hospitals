@@ -39,6 +39,10 @@
       let by = 'month';
       let from = '';
       let to = '';
+      // Empty means the group. The branch-by-branch card below answers the
+      // other half of the question, so the default is deliberately the whole
+      // clinic rather than wherever the owner happens to be signed in.
+      let branchId = '';
       let period = (params && params.period) || new Date().toISOString().slice(0, 7);
 
       const TABS = ['overview', 'commercial', 'reports'];
@@ -84,7 +88,7 @@
       const draw = async () => {
         const el = body;
         el.innerHTML = UI.loading();
-        const d = await API.get('/api/owner/overview' + API.qs({ by, from, to }));
+        const d = await API.get('/api/owner/overview' + API.qs({ by, from, to, branchId }));
         from = d.from; to = d.to;
         const t = d.totals;
         const p = d.position;
@@ -98,7 +102,14 @@
             </div>
             <input type="date" id="o-from" value="${d.from}">
             <input type="date" id="o-to" value="${d.to}">
-            <span class="muted small">${UI.esc(UI.date(d.from))} – ${UI.esc(UI.date(d.to))}</span>
+            ${(d.branches || []).length > 1 ? `
+              <select id="o-branch" title="Branch">
+                <option value="">All branches together</option>
+                ${d.branches.map((b) => `<option value="${b.id}" ${
+    String(branchId) === String(b.id) ? 'selected' : ''}>${UI.esc(b.name)}</option>`).join('')}
+              </select>` : ''}
+            <span class="muted small">${UI.esc(UI.date(d.from))} – ${UI.esc(UI.date(d.to))}
+              ${d.branch ? `· ${UI.esc(d.branch.name)}` : ''}</span>
           </div></div>
 
           ${headline(t, p)}
@@ -166,6 +177,8 @@
     : UI.empty('Nothing in the cash book for this period.', '💸')}</div></div>
           </div>
 
+          ${branchCard(d.byBranch)}
+
           ${pharmacyCard(d.pharmacy)}
 
           <div class="card mb"><div class="card-head"><h3>Doctor by doctor</h3>
@@ -193,6 +206,8 @@
           from = ''; to = '';
           draw();
         }));
+        const pick = el.querySelector('#o-branch');
+        if (pick) pick.addEventListener('change', (e) => { branchId = e.target.value; draw(); });
         el.querySelector('#o-from').addEventListener('change', (e) => { from = e.target.value; draw(); });
         el.querySelector('#o-to').addEventListener('change', (e) => { to = e.target.value; draw(); });
         CHARTS.wireHovers(el);
@@ -242,6 +257,46 @@
    * so the margin would read better than it is; the card says how many lines
    * that applies to rather than letting the figure stand unqualified.
    */
+  /**
+   * Each branch beside the others.
+   *
+   * The whole reason for a second place is that the owner can tell whether
+   * it pays for itself, which no group total will ever say. Same arithmetic
+   * as the headline — takings in, costs out, what is left — so the two
+   * cannot disagree on a page that shows both.
+   *
+   * Drawn whatever the filter above is set to, and it does not follow it:
+   * looking at one branch and then being shown a one-row comparison would
+   * answer a question nobody asked.
+   */
+  const branchCard = (rows) => {
+    if (!rows || rows.length < 2) return '';
+    const best = rows.reduce((a, b) => (b.profit > a.profit ? b : a), rows[0]);
+    const sale = rows.reduce((t, r) => t + r.sale, 0);
+
+    return `
+      <div class="card mb"><div class="card-head"><h3>Branch by branch</h3>
+        <span class="muted small">Whether each place pays for itself</span></div>
+        <div class="card-body tight">${UI.table([
+    { label: 'Branch', render: (x) => `<b>${UI.esc(x.name)}</b>`
+      + `<div class="muted small">${UI.esc(x.code)}</div>` },
+    { label: 'Visits', num: true, render: (x) => UI.num(x.visits) },
+    { label: 'Sale', num: true, render: (x) => money(x.sale) },
+    { label: 'Cost', num: true, render: (x) => money(x.cost) },
+    { label: 'Profit', num: true, render: (x) => `<b style="color:${
+      x.profit < 0 ? 'var(--danger)' : 'var(--ok)'}">${money(x.profit)}</b>` },
+    { label: 'Margin', num: true, render: (x) => `${x.margin}%` },
+    { label: 'Per visit', num: true, render: (x) => money(x.perVisit) },
+    { label: 'Share of sale', render: (x) => share(x.sale, sale) },
+  ], rows, { emptyText: 'Nothing recorded at any branch in this period.' })}
+        ${rows.some((r) => r.sale > 0) ? `<div class="muted small mt">
+          ${UI.esc(best.name)} is ahead on profit for this period
+          (${money(best.profit)}${best.margin ? `, ${best.margin}% margin` : ''}).
+          A branch showing nothing at all has had nothing recorded against it rather than
+          nothing earned — worth checking somebody is signing in to it.</div>` : ''}
+        </div></div>`;
+  };
+
   const pharmacyCard = (ph) => `
     <div class="card mb"><div class="card-head"><h3>The medicine counter</h3>
       <span class="muted small">The one margin this system knows exactly</span></div>

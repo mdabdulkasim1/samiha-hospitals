@@ -81,7 +81,13 @@ router.get('/staff', wrap((req, res) => {
             u.erased_at,
             -- Which consulting room they sit in, so the queue can send
             -- their patients to the right door without being told twice.
-            u.op_room_id, r.name AS op_room_name, r.floor AS op_room_floor
+            u.op_room_id, r.name AS op_room_name, r.floor AS op_room_floor,
+            -- Which branch they are posted to, and which one their sign-in
+            -- lands in. Shown on the staff list because "who is at the new
+            -- place on Tuesday" is a staffing question, not a settings one.
+            u.branch_id,
+            (SELECT group_concat(ub.branch_id) FROM user_branches ub
+              WHERE ub.user_id = u.id) AS branch_ids_csv
        FROM users u
        LEFT JOIN users setter ON setter.id = u.password_set_by
        LEFT JOIN departments d ON d.id = u.department_id
@@ -90,6 +96,11 @@ router.get('/staff', wrap((req, res) => {
       WHERE (? IS NULL OR u.role = ?)
       ORDER BY u.role, u.name`
   ).all(role, role);
+  for (const r of rows) {
+    r.branch_ids = String(r.branch_ids_csv || '').split(',').filter(Boolean).map(Number);
+    delete r.branch_ids_csv;
+    if (!r.branch_ids.length && r.branch_id) r.branch_ids = [r.branch_id];
+  }
   // A consultation fee is a rate like any other on the tariff.
   if (!seesPrices(req.user)) for (const r of rows) { r.consult_fee = null; r.follow_up_fee = null; }
   res.json(rows);
