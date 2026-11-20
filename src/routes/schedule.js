@@ -70,6 +70,27 @@ router.post('/doctors/:id/copy', editRoles, wrap((req, res) => {
   res.json({ ...out, chart: chart.chart() });
 }));
 
+/** Clear one doctor's week — the chart's own "start again" for that row. */
+router.delete('/doctors/:id', editRoles, wrap((req, res) => {
+  const out = chart.clearWeek(int(req.params.id));
+  audit.log(req, 'duty_chart.clear_week', 'doctor', out.doctor.id, { cleared: out.cleared });
+  res.json({ ...out, chart: chart.chart() });
+}));
+
+/**
+ * Clear every weekly timing.
+ *
+ * What the clinic reaches for when it is putting its own chart in for the
+ * first time and wants whatever was there before gone. Hours fixed against
+ * a date, and leave, are left alone — those are decisions about particular
+ * days rather than the pattern being replaced.
+ */
+router.delete('/', editRoles, wrap((req, res) => {
+  const out = chart.clearAll();
+  audit.log(req, 'duty_chart.clear_all', 'schedule', null, out);
+  res.json({ ...out, chart: chart.chart() });
+}));
+
 /** The room column: where this doctor sits, and their windows follow it. */
 router.post('/doctors/:id/room', editRoles, wrap((req, res) => {
   const row = chart.setRoom(int(req.params.id), int(req.body.roomId) || null);

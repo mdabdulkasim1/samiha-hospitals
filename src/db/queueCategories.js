@@ -10,9 +10,10 @@
  * Three things about this list are deliberate and should not be "corrected"
  * to match the department table:
  *
- *   - ENT (03) and Urology (04) are here although the clinic has no such
- *     department yet. The front desk can issue their tokens the day a
- *     visiting consultant starts.
+ *   - ENT (03) and Urology (04) were here before the clinic had either
+ *     department, so the front desk could issue their tokens the day a
+ *     visiting consultant started. Both are departments now and feed their
+ *     codes like the rest.
  *   - General Practice and Internal Medicine both feed 05, because the
  *     clinic's directory lists them as one.
  *   - Oncology has no category. It is absent from the directory the codes
@@ -27,8 +28,8 @@ const CATEGORIES = [
   // code  name                            kind       departments that feed it
   ['01', 'Neurology', 'consult', ['NEU']],
   ['02', 'Cardiology', 'consult', ['CAR']],
-  ['03', 'ENT', 'consult', []],
-  ['04', 'Urology', 'consult', []],
+  ['03', 'ENT', 'consult', ['ENT']],
+  ['04', 'Urology', 'consult', ['URO']],
   ['05', 'General / Internal Medicine', 'consult', ['IM', 'GP']],
   ['06', 'General Surgery', 'consult', ['SUR']],
   ['07', 'Obstetrics & Gynaecology', 'consult', ['GYN']],

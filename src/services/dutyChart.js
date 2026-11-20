@@ -267,6 +267,32 @@ function copyDay(doctorId, fromWeekday, toWeekdays, opts = {}) {
   return { copied: targets.length, days: targets.map((d) => DAYS[d]) };
 }
 
+/**
+ * Wipe a doctor's week, or the whole chart.
+ *
+ * The clinic starts from a blank sheet rather than from whatever a demo
+ * install or a departed locum left behind, and then fills it in as the
+ * consultants confirm. Clearing is therefore a first-class thing to do and
+ * not a matter of emptying fourteen cells by hand.
+ *
+ * Only the weekly pattern goes. Hours fixed against a particular date and
+ * days of leave are facts about specific days that somebody entered on
+ * purpose, and wiping those with the rota would quietly reopen an
+ * appointment book on a day the doctor is away.
+ */
+function clearWeek(doctorId) {
+  const doctor = db.prepare(
+    "SELECT id, name FROM users WHERE id = ? AND role = 'doctor' AND erased_at IS NULL").get(doctorId);
+  if (!doctor) throw notFound('Doctor not found');
+  const { changes } = db.prepare('DELETE FROM doctor_schedules WHERE doctor_id = ?').run(doctorId);
+  return { doctor, cleared: changes };
+}
+
+function clearAll() {
+  const { changes } = db.prepare('DELETE FROM doctor_schedules').run();
+  return { cleared: changes };
+}
+
 /** Which room a doctor usually sits in — the chart's own column. */
 function setRoom(doctorId, roomId) {
   const doctor = db.prepare(
@@ -403,5 +429,5 @@ function nextDay(doctorId, fromDate, horizon = 14) {
 module.exports = {
   DAYS, SHORT, DAY_START, DAY_END,
   chart, clashes, day, onDate, nextDay,
-  setDay, copyDay, setRoom, windowsFor,
+  setDay, copyDay, setRoom, windowsFor, clearWeek, clearAll,
 };

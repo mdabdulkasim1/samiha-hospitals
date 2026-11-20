@@ -310,3 +310,74 @@ test('"who is in on this date" is one question with one answer', async () => {
   assert.strictEqual(res.body.sitting.length + res.body.away.length,
     chart.chart().doctors.length);
 });
+
+// ====================================================== starting from blank
+test('a doctor\'s week can be cleared without touching their fixed dates', async () => {
+  const monday = nextMonday();
+  chart.setDay(ids.dentist, 1, [{ start: '16:00', end: '21:00', roomId: ids.op3 }]);
+  chart.copyDay(ids.dentist, 1, [2, 3, 4, 5, 6]);
+
+  /*
+   * A camp fixed for one date and a day of leave are decisions about
+   * particular days. Wiping the pattern must not quietly reopen an
+   * appointment book on a day the doctor is away.
+   */
+  db.prepare(
+    `INSERT INTO doctor_availability (doctor_id, avail_date, start_time, end_time,
+       slot_minutes, max_tokens, created_by) VALUES (?, ?, '10:00', '12:00', 15, 0, 1)`
+  ).run(ids.dentist, monday);
+
+  const res = await api('DELETE', `/api/schedule/doctors/${ids.dentist}`);
+  assert.strictEqual(res.status, 200);
+  assert.ok(res.body.cleared >= 6);
+  assert.strictEqual(chart.windowsFor(ids.dentist).length, 0, 'the week is blank');
+
+  // The fixed date survives and still drives the book.
+  const slots = scheduling.availableSlots(ids.dentist, monday);
+  assert.ok(slots.length, 'the camp fixed for that date still stands');
+  assert.ok(slots.every((s) => s >= '10:00' && s < '12:00'));
+  db.prepare('DELETE FROM doctor_availability WHERE doctor_id = ?').run(ids.dentist);
+});
+
+test('the whole chart can be wiped to enter the clinic\'s own timings', async () => {
+  chart.setDay(ids.dentist, 1, [{ start: '16:00', end: '21:00' }]);
+  chart.setDay(ids.gp, 1, [{ start: '09:00', end: '14:00' }]);
+  assert.ok(db.prepare('SELECT COUNT(*) AS c FROM doctor_schedules').get().c > 0);
+
+  const res = await api('DELETE', '/api/schedule');
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(db.prepare('SELECT COUNT(*) AS c FROM doctor_schedules').get().c, 0);
+
+  // The chart still lists everybody — blank, waiting to be filled in.
+  assert.ok(res.body.chart.doctors.length >= 7);
+  assert.ok(res.body.chart.doctors.every((d) => d.hours === 0));
+  assert.strictEqual(chart.clashes().length, 0);
+
+  // And the front desk cannot do it.
+  assert.strictEqual((await api('DELETE', '/api/schedule', undefined, 'reception')).status, 403);
+});
+
+test('ENT and Urology are departments now, so a consultant can be put in one', () => {
+  for (const [code, category] of [['ENT', '03'], ['URO', '04']]) {
+    const dept = db.prepare('SELECT * FROM departments WHERE code = ?').get(code);
+    assert.ok(dept, `${code} is a department`);
+    assert.strictEqual(dept.kind, 'specialist');
+
+    const cat = db.prepare('SELECT code FROM queue_categories WHERE id = ?').get(dept.queue_category_id);
+    assert.strictEqual(cat.code, category,
+      'and it feeds the queue code the clinic printed for it');
+  }
+
+  // With a doctor in it, the specialty leaves the "to be confirmed" list.
+  const ent = db.prepare("SELECT id FROM departments WHERE code = 'ENT'").get().id;
+  assert.ok(chart.chart().awaiting.some((c) => c.name === 'ENT'));
+  const doctorId = db.prepare(
+    `INSERT INTO users (staff_code, name, email, password_hash, role, department_id, active)
+     VALUES ('EMPENT', 'Dr. ENT Consultant', 'ent@samiha.local', 'x', 'doctor', ?, 1)`
+  ).run(ent).lastInsertRowid;
+
+  const week = chart.chart();
+  assert.ok(!week.awaiting.some((c) => c.name === 'ENT'), 'it is covered now');
+  assert.ok(week.doctors.some((d) => d.id === doctorId && d.category_name === 'ENT'));
+  db.prepare('DELETE FROM users WHERE id = ?').run(doctorId);
+});

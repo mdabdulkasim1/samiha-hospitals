@@ -28,12 +28,20 @@ const DEPARTMENTS = [
   ['ONC', 'Oncology',           'specialist', 8],
   ['NEU', 'Neurology',          'specialist', 9],
   ['SUR', 'General Surgeon',    'specialist', 10],
+  /*
+   * ENT and Urology were on the clinic's queue-category sheet before either
+   * had a department here — the codes 03 and 04 were printed and waiting.
+   * They are departments now, so a consultant can be put in one and the
+   * duty chart stops showing them as awaiting a doctor.
+   */
+  ['ENT', 'ENT',                'specialist', 11],
+  ['URO', 'Urology',            'specialist', 12],
   // Service counters rather than consulting rooms.
-  ['LAB', 'Diagnostics / Lab',  'diagnostic', 11],
-  ['PHA', 'Pharmacy',           'diagnostic', 12],
-  ['DAY', 'Day Care / Ward',    'diagnostic', 13],
-  ['XRY', 'X-Ray',              'diagnostic', 14],
-  ['USG', 'USG (Ultrasound)',   'diagnostic', 15],
+  ['LAB', 'Diagnostics / Lab',  'diagnostic', 20],
+  ['PHA', 'Pharmacy',           'diagnostic', 21],
+  ['DAY', 'Day Care / Ward',    'diagnostic', 22],
+  ['XRY', 'X-Ray',              'diagnostic', 23],
+  ['USG', 'USG (Ultrasound)',   'diagnostic', 24],
 ];
 
 module.exports = { DEPARTMENTS };

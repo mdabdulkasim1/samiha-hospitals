@@ -45,6 +45,8 @@
 
       APP.actions([
         { id: 'print', label: 'Print the chart', onClick: () => printChart() },
+        ...(isManagement()
+          ? [{ id: 'clear', label: 'Clear all timings', onClick: () => clearAll() }] : []),
         { id: 'refresh', label: 'Refresh', onClick: () => APP.reload() },
       ]);
 
@@ -84,6 +86,7 @@
             <th class="sc-who">Doctor</th>
             <th>Specialty</th>
             <th>OP room</th>
+            <th></th>
             ${SHORT.map((d, i) => `<th class="sc-day ${i === new Date().getDay() ? 'today' : ''}">${d}</th>`).join('')}
           </tr></thead>
           <tbody>
@@ -101,6 +104,27 @@
       const [doctorId, weekday] = td.dataset.cell.split(':').map(Number);
       editCell(data.doctors.find((d) => d.id === doctorId), weekday, data.rooms, host);
     }));
+    host.querySelectorAll('[data-clear]').forEach((b) => b.addEventListener('click', async () => {
+      const doc = data.doctors.find((d) => d.id === Number(b.dataset.clear));
+      UI.modal({
+        title: `Clear ${doc.name}'s week?`,
+        size: 'narrow',
+        body: `<div class="alert warn">Every day of the weekly pattern goes, and the appointment
+            book stops offering them until new hours are entered.</div>
+          <div class="small">Hours fixed against a particular date, and days of leave, are left
+            alone — those are decisions about single days, not the pattern.</div>`,
+        footer: `<button class="btn ghost" data-act="__close">Cancel</button>
+                 <button class="btn" data-act="go">Clear the week</button>`,
+        async onAction(act) {
+          if (act !== 'go') return;
+          await API.del(`/api/schedule/doctors/${doc.id}`);
+          UI.ok(`${doc.name}'s week is clear — ready for the new timings.`);
+          UI.closeModal();
+          weekTab(host);
+        },
+      });
+    }));
+
     host.querySelectorAll('[data-room-for]').forEach((sel) => sel.addEventListener('change', async () => {
       await API.post(`/api/schedule/doctors/${sel.dataset.roomFor}/room`,
         { roomId: sel.value ? Number(sel.value) : null });
@@ -123,6 +147,10 @@
           ${doc.room ? `<div class="muted small">${UI.esc(doc.room.floor)}</div>` : ''}`
     : (doc.room ? `${UI.esc(doc.room.name)}<div class="muted small">${UI.esc(doc.room.floor)}</div>`
       : '<span class="muted">—</span>')}</td>
+      ${isManagement() && doc.hours
+    ? `<td class="sc-clear"><button class="btn ghost sm" data-clear="${doc.id}"
+         title="Clear this doctor's whole week">Clear</button></td>`
+    : '<td class="sc-clear"></td>'}
       ${doc.days.map((windows, weekday) => `
         <td class="sc-cell ${windows.length ? 'on' : ''} ${isManagement() ? 'editable' : ''}"
             ${isManagement() ? `data-cell="${doc.id}:${weekday}"` : ''}>
@@ -136,7 +164,7 @@
   const awaitingRow = (cat) => `<tr class="sc-awaiting">
     <td class="sc-who"><i>To be confirmed</i></td>
     <td>${UI.esc(cat.name)}</td>
-    <td colspan="8"><span class="muted">Doctor and timing to be confirmed${cat.departments
+    <td colspan="9"><span class="muted">Doctor and timing to be confirmed${cat.departments
   ? ` — ${UI.esc(cat.departments)}` : ''}</span></td>
   </tr>`;
 
@@ -313,6 +341,34 @@
     : `<span class="sc-none">${r.onLeave ? 'On leave' : 'Not sitting'}</span>`}
     </div>
   </div>`;
+
+  /**
+   * Start the chart from a blank sheet.
+   *
+   * What the clinic reaches for when it is entering its own timings for the
+   * first time and wants whatever a demo install or a departed locum left
+   * behind gone in one go, rather than emptying fourteen cells a doctor.
+   */
+  function clearAll() {
+    UI.modal({
+      title: 'Clear every timing on the chart?',
+      size: 'narrow',
+      body: `<div class="alert danger">Every doctor's weekly hours are removed. The appointment
+          book offers nothing, and the WhatsApp line says no doctor is sitting, until the new
+          timings are entered here.</div>
+        <div class="small">Hours fixed against a particular date, and days of leave, are left
+          alone. Nothing else in the ERP is touched — this is the pattern only.</div>`,
+      footer: `<button class="btn ghost" data-act="__close">Cancel</button>
+               <button class="btn" data-act="go">Clear the chart</button>`,
+      async onAction(act) {
+        if (act !== 'go') return;
+        const out = await API.del('/api/schedule');
+        UI.ok(`${UI.num(out.cleared)} timing(s) removed — the chart is ready for yours.`);
+        UI.closeModal();
+        APP.reload();
+      },
+    });
+  }
 
   /** The chart as it goes on the noticeboard: one page per day. */
   async function printChart() {
