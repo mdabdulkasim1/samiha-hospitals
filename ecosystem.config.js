@@ -1,35 +1,28 @@
+
 module.exports = {
   apps: [
     {
       name: 'samiha-polyclinic-diagnosis',
-      cwd: __dirname,
+      cwd: '/home/samihahospitals/public_html/app.samihahospitals.com',
       script: 'src/server.js',
+
       instances: 1,
       exec_mode: 'fork',
       autorestart: true,
       watch: false,
       max_memory_restart: '1G',
       kill_timeout: 5000,
+
       env: {
-        NODE_ENV: 'development',
+        NODE_ENV: 'production',
         PORT: 3011,
-        DB_ENGINE: 'mysql',
-        DB_HOST: 'localhost',
-        DB_PORT: 3306,
-        DB_NAME: 'samihahospitals_app_db',
-        DB_USER: 'samihahospitals_app_user',
-        DB_PASSWORD: 'bka@6202#db',
       },
+
       env_production: {
         NODE_ENV: 'production',
         PORT: 3011,
-        DB_ENGINE: 'mysql',
-        DB_HOST: '76.13.243.217',
-        DB_PORT: 3306,
-        DB_NAME: 'samihahospitals_app_db',
-        DB_USER: 'samihahospitals_app_user',
-        DB_PASSWORD: 'bka@6202#db',
       },
+
       error_file: './logs/err.log',
       out_file: './logs/out.log',
       log_file: './logs/combined.log',
@@ -37,4 +30,3 @@ module.exports = {
     },
   ],
 };
-

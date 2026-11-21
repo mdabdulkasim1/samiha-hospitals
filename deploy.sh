@@ -73,13 +73,15 @@ else
   echo "[4/5] Skipping build step (Express serves static assets directly)..."
 fi
 
+
 # PM2 process management
 echo "[5/6] Reloading PM2 process..."
+
 if pm2 describe "$APP_NAME" > /dev/null 2>&1; then
-  echo "[*] Existing process '$APP_NAME' found. Restarting..."
-  pm2 restart "$APP_NAME" --update-env || pm2 restart "$ECOSYSTEM_CONFIG" --env production --update-env || pm2 start "$ECOSYSTEM_CONFIG" --env production
+  echo "[*] Restarting existing process: $APP_NAME"
+  pm2 restart "$APP_NAME" --update-env
 else
-  echo "[*] Process '$APP_NAME' not running. Starting new PM2 instance..."
+  echo "[*] Starting new process: $APP_NAME"
   pm2 start "$ECOSYSTEM_CONFIG" --env production
 fi
 
