@@ -56,6 +56,8 @@ app.use('/api/whatsapp', require('./routes/whatsapp'));
  */
 app.use('/d', require('./routes/share'));
 app.use('/api/auth', require('./routes/auth'));
+// Public TV Kiosk endpoint: allows waiting room TVs to fetch token queues without expiring session tokens.
+app.use('/api/kiosk', require('./routes/kiosk'));
 
 app.use('/api', auth.requireAuth);
 app.use('/api/me', require('./routes/me'));
@@ -103,6 +105,12 @@ app.use(express.static(path.join(config.root, 'public'), {
     if (filePath.endsWith('index.html')) res.setHeader('Cache-Control', 'no-store');
   },
 }));
+
+// Friendly routes for TV / Kiosk displays
+app.get(['/kiosk', '/tv'], (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.sendFile(path.join(config.root, 'public', 'kiosk.html'));
+});
 
 app.get(/^\/(?!api\/).*/, (_req, res) => {
   res.setHeader('Cache-Control', 'no-store');

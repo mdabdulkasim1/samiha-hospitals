@@ -38,6 +38,7 @@
 
       APP.actions([
         ...(APP.can(['reception']) ? [{ id: 'arrive', label: '+ Patient arrived', kind: '', onClick: () => openArrival() }] : []),
+        { id: 'tv_kiosk', label: '📺 TV Kiosk Display', onClick: () => window.open('/kiosk.html', '_blank') },
         { id: 'refresh', label: 'Refresh', onClick: () => APP.reload() },
       ]);
 
@@ -88,6 +89,24 @@
 
     el.querySelectorAll('.qcard').forEach((c) =>
       c.addEventListener('click', () => openVisit(Number(c.dataset.visit))));
+
+    el.querySelectorAll('.ring-btn').forEach((btn) => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const visitId = btn.dataset.ring;
+        btn.disabled = true;
+        btn.textContent = 'Calling…';
+        try {
+          const res = await API.post(`/api/visits/${visitId}/call`);
+          UI.toast(`Token #${res.tokenNo} called to TV Display!`);
+          await draw(el, date, true);
+        } catch (err) {
+          UI.err(err.message);
+          btn.disabled = false;
+          btn.textContent = '🔔 Ring TV';
+        }
+      });
+    });
   }
 
   function card(r) {
@@ -102,7 +121,10 @@
 
     const search = `${r.patient_name} ${r.uhid} ${r.token_no || ''} ${r.doctor_name || ''}`.toLowerCase();
     return `<div class="qcard" data-visit="${r.id}" data-search="${UI.esc(search)}">
-      <span class="token">#${UI.esc(r.token_no || '—')}</span>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+        <span class="token">#${UI.esc(r.token_no || '—')}</span>
+        ${r.status !== 'checked_out' ? `<button class="btn xs ghost ring-btn" data-ring="${r.id}" title="Ring / Announce Token on TV Kiosk" style="padding:2px 6px;font-size:11px;">🔔 Ring TV</button>` : ''}
+      </div>
       <div class="name">${UI.esc(r.patient_name)}</div>
       <div class="meta">${UI.esc(r.uhid)} · ${UI.esc(r.age_years || '—')}${UI.esc((r.gender || '').charAt(0).toUpperCase())}</div>
       <div class="meta">${UI.esc(r.doctor_name || 'Doctor not assigned')}${r.room_no ? ' · ' + UI.esc(r.room_no) : ''}</div>

@@ -1,0 +1,25 @@
+# ========================================================
+# SAMIHA POLYCLINIC & DIAGNOSTICS - APACHE REVERSE PROXY
+# Proxy all web traffic to Node.js / PM2 process (Port 3011)
+# ========================================================
+
+# Disable directory browsing
+Options -Indexes
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Forward Authorization header
+    RewriteCond %{HTTP:Authorization} .
+    RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
+    # Forward WebSocket connections
+    RewriteCond %{HTTP:Upgrade} =websocket [NC]
+    RewriteCond %{HTTP:Connection} upgrade [NC]
+    RewriteRule ^/?(.*) ws://127.0.0.1:3011/$1 [P,L]
+
+    # Reverse proxy all HTTP requests to PM2 Node app
+    RewriteRule ^$ http://127.0.0.1:3011/ [P,L]
+    RewriteRule ^(.*)$ http://127.0.0.1:3011/$1 [P,L]
+</IfModule>
+

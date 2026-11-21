@@ -1,0 +1,1069 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Token Queue Display — Samiha Hospital</title>
+  <link rel="icon" href="/assets/favicon.ico" type="image/x-icon">
+  <style>
+    :root {
+      --bg: #070d18;
+      --card-bg: #111c30;
+      --card-border: #1e3150;
+      --card-active: #0c2d48;
+      --text-main: #f1f5f9;
+      --text-muted: #94a3b8;
+      --primary: #0284c7;
+      --primary-glow: rgba(2, 132, 199, 0.4);
+      --serving: #10b981;
+      --serving-glow: rgba(16, 185, 129, 0.4);
+      --calling: #f59e0b;
+      --calling-glow: rgba(245, 158, 11, 0.5);
+      --danger: #ef4444;
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text-main);
+      font-family: var(--font);
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      user-select: none;
+    }
+
+    /* --------------------------------- Top Header Bar --------------------------------- */
+    header {
+      height: 72px;
+      background: linear-gradient(180deg, #0e1726 0%, #070d18 100%);
+      border-bottom: 2px solid var(--card-border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      flex-shrink: 0;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .brand-logo {
+      width: 44px;
+      height: 44px;
+      background: linear-gradient(135deg, #0284c7, #0369a1);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 900;
+      font-size: 24px;
+      color: #fff;
+      box-shadow: 0 0 16px var(--primary-glow);
+    }
+
+    .brand-title {
+      font-size: 1.35rem;
+      font-weight: 800;
+      letter-spacing: 0.5px;
+      color: #fff;
+      display: flex;
+      flex-direction: column;
+      line-height: 1.2;
+    }
+
+    .brand-subtitle {
+      font-size: 0.75rem;
+      font-weight: 500;
+      color: var(--text-muted);
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+    }
+
+    .header-center {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .live-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 12px;
+      border-radius: 999px;
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.4);
+      color: #34d399;
+      font-size: 0.8rem;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+
+    .live-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #10b981;
+      animation: pulse-dot 1.5s infinite;
+    }
+
+    @keyframes pulse-dot {
+      0% { transform: scale(0.9); opacity: 0.6; }
+      50% { transform: scale(1.3); opacity: 1; }
+      100% { transform: scale(0.9); opacity: 0.6; }
+    }
+
+    .stats-pill {
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      background: rgba(255, 255, 255, 0.04);
+      padding: 4px 14px;
+      border-radius: 20px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .stats-pill strong {
+      color: #fff;
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+    }
+
+    .clock-display {
+      text-align: right;
+    }
+
+    .clock-time {
+      font-size: 1.6rem;
+      font-weight: 800;
+      color: #38bdf8;
+      letter-spacing: 1px;
+      font-variant-numeric: tabular-nums;
+      line-height: 1.1;
+    }
+
+    .clock-date {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .btn-icon {
+      background: rgba(255, 255, 255, 0.07);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      color: var(--text-main);
+      padding: 8px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s;
+    }
+
+    .btn-icon:hover {
+      background: rgba(255, 255, 255, 0.15);
+      border-color: #38bdf8;
+      color: #38bdf8;
+    }
+
+    /* --------------------------------- Audio Notice Banner --------------------------------- */
+    #audio-notice {
+      background: linear-gradient(90deg, #1e3a8a, #0284c7);
+      color: #fff;
+      text-align: center;
+      padding: 6px 12px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+    }
+
+    /* --------------------------------- 3x2 Grid Main Content --------------------------------- */
+    main {
+      flex: 1;
+      padding: 16px 20px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .kiosk-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      grid-template-rows: repeat(2, 1fr);
+      gap: 16px;
+      flex: 1;
+      width: 100%;
+      height: 100%;
+    }
+
+    /* --------------------------------- Room Card --------------------------------- */
+    .room-card {
+      background: var(--card-bg);
+      border: 2px solid var(--card-border);
+      border-radius: 14px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      position: relative;
+      box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+      transition: transform 0.25s, border-color 0.25s, box-shadow 0.25s;
+    }
+
+    .room-card.status-serving {
+      border-color: rgba(16, 185, 129, 0.6);
+      background: linear-gradient(180deg, #0f2438 0%, #0d192b 100%);
+    }
+
+    .room-card.status-calling {
+      border-color: #f59e0b !important;
+      box-shadow: 0 0 28px var(--calling-glow) !important;
+      animation: call-pulse 1.2s infinite;
+    }
+
+    @keyframes call-pulse {
+      0% { border-color: #f59e0b; box-shadow: 0 0 12px var(--calling-glow); }
+      50% { border-color: #fbbf24; box-shadow: 0 0 32px rgba(251, 191, 36, 0.8); }
+      100% { border-color: #f59e0b; box-shadow: 0 0 12px var(--calling-glow); }
+    }
+
+    /* Card Header */
+    .card-header {
+      padding: 12px 16px;
+      background: rgba(0, 0, 0, 0.25);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .room-tag {
+      background: var(--primary);
+      color: #fff;
+      font-weight: 800;
+      font-size: 0.95rem;
+      letter-spacing: 0.5px;
+      padding: 4px 10px;
+      border-radius: 6px;
+      text-transform: uppercase;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+    }
+
+    .room-info {
+      text-align: right;
+      overflow: hidden;
+    }
+
+    .doctor-name {
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: #fff;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      overflow: hidden;
+    }
+
+    .dept-name {
+      font-size: 0.78rem;
+      color: #38bdf8;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    /* Card Body (Serving area) */
+    .card-body {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 8px 16px;
+      text-align: center;
+      position: relative;
+    }
+
+    .serving-label {
+      font-size: 0.85rem;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin-bottom: 4px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .status-serving .serving-label {
+      color: #34d399;
+    }
+
+    .status-calling .serving-label {
+      color: #fbbf24;
+    }
+
+    .token-number {
+      font-size: clamp(3rem, 5.5vw, 4.5rem);
+      font-weight: 900;
+      line-height: 1;
+      color: #fff;
+      letter-spacing: 2px;
+      text-shadow: 0 4px 18px rgba(0, 0, 0, 0.6);
+      margin: 4px 0;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .status-serving .token-number {
+      color: #4ade80;
+      text-shadow: 0 0 24px rgba(74, 222, 128, 0.4);
+    }
+
+    .status-calling .token-number {
+      color: #fde047;
+      text-shadow: 0 0 28px rgba(253, 224, 71, 0.6);
+    }
+
+    .patient-box {
+      font-size: clamp(1rem, 1.4vw, 1.25rem);
+      font-weight: 700;
+      color: #f8fafc;
+      margin-top: 2px;
+      max-width: 90%;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      overflow: hidden;
+    }
+
+    .uhid-sub {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      letter-spacing: 0.5px;
+    }
+
+    /* Idle / Available State */
+    .idle-box {
+      color: var(--text-muted);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .idle-icon {
+      font-size: 2rem;
+      opacity: 0.6;
+    }
+
+    .idle-title {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: #94a3b8;
+    }
+
+    .idle-sub {
+      font-size: 0.8rem;
+    }
+
+    /* Card Footer (Next in queue) */
+    .card-footer {
+      background: rgba(0, 0, 0, 0.35);
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+      padding: 8px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 0.82rem;
+    }
+
+    .next-list {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      overflow: hidden;
+    }
+
+    .next-label {
+      color: var(--text-muted);
+      font-weight: 600;
+      text-transform: uppercase;
+      font-size: 0.72rem;
+      letter-spacing: 0.5px;
+    }
+
+    .token-chip {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      color: #e2e8f0;
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-weight: 700;
+      font-size: 0.8rem;
+    }
+
+    .wait-count {
+      color: #38bdf8;
+      font-weight: 700;
+      white-space: nowrap;
+      background: rgba(56, 189, 248, 0.12);
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 0.75rem;
+    }
+
+    /* --------------------------------- Bottom Marquee / Footer --------------------------------- */
+    footer {
+      height: 44px;
+      background: #09101d;
+      border-top: 1px solid var(--card-border);
+      display: flex;
+      align-items: center;
+      padding: 0 20px;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+
+    .ticker-badge {
+      background: #991b1b;
+      color: #fff;
+      font-weight: 800;
+      font-size: 0.75rem;
+      padding: 4px 10px;
+      border-radius: 4px;
+      margin-right: 14px;
+      white-space: nowrap;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+
+    .ticker-content {
+      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      font-size: 0.9rem;
+      font-weight: 500;
+      color: #cbd5e1;
+    }
+
+    .ticker-text {
+      display: inline-block;
+      padding-left: 100%;
+      animation: ticker 35s linear infinite;
+    }
+
+    @keyframes ticker {
+      0% { transform: translateX(0); }
+      100% { transform: translateX(-100%); }
+    }
+
+    /* --------------------------------- Pagination / Cycle Dots --------------------------------- */
+    .page-indicator {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      position: absolute;
+      bottom: 50px;
+      right: 24px;
+      background: rgba(0, 0, 0, 0.6);
+      padding: 4px 10px;
+      border-radius: 20px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      z-index: 10;
+    }
+
+    .page-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.3);
+      transition: all 0.3s;
+    }
+
+    .page-dot.active {
+      background: #38bdf8;
+      transform: scale(1.3);
+    }
+
+    /* --------------------------------- Settings Modal --------------------------------- */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(4px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+
+    .modal-box {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 12px;
+      padding: 24px;
+      width: 460px;
+      max-width: 90vw;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+    }
+
+    .modal-title {
+      font-size: 1.2rem;
+      font-weight: 800;
+      color: #fff;
+      margin-bottom: 16px;
+      border-bottom: 1px solid #334155;
+      padding-bottom: 8px;
+    }
+
+    .modal-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      font-size: 0.95rem;
+    }
+
+    .modal-select {
+      background: #0f172a;
+      border: 1px solid #334155;
+      color: #f1f5f9;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 0.9rem;
+    }
+
+    .modal-actions {
+      margin-top: 20px;
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+
+    /* Responsive adjustments for smaller screens */
+    @media (max-width: 960px) {
+      .kiosk-grid {
+        grid-template-columns: repeat(2, 1fr);
+        grid-template-rows: repeat(3, 1fr);
+      }
+      .brand-title { font-size: 1.1rem; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Audio unlock banner -->
+  <div id="audio-notice" onclick="unlockAudio()">
+    <span>🔔 Click anywhere or tap with remote to enable Hospital Chime & Voice Announcements</span>
+    <span style="font-size:12px; opacity:0.8; text-decoration:underline;">[ Dismiss ]</span>
+  </div>
+
+  <!-- Header -->
+  <header>
+    <div class="brand">
+      <div class="brand-logo">S</div>
+      <div class="brand-title">
+        <span id="clinic-name">SAMIHA POLYCLINIC & DIAGNOSTICS</span>
+        <span class="brand-subtitle">Out-Patient Queue Display</span>
+      </div>
+    </div>
+
+    <div class="header-center">
+      <div class="live-badge">
+        <span class="live-dot" id="live-dot"></span>
+        <span id="live-text">Live Queue</span>
+      </div>
+      <div class="stats-pill">
+        <span>In Consultation: <strong id="stat-serving">0</strong></span>
+        <span style="margin: 0 6px; opacity: 0.3;">|</span>
+        <span>Waiting: <strong id="stat-waiting">0</strong></span>
+      </div>
+    </div>
+
+    <div class="header-right">
+      <div class="clock-display">
+        <div class="clock-time" id="clock-time">--:--:--</div>
+        <div class="clock-date" id="clock-date">--------</div>
+      </div>
+      <button class="btn-icon" id="btn-audio" onclick="toggleAudio()" title="Toggle Sound">🔔</button>
+      <button class="btn-icon" onclick="openSettings()" title="Kiosk Settings">⚙</button>
+      <button class="btn-icon" onclick="toggleFullscreen()" title="Fullscreen TV Mode">⛶</button>
+    </div>
+  </header>
+
+  <!-- Main 3x2 Grid -->
+  <main>
+    <div class="kiosk-grid" id="grid">
+      <!-- Generated dynamically -->
+    </div>
+    <div class="page-indicator" id="page-indicator" style="display: none;"></div>
+  </main>
+
+  <!-- Bottom Marquee Ticker -->
+  <footer>
+    <div class="ticker-badge">Notice</div>
+    <div class="ticker-content">
+      <div class="ticker-text" id="ticker-text">
+        Welcome to SAMIHA POLYCLINIC & DIAGNOSTICS. Please watch your token number. For assistance, contact the front reception or call +91 72007 50420. Laboratory and Pharmacy services are open 24/7.
+      </div>
+    </div>
+  </footer>
+
+  <!-- Settings Modal -->
+  <div class="modal-overlay" id="settings-modal" onclick="if(event.target === this) closeSettings()">
+    <div class="modal-box">
+      <div class="modal-title">Display & Audio Settings</div>
+      <div class="modal-row">
+        <span>Sound Chime (Ding-Dong)</span>
+        <input type="checkbox" id="cfg-chime" checked onchange="saveConfig()">
+      </div>
+      <div class="modal-row">
+        <span>Voice Announcement (TTS)</span>
+        <input type="checkbox" id="cfg-voice" checked onchange="saveConfig()">
+      </div>
+      <div class="modal-row">
+        <span>Announcement Language</span>
+        <select class="modal-select" id="cfg-lang" onchange="saveConfig()">
+          <option value="both">Bilingual (English + Tamil)</option>
+          <option value="en">English only</option>
+          <option value="ta">Tamil only (தமிழ்)</option>
+        </select>
+      </div>
+      <div class="modal-row">
+        <span>Mask Patient Names</span>
+        <input type="checkbox" id="cfg-mask" onchange="saveConfig(); renderRooms();">
+      </div>
+      <div class="modal-row">
+        <span>Auto-cycle if &gt; 6 Rooms</span>
+        <input type="checkbox" id="cfg-cycle" checked onchange="saveConfig()">
+      </div>
+      <div class="modal-actions">
+        <button class="btn-icon" onclick="testChime()">🔊 Test Sound</button>
+        <button class="btn-icon" style="background:#0284c7;" onclick="closeSettings()">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    'use strict';
+
+    // --------------------------------- Configuration & State ---------------------------------
+    const urlParams = new URLSearchParams(window.location.search);
+
+    const CONFIG = {
+      pollIntervalMs: 5000,
+      cycleIntervalMs: 15000,
+      chimeEnabled: urlParams.get('chime') !== 'false',
+      voiceEnabled: urlParams.get('voice') !== 'false',
+      maskNames: urlParams.get('mask') === 'true',
+      cycleEnabled: true,
+      language: urlParams.get('lang') || 'both', // 'en' | 'ta' | 'both'
+    };
+
+    let audioContext = null;
+    let audioUnlocked = false;
+    let allRooms = [];
+    let currentPage = 0;
+    let lastServedTokens = new Map(); // docKey -> { tokenNo, calledAt }
+    let cycleTimer = null;
+    let wakeLock = null;
+
+    // Load persisted settings
+    try {
+      const saved = localStorage.getItem('samiha_kiosk_cfg');
+      if (saved) Object.assign(CONFIG, JSON.parse(saved));
+    } catch (_) {}
+
+    function saveConfig() {
+      CONFIG.chimeEnabled = document.getElementById('cfg-chime').checked;
+      CONFIG.voiceEnabled = document.getElementById('cfg-voice').checked;
+      CONFIG.maskNames = document.getElementById('cfg-mask').checked;
+      CONFIG.cycleEnabled = document.getElementById('cfg-cycle').checked;
+      CONFIG.language = document.getElementById('cfg-lang').value;
+      try { localStorage.setItem('samiha_kiosk_cfg', JSON.stringify(CONFIG)); } catch (_) {}
+      updateAudioButtonState();
+    }
+
+    // --------------------------------- Screen Wake Lock API ---------------------------------
+    // Keeps TV display awake and prevents screen-saver / blanking
+    async function requestWakeLock() {
+      try {
+        if ('wakeLock' in navigator) {
+          wakeLock = await navigator.wakeLock.request('screen');
+        }
+      } catch (_) {}
+    }
+    document.addEventListener('visibilitychange', () => {
+      if (wakeLock !== null && document.visibilityState === 'visible') {
+        requestWakeLock();
+      }
+    });
+    requestWakeLock();
+
+    // --------------------------------- 24/7 TV Memory Refresh ---------------------------------
+    // Soft reload once every 24 hours at 03:00 AM to keep TV browser memory clean
+    setInterval(() => {
+      const now = new Date();
+      if (now.getHours() === 3 && now.getMinutes() === 0) {
+        location.reload();
+      }
+    }, 60000);
+
+    // --------------------------------- Digital Clock ---------------------------------
+    function updateClock() {
+      const now = new Date();
+      const h = String(now.getHours()).padStart(2, '0');
+      const m = String(now.getMinutes()).padStart(2, '0');
+      const s = String(now.getSeconds()).padStart(2, '0');
+      document.getElementById('clock-time').textContent = `${h}:${m}:${s}`;
+
+      const options = { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' };
+      document.getElementById('clock-date').textContent = now.toLocaleDateString('en-GB', options);
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    // --------------------------------- Web Audio & TTS Engine ---------------------------------
+    function initAudio() {
+      if (!audioContext) {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (AudioCtx) audioContext = new AudioCtx();
+      }
+      if (audioContext && audioContext.state === 'suspended') {
+        audioContext.resume();
+      }
+    }
+
+    function unlockAudio() {
+      initAudio();
+      audioUnlocked = true;
+      document.getElementById('audio-notice').style.display = 'none';
+      playChime();
+    }
+
+    window.addEventListener('click', () => {
+      if (!audioUnlocked) unlockAudio();
+    }, { once: true });
+
+    window.addEventListener('keydown', () => {
+      if (!audioUnlocked) unlockAudio();
+    }, { once: true });
+
+    function playChime() {
+      if (!CONFIG.chimeEnabled) return;
+      try {
+        initAudio();
+        if (!audioContext) return;
+
+        const now = audioContext.currentTime;
+
+        // Note 1: D5 (587.33 Hz)
+        const osc1 = audioContext.createOscillator();
+        const gain1 = audioContext.createGain();
+        osc1.type = 'sine';
+        osc1.frequency.setValueAtTime(587.33, now);
+        gain1.gain.setValueAtTime(0.4, now);
+        gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
+        osc1.connect(gain1);
+        gain1.connect(audioContext.destination);
+        osc1.start(now);
+        osc1.stop(now + 0.6);
+
+        // Note 2: A5 (880.00 Hz) - pleasant hospital ding-dong
+        const osc2 = audioContext.createOscillator();
+        const gain2 = audioContext.createGain();
+        osc2.type = 'sine';
+        osc2.frequency.setValueAtTime(880.0, now + 0.25);
+        gain2.gain.setValueAtTime(0.5, now + 0.25);
+        gain2.gain.exponentialRampToValueAtTime(0.001, now + 1.2);
+        osc2.connect(gain2);
+        gain2.connect(audioContext.destination);
+        osc2.start(now + 0.25);
+        osc2.stop(now + 1.2);
+      } catch (err) {
+        console.warn('Audio chime error:', err);
+      }
+    }
+
+    function announceToken(tokenNo, roomNo, doctorName) {
+      if (!CONFIG.voiceEnabled || !window.speechSynthesis) return;
+      try {
+        window.speechSynthesis.cancel(); // Stop any pending speech
+        const spokenRoom = String(roomNo || '').replace(/-/g, ' ');
+
+        const phrases = [];
+        if (CONFIG.language === 'ta' || CONFIG.language === 'both') {
+          phrases.push({ text: `டோக்கன் எண் ${tokenNo}, அறை ${spokenRoom}, ${doctorName}`, lang: 'ta-IN' });
+        }
+        if (CONFIG.language === 'en' || CONFIG.language === 'both') {
+          phrases.push({ text: `Token number ${tokenNo}, please proceed to ${spokenRoom}, ${doctorName}.`, lang: 'en-IN' });
+        }
+
+        setTimeout(() => {
+          phrases.forEach((p, idx) => {
+            const utterance = new SpeechSynthesisUtterance(p.text);
+            utterance.rate = 0.9;
+            utterance.pitch = 1.05;
+            const voices = window.speechSynthesis.getVoices();
+            const voice = voices.find(v => v.lang.startsWith(p.lang)) || voices.find(v => v.lang.startsWith('en'));
+            if (voice) utterance.voice = voice;
+            window.speechSynthesis.speak(utterance);
+          });
+        }, 850);
+      } catch (err) {
+        console.warn('Speech synthesis error:', err);
+      }
+    }
+
+    function testChime() {
+      playChime();
+      announceToken('12', 'OPD 1', 'Doctor');
+    }
+
+    function toggleAudio() {
+      CONFIG.chimeEnabled = !CONFIG.chimeEnabled;
+      CONFIG.voiceEnabled = CONFIG.chimeEnabled;
+      document.getElementById('cfg-chime').checked = CONFIG.chimeEnabled;
+      document.getElementById('cfg-voice').checked = CONFIG.voiceEnabled;
+      saveConfig();
+      if (CONFIG.chimeEnabled) playChime();
+    }
+
+    function updateAudioButtonState() {
+      const btn = document.getElementById('btn-audio');
+      btn.textContent = CONFIG.chimeEnabled ? '🔔' : '🔕';
+      btn.style.opacity = CONFIG.chimeEnabled ? '1' : '0.6';
+    }
+
+    // --------------------------------- Fullscreen Toggle ---------------------------------
+    function toggleFullscreen() {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(() => {});
+      } else {
+        document.exitFullscreen().catch(() => {});
+      }
+    }
+
+    // --------------------------------- Settings Modal ---------------------------------
+    function openSettings() {
+      document.getElementById('cfg-chime').checked = CONFIG.chimeEnabled;
+      document.getElementById('cfg-voice').checked = CONFIG.voiceEnabled;
+      document.getElementById('cfg-mask').checked = CONFIG.maskNames;
+      document.getElementById('cfg-cycle').checked = CONFIG.cycleEnabled;
+      document.getElementById('cfg-lang').value = CONFIG.language;
+      document.getElementById('settings-modal').style.display = 'flex';
+    }
+
+    function closeSettings() {
+      document.getElementById('settings-modal').style.display = 'none';
+    }
+
+    // --------------------------------- Data Polling & Change Detection ---------------------------------
+    async function fetchQueue() {
+      try {
+        const queryParams = new URLSearchParams(window.location.search);
+        const res = await fetch('/api/kiosk/queue?' + queryParams.toString());
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+
+        if (data.ok) {
+          document.getElementById('live-dot').style.background = '#10b981';
+          document.getElementById('live-text').textContent = 'Live Queue';
+
+          if (data.clinic && data.clinic.name) {
+            document.getElementById('clinic-name').textContent = data.clinic.name;
+          }
+
+          if (data.stats) {
+            document.getElementById('stat-serving').textContent = data.stats.totalServing || 0;
+            document.getElementById('stat-waiting').textContent = data.stats.totalWaiting || 0;
+          }
+
+          detectTokenChanges(data.rooms || []);
+          allRooms = data.rooms || [];
+          renderRooms();
+        }
+      } catch (err) {
+        document.getElementById('live-dot').style.background = '#ef4444';
+        document.getElementById('live-text').textContent = 'Reconnecting…';
+        console.warn('Kiosk fetch error:', err.message);
+      }
+    }
+
+    function detectTokenChanges(newRooms) {
+      for (const room of newRooms) {
+        const docKey = `${room.doctorId}_${room.roomNo}`;
+        const prev = lastServedTokens.get(docKey);
+
+        if (room.nowServing && room.nowServing.tokenNo) {
+          const currentToken = room.nowServing.tokenNo;
+          const currentCalledAt = room.nowServing.calledAt || '';
+
+          // Triggers chime on new token OR explicit re-call/re-ring:
+          const isNewToken = prev && prev.tokenNo !== currentToken;
+          const isReCall = prev && prev.tokenNo === currentToken && prev.calledAt !== currentCalledAt;
+
+          if (isNewToken || isReCall) {
+            triggerCallout(room);
+          }
+          lastServedTokens.set(docKey, { tokenNo: currentToken, calledAt: currentCalledAt });
+        } else {
+          lastServedTokens.set(docKey, null);
+        }
+      }
+    }
+
+    function triggerCallout(room) {
+      playChime();
+      const token = room.nowServing ? room.nowServing.tokenNo : '';
+      const doctor = room.doctorName ? room.doctorName.replace(/^(Dr\.\s*)/i, 'Doctor ') : 'Doctor';
+      announceToken(token, room.roomNo, doctor);
+
+      // Flash card in DOM
+      setTimeout(() => {
+        const card = document.querySelector(`[data-room="${room.roomNo}"]`);
+        if (card) {
+          card.classList.add('status-calling');
+          setTimeout(() => card.classList.remove('status-calling'), 12000);
+        }
+      }, 100);
+    }
+
+    // --------------------------------- Rendering 3x2 Grid ---------------------------------
+    function renderRooms() {
+      const grid = document.getElementById('grid');
+      const pageSize = 6;
+      const totalPages = Math.ceil(allRooms.length / pageSize) || 1;
+
+      if (currentPage >= totalPages) currentPage = 0;
+
+      // Slice 6 rooms for current 3x2 view
+      const displayRooms = allRooms.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
+
+      // Pad up to 6 tiles so the 3x2 grid structure is perfectly preserved
+      const tiles = [...displayRooms];
+      while (tiles.length < pageSize && tiles.length < 6) {
+        tiles.push(null);
+      }
+
+      grid.innerHTML = tiles.map(tile => renderCard(tile)).join('');
+
+      // Page dots indicator
+      const indicator = document.getElementById('page-indicator');
+      if (totalPages > 1 && CONFIG.cycleEnabled) {
+        indicator.style.display = 'flex';
+        indicator.innerHTML = Array.from({ length: totalPages }, (_, i) =>
+          `<div class="page-dot ${i === currentPage ? 'active' : ''}"></div>`
+        ).join('');
+      } else {
+        indicator.style.display = 'none';
+      }
+    }
+
+    function renderCard(r) {
+      if (!r) {
+        return `
+          <div class="room-card" style="opacity: 0.35;">
+            <div class="card-header">
+              <span class="room-tag" style="background:#334155;">OPD</span>
+              <div class="room-info"><div class="doctor-name">—</div><div class="dept-name">Counter Available</div></div>
+            </div>
+            <div class="card-body">
+              <div class="idle-box"><div class="idle-title">Ready</div><div class="idle-sub">Waiting for schedule</div></div>
+            </div>
+            <div class="card-footer"><span class="next-label">Queue</span><span class="wait-count">0 Waiting</span></div>
+          </div>
+        `;
+      }
+
+      const isServing = r.status === 'serving' && r.nowServing;
+      const patientName = isServing
+        ? (CONFIG.maskNames ? r.nowServing.maskedName : r.nowServing.patientName)
+        : '';
+
+      const waitingChips = (r.waiting || []).slice(0, 3).map(w =>
+        `<span class="token-chip">#${w.tokenNo}</span>`
+      ).join('');
+
+      return `
+        <div class="room-card ${isServing ? 'status-serving' : ''}" data-room="${esc(r.roomNo)}">
+          <div class="card-header">
+            <span class="room-tag">${esc(r.roomNo)}</span>
+            <div class="room-info">
+              <div class="doctor-name" title="${esc(r.doctorName)}">${esc(r.doctorName)}</div>
+              <div class="dept-name">${esc(r.department)}</div>
+            </div>
+          </div>
+
+          <div class="card-body">
+            ${isServing ? `
+              <div class="serving-label">
+                <span class="live-dot" style="background:#10b981;"></span>
+                Now Serving
+              </div>
+              <div class="token-number"># ${esc(r.nowServing.tokenNo)}</div>
+              <div class="patient-box">${esc(patientName)}</div>
+              <div class="uhid-sub">${esc(r.nowServing.uhid || '')}</div>
+            ` : `
+              <div class="idle-box">
+                <div class="idle-icon">👨‍⚕️</div>
+                <div class="idle-title">${r.totalWaiting > 0 ? 'Next Patient Ready' : 'Doctor Available'}</div>
+                <div class="idle-sub">${r.totalWaiting > 0 ? 'Calling in progress…' : 'No patients waiting'}</div>
+              </div>
+            `}
+          </div>
+
+          <div class="card-footer">
+            <div class="next-list">
+              <span class="next-label">Next:</span>
+              ${waitingChips || '<span style="color:#64748b;">None</span>'}
+            </div>
+            <span class="wait-count">${r.totalWaiting} Waiting</span>
+          </div>
+        </div>
+      `;
+    }
+
+    function esc(s) {
+      if (s === null || s === undefined) return '';
+      return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    // --------------------------------- Page Cycling ---------------------------------
+    function setupCycle() {
+      clearInterval(cycleTimer);
+      cycleTimer = setInterval(() => {
+        if (!CONFIG.cycleEnabled || allRooms.length <= 6) return;
+        const totalPages = Math.ceil(allRooms.length / 6);
+        currentPage = (currentPage + 1) % totalPages;
+        renderRooms();
+      }, CONFIG.cycleIntervalMs);
+    }
+
+    // --------------------------------- Start Kiosk ---------------------------------
+    updateAudioButtonState();
+    fetchQueue();
+    setInterval(fetchQueue, CONFIG.pollIntervalMs);
+    setupCycle();
+  </script>
+</body>
+</html>

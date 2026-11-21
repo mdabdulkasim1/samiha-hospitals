@@ -39,14 +39,32 @@ router.post('/webhook', (req, res) => {
         const value = change.value || {};
         for (const message of value.messages || []) {
           const from = message.from;
+          const interactive = message.interactive;
+          const interactiveReply = interactive?.list_reply || interactive?.button_reply;
+          const interactiveId = interactiveReply?.id || null;
+          const interactiveTitle = interactiveReply?.title || null;
+
+          let nfmPayload = null;
+          if (interactive?.type === 'nfm_reply' && interactive.nfm_reply?.response_json) {
+            try {
+              nfmPayload = JSON.parse(interactive.nfm_reply.response_json);
+            } catch {}
+          }
+
           const text = message.text?.body
-            || message.interactive?.button_reply?.title
-            || message.interactive?.list_reply?.title
+            || interactiveTitle
             || message.button?.text
             || '';
+
           if (!from) continue;
           try {
-            bot.handleIncoming(from, text);
+            bot.handleIncoming(from, text, {
+              interactiveId,
+              interactiveTitle,
+              interactiveType: interactive?.type || null,
+              nfmPayload,
+              rawMessage: message,
+            });
           } catch (err) {
             console.error('[whatsapp] bot error for', from, err.message);
             whatsapp.send(from, 'Sorry — something went wrong on our side. Please reply *MENU* to start again, ' +
@@ -74,10 +92,12 @@ router.post('/simulate', requireAuth, wrap((req, res) => {
   required(req.body, ['from', 'text']);
   const from = phone(req.body.from);
   if (!from) throw badRequest('A valid phone number is required.');
-  const reply = bot.handleIncoming(from, str(req.body.text));
+  const interactiveId = req.body.interactiveId || null;
+  const interactiveTitle = req.body.interactiveTitle || null;
+  const reply = bot.handleIncoming(from, str(req.body.text), { interactiveId, interactiveTitle });
   audit.log(req, 'whatsapp_simulate', 'whatsapp', null, { from });
   res.json({
-    reply,
+    reply: typeof reply === 'object' && reply !== null ? reply.reply : reply,
     // null means a person has taken the chat over and the bot stayed quiet.
     handledByAgent: reply === null,
     session: bot.getSession(from),

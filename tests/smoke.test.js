@@ -117,10 +117,6 @@ test('WhatsApp bot books an appointment end to end', async () => {
   r = await say(open.date);
   assert.match(r.reply, /type the time/i);
   r = await say(slot);
-  assert.match(r.reply, /already registered with us/i);
-  r = await say('NO');
-  assert.match(r.reply, /mobile number/i);
-  r = await say('9000000111');
   assert.match(r.reply, /full name/i);
   r = await say('Zainab Hussain');
   assert.match(r.reply, /age and gender/i);

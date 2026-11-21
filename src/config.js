@@ -23,6 +23,8 @@ function loadEnvFile(file) {
 const root = path.resolve(__dirname, '..');
 loadEnvFile(path.join(root, '.env'));
 
+process.env.TZ = process.env.TZ || 'Asia/Kolkata';
+
 const env = process.env;
 
 module.exports = {
@@ -30,7 +32,7 @@ module.exports = {
   port: Number(env.PORT || 3000),
   nodeEnv: env.NODE_ENV || 'development',
   isProd: env.NODE_ENV === 'production',
-  dbEngine: env.DB_ENGINE || 'mysql',         // 'mysql' (default) | 'sqlite' (deprecated)
+  dbEngine: env.DB_ENGINE || (env.DB_FILE ? 'sqlite' : 'mysql'),         // 'mysql' (default) | 'sqlite' (deprecated)
   dbFile: path.resolve(root, env.DB_FILE || './data/samiha.db'),
   mysql: {
     host: env.DB_HOST || 'localhost',
@@ -124,6 +126,7 @@ module.exports = {
     verifyToken: env.WHATSAPP_VERIFY_TOKEN || 'samiha-verify-token',
     token: env.WHATSAPP_TOKEN || '',
     phoneNumberId: env.WHATSAPP_PHONE_NUMBER_ID || '',
+    appId: env.WHATSAPP_APP_ID || '',
     apiVersion: env.WHATSAPP_API_VERSION || 'v21.0',
     sessionTtlMinutes: Number(env.WHATSAPP_SESSION_TTL_MINUTES || 30),
   },

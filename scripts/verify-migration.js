@@ -2,15 +2,18 @@
 const Database = require('better-sqlite3');
 const mysql = require('mysql2/promise');
 const path = require('path');
+const config = require('../src/config');
 
 const SQLITE_PATH = path.resolve(__dirname, '../data/samiha.db');
 
 async function main() {
   const sqlite = new Database(SQLITE_PATH, { readonly: true });
   const conn = await mysql.createConnection({
-    host: 'localhost',
-    user: 'root',
-    database: 'samiha-polyclinic',
+    host: config.mysql.host,
+    port: config.mysql.port,
+    user: config.mysql.user,
+    password: config.mysql.password,
+    database: config.mysql.database,
     dateStrings: true,
   });
 

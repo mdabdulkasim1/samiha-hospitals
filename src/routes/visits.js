@@ -252,6 +252,31 @@ router.post('/:id/check-in', requireRole('reception'), wrap((req, res) => {
 }));
 
 /**
+ * Ring / call a patient token to the TV Kiosk and consultation room.
+ */
+router.post('/:id/call', clinicalRoles, wrap((req, res) => {
+  const id = int(req.params.id);
+  const visit = db.prepare('SELECT * FROM visits WHERE id = ?').get(id);
+  if (!visit) throw notFound('Visit not found');
+  if (visit.status === 'checked_out') throw conflict('This visit is already closed.');
+
+  const doctorId = req.user.role === 'doctor' ? req.user.id : (visit.doctor_id || null);
+
+  db.prepare(`
+    UPDATE visits
+       SET status = 'with_provider',
+           doctor_id = COALESCE(?, doctor_id),
+           consult_start_at = datetime('now')
+     WHERE id = ?
+  `).run(doctorId, id);
+
+  recordEvent(id, 'token_called', `Token #${visit.token_no} called to consultation room`, req.user.id);
+  audit.log(req, 'call_token', 'visit', id, { token: visit.token_no });
+
+  res.json({ ok: true, visitId: id, tokenNo: visit.token_no, status: 'with_provider' });
+}));
+
+/**
  * The consultation fee, taken on the way in.
  *
  * This is the cashier's step between the front desk and the nurse station. It

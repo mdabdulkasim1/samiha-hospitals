@@ -452,6 +452,17 @@ legend { font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-
 .wa-quick { display: flex; gap: 5px; flex-wrap: wrap; padding: 8px 12px 0; background: var(--surface); }
 .wa-quick button { font-size: 11.5px; padding: 3px 9px; border: 1px solid var(--line); background: var(--surface); border-radius: 20px; cursor: pointer; font-family: inherit; }
 .wa-quick button:hover { border-color: var(--teal); background: var(--teal-soft); }
+
+.wa-interactive-btns { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; border-top: 1px solid rgba(0,0,0,.08); padding-top: 6px; }
+.wa-btn-reply { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; padding: 7px 12px; background: #fff; border: 1px solid #d1d7db; border-radius: 6px; font-size: 12.5px; font-weight: 600; color: #00a884; cursor: pointer; transition: all .15s ease; font-family: inherit; }
+.wa-btn-reply:hover { background: #f0f2f5; border-color: #00a884; color: #008069; }
+
+.wa-interactive-list-box { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; border-top: 1px solid rgba(0,0,0,.08); padding-top: 6px; }
+.wa-list-cta { font-size: 11.5px; font-weight: 700; color: #008069; text-transform: uppercase; letter-spacing: 0.5px; padding: 2px 4px; }
+.wa-list-item-btn { display: flex; flex-direction: column; text-align: left; width: 100%; padding: 6px 10px; background: #fff; border: 1px solid #e2e8f0; border-radius: 6px; cursor: pointer; transition: all .15s ease; font-family: inherit; }
+.wa-list-item-btn:hover { background: #f8fafc; border-color: #00a884; }
+.wa-list-item-btn .row-title { font-size: 12.5px; color: var(--ink); font-weight: 600; }
+.wa-list-item-btn .row-desc { font-size: 11px; color: var(--ink-3); margin-top: 1px; }
 @media (max-width: 860px) { .wa-shell { grid-template-columns: 1fr; height: auto; } .wa-list { max-height: 200px; border-right: 0; border-bottom: 1px solid var(--line); } }
 
 /* -------------------------------------------------------------- IPD beds */

@@ -91,12 +91,68 @@
       });
     };
 
+    const renderInteractive = (msg) => {
+      if (msg.direction !== 'out' || !msg.payload) return '';
+      let p = null;
+      try { p = typeof msg.payload === 'string' ? JSON.parse(msg.payload) : msg.payload; } catch {}
+      if (!p) return '';
+
+      if (p.type === 'button' && Array.isArray(p.action?.buttons)) {
+        return `<div class="wa-interactive-btns">` +
+          p.action.buttons.map((b) =>
+            `<button type="button" class="wa-btn-reply" data-btn-id="${UI.esc(b.reply.id)}" data-btn-title="${UI.esc(b.reply.title)}">${UI.esc(b.reply.title)}</button>`
+          ).join('') + `</div>`;
+      }
+
+      if (p.type === 'list' && Array.isArray(p.action?.sections)) {
+        const rows = p.action.sections.flatMap((s) => s.rows || []);
+        return `<div class="wa-interactive-list-box">` +
+          `<div class="wa-list-cta">📋 ${UI.esc(p.action.button || 'Select Option')}</div>` +
+          rows.map((r) =>
+            `<button type="button" class="wa-list-item-btn" data-btn-id="${UI.esc(r.id)}" data-btn-title="${UI.esc(r.title)}">
+              <div class="row-title"><b>${UI.esc(r.title)}</b></div>
+              ${r.description ? `<div class="row-desc">${UI.esc(r.description)}</div>` : ''}
+            </button>`
+          ).join('') + `</div>`;
+      }
+      return '';
+    };
+
     const drawThread = (messages) => {
       const host = body.querySelector('#wa-msgs');
       host.innerHTML = messages.length ? messages.map((m) =>
-        `<div class="wa-msg ${m.direction === 'in' ? 'in' : 'out'}">${UI.waText(m.body)}
-          <span class="t">${UI.esc(UI.time(m.created_at))}${m.direction === 'out' ? ' ✓' : ''}</span></div>`).join('')
+        `<div class="wa-msg ${m.direction === 'in' ? 'in' : 'out'}">
+          ${UI.waText(m.body)}
+          ${renderInteractive(m)}
+          <span class="t">${UI.esc(UI.time(m.created_at))}${m.direction === 'out' ? ' ✓' : ''}</span>
+        </div>`).join('')
         : UI.empty('No messages yet — say hello.', '💬');
+
+      host.querySelectorAll('.wa-btn-reply, .wa-list-item-btn').forEach((btn) => {
+        btn.addEventListener('click', async (e) => {
+          e.preventDefault();
+          const from = numInput.value.trim();
+          if (!from) return UI.err('Select or enter the patient number first.');
+          const btnId = btn.dataset.btnId;
+          const btnTitle = btn.dataset.btnTitle;
+          try {
+            await API.post('/api/whatsapp/simulate', {
+              from,
+              text: btnTitle || btnId,
+              interactiveId: btnId,
+              interactiveTitle: btnTitle,
+            });
+            const fresh = await API.get(`/api/whatsapp/conversations/${from}`);
+            drawThread(fresh.messages);
+            drawOwner(from, fresh.session);
+            loadList(from);
+            APP.refreshBadges();
+          } catch (err) {
+            UI.err(err.message);
+          }
+        });
+      });
+
       host.scrollTop = host.scrollHeight;
     };
 

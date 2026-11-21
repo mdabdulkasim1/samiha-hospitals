@@ -4,8 +4,12 @@ data/*.db-journal
 data/*.db-wal
 data/*.db-shm
 .env
+.env.*
+!.env.example
 *.log
 .DS_Store
 coverage/
 tmp/
+*.zip
 data/backups/
+logs/

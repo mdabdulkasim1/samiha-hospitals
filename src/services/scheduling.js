@@ -8,8 +8,17 @@ const toMinutes = (hhmm) => {
 };
 const toHHMM = (mins) => `${pad(Math.floor(mins / 60))}:${pad(mins % 60)}`;
 
-/** 'YYYY-MM-DD' for a Date, in local time. */
-function dateKey(d) {
+/**
+ * Returns current Date in clinic timezone (Asia/Kolkata, IST UTC+5:30)
+ * regardless of host/server timezone.
+ */
+function getClinicNow() {
+  const istStr = new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' });
+  return new Date(istStr);
+}
+
+/** 'YYYY-MM-DD' for a Date, in clinic local time. */
+function dateKey(d = getClinicNow()) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
@@ -67,9 +76,9 @@ function bookedAt(doctorId, dateStr) {
 function availableSlots(doctorId, dateStr) {
   if (isOnLeave(doctorId, dateStr)) return [];
   const taken = bookedAt(doctorId, dateStr);
-  const now = new Date();
-  const isToday = dateKey(now) === dateStr;
-  const nowMins = now.getHours() * 60 + now.getMinutes();
+  const clinicNow = getClinicNow();
+  const isToday = dateKey(clinicNow) === dateStr;
+  const nowMins = clinicNow.getHours() * 60 + clinicNow.getMinutes();
 
   const slots = [];
   for (const s of sessionsFor(doctorId, dateStr)) {
@@ -93,7 +102,7 @@ function availableSlots(doctorId, dateStr) {
 /** Next `count` dates (from `fromOffset` days ahead) on which the doctor has slots. */
 function nextAvailableDates(doctorId, count = 5, horizonDays = 30) {
   const out = [];
-  const today = new Date();
+  const today = getClinicNow();
   for (let i = 0; i < horizonDays && out.length < count; i += 1) {
     const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i);
     const key = dateKey(d);
@@ -109,8 +118,8 @@ function humanDate(dateStr) {
   const d = parseDateKey(dateStr);
   const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  const today = dateKey(new Date());
-  const tomorrow = dateKey(new Date(Date.now() + 86400000));
+  const today = dateKey(getClinicNow());
+  const tomorrow = dateKey(new Date(getClinicNow().getTime() + 86400000));
   const suffix = dateStr === today ? ' (today)' : dateStr === tomorrow ? ' (tomorrow)' : '';
   return `${days[d.getDay()]}, ${d.getDate()} ${months[d.getMonth()]}${suffix}`;
 }
@@ -157,7 +166,7 @@ function parseDate(input) {
   const text = String(input || '').trim().toLowerCase();
   if (!text) return null;
 
-  const today = new Date();
+  const today = getClinicNow();
   const atMidnight = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
 
   if (/^(today|now|2day)$/.test(text)) return dateKey(today);
@@ -271,5 +280,5 @@ function nearestSlots(doctorId, dateStr, wanted, count = 4) {
 module.exports = {
   dateKey, parseDateKey, availableSlots, nextAvailableDates, humanDate,
   humanDateTime, to12h, nextToken, isSlotFree, sessionsFor, isOnLeave,
-  parseDate, parseTime, nearestSlots, windowLabel,
+  parseDate, parseTime, nearestSlots, windowLabel, getClinicNow,
 };

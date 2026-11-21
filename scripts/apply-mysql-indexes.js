@@ -3,17 +3,18 @@ const Database = require('better-sqlite3');
 const mysql = require('mysql2/promise');
 const fs = require('fs');
 const path = require('path');
+const config = require('../src/config');
 
 const SQLITE_PATH = path.resolve(__dirname, '../data/samiha.db');
 
 async function applyIndexes() {
   const sqlite = new Database(SQLITE_PATH);
   const mysqlConn = await mysql.createConnection({
-    host: 'localhost',
-    port: 3306,
-    user: 'root',
-    password: '',
-    database: 'samiha-polyclinic',
+    host: config.mysql.host,
+    port: config.mysql.port,
+    user: config.mysql.user,
+    password: config.mysql.password,
+    database: config.mysql.database,
   });
 
   const indexes = sqlite.prepare(

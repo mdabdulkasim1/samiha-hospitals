@@ -44,10 +44,22 @@ function translateSql(sql) {
   s = s.replace(/datetime\(\s*'now'\s*,\s*'-'\s*\|\|\s*\?\s*\|\|\s*'\s*minutes?'\s*\)/gi, 'DATE_SUB(NOW(), INTERVAL ? MINUTE)');
 
   // SQLite static date/datetime interval additions/subtractions on any expression:
-  s = s.replace(/date\(\s*([^,\)]+?)\s*,\s*'\+(\d+)\s+days?'\s*\)/gi, 'DATE_ADD($1, INTERVAL $2 DAY)');
-  s = s.replace(/date\(\s*([^,\)]+?)\s*,\s*'-(\d+)\s+days?'\s*\)/gi, 'DATE_SUB($1, INTERVAL $2 DAY)');
-  s = s.replace(/datetime\(\s*([^,\)]+?)\s*,\s*'\+(\d+)\s+(day|hour|minute|second)s?'\s*\)/gi, (m, expr, n, u) => `DATE_ADD(${expr}, INTERVAL ${n} ${u.toUpperCase()})`);
-  s = s.replace(/datetime\(\s*([^,\)]+?)\s*,\s*'-(\d+)\s+(day|hour|minute|second)s?'\s*\)/gi, (m, expr, n, u) => `DATE_SUB(${expr}, INTERVAL ${n} ${u.toUpperCase()})`);
+  s = s.replace(/date\(\s*([^,\)]+?)\s*,\s*'\+(\d+)\s+days?'\s*\)/gi, (m, expr, n) => {
+    const base = expr.replace(/['"`]/g, '').toLowerCase() === 'now' ? 'CURDATE()' : expr;
+    return `DATE_ADD(${base}, INTERVAL ${n} DAY)`;
+  });
+  s = s.replace(/date\(\s*([^,\)]+?)\s*,\s*'-(\d+)\s+days?'\s*\)/gi, (m, expr, n) => {
+    const base = expr.replace(/['"`]/g, '').toLowerCase() === 'now' ? 'CURDATE()' : expr;
+    return `DATE_SUB(${base}, INTERVAL ${n} DAY)`;
+  });
+  s = s.replace(/datetime\(\s*([^,\)]+?)\s*,\s*'\+(\d+)\s+(day|hour|minute|second)s?'\s*\)/gi, (m, expr, n, u) => {
+    const base = expr.replace(/['"`]/g, '').toLowerCase() === 'now' ? 'NOW()' : expr;
+    return `DATE_ADD(${base}, INTERVAL ${n} ${u.toUpperCase()})`;
+  });
+  s = s.replace(/datetime\(\s*([^,\)]+?)\s*,\s*'-(\d+)\s+(day|hour|minute|second)s?'\s*\)/gi, (m, expr, n, u) => {
+    const base = expr.replace(/['"`]/g, '').toLowerCase() === 'now' ? 'NOW()' : expr;
+    return `DATE_SUB(${base}, INTERVAL ${n} ${u.toUpperCase()})`;
+  });
 
   // Current date/datetime:
   s = s.replace(/datetime\(\s*'now'\s*\)/gi, 'NOW()');
@@ -88,6 +100,10 @@ function translateSql(sql) {
     if (/\bAS\s+[a-zA-Z0-9_`"']+\s*$/i.test(sub)) return m;
     return `${sub} AS _derived${end}`;
   });
+
+  // Include reorder_level in SELECT and GROUP BY for drugs low-stock subqueries
+  s = s.replace(/SELECT\s+d\.id\s+FROM\s+drugs\s+d([\s\S]+?)GROUP\s+BY\s+d\.id([\s\S]+?d\.reorder_level)/gi,
+    'SELECT d.id, d.reorder_level FROM drugs d$1GROUP BY d.id, d.reorder_level$2');
 
   // SQLite double pipe string concat works with PIPES_AS_CONCAT
   return s;

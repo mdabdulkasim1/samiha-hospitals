@@ -22,21 +22,67 @@ function logMessage({ waNumber, direction, body, messageType = 'text', payload =
   return db.prepare('SELECT * FROM whatsapp_messages WHERE id = ?').get(info.lastInsertRowid);
 }
 
-async function sendViaMeta(to, body) {
+async function sendViaMeta(to, body, options = {}) {
   const { token, phoneNumberId, apiVersion } = config.whatsapp;
   if (!token || !phoneNumberId) {
     throw new Error('WHATSAPP_TOKEN and WHATSAPP_PHONE_NUMBER_ID must be set for provider "meta".');
   }
-  const res = await fetch(`https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
+
+  let requestBody;
+  if (options.interactive) {
+    const inter = { ...options.interactive };
+    if (inter.type === 'list' && inter.action?.sections) {
+      let count = 0;
+      inter.action.button = String(inter.action.button || 'Select').slice(0, 20);
+      inter.action.sections = inter.action.sections.map((sec) => {
+        const remaining = 10 - count;
+        if (remaining <= 0) return null;
+        const rows = (sec.rows || []).slice(0, remaining).map((r) => ({
+          id: String(r.id),
+          title: String(r.title).slice(0, 24),
+          description: r.description ? String(r.description).slice(0, 72) : undefined,
+        }));
+        count += rows.length;
+        return { title: String(sec.title || '').slice(0, 24), rows };
+      }).filter(Boolean);
+    } else if (inter.type === 'button' && inter.action?.buttons) {
+      inter.action.buttons = inter.action.buttons.slice(0, 3).map((b) => ({
+        type: 'reply',
+        reply: {
+          id: String(b.reply?.id || b.id),
+          title: String(b.reply?.title || b.title).slice(0, 20),
+        },
+      }));
+    }
+    requestBody = {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to,
+      type: 'interactive',
+      interactive: inter,
+    };
+  } else if (options.template) {
+    requestBody = {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to,
+      type: 'template',
+      template: options.template,
+    };
+  } else {
+    requestBody = {
       messaging_product: 'whatsapp',
       recipient_type: 'individual',
       to,
       type: 'text',
       text: { preview_url: false, body },
-    }),
+    };
+  }
+
+  const res = await fetch(`https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(requestBody),
   });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -109,17 +155,54 @@ async function sendDocument(to, { link, filename, caption = '' } = {}) {
 }
 
 /** Send one message now. Always logged, whichever provider is configured. */
-async function send(to, body) {
+async function send(to, body, options = {}) {
   if (!to) return null;
+  const messageType = options.messageType || (options.interactive ? 'interactive' : 'text');
+  const payload = options.payload || options.interactive || null;
   if (config.whatsapp.provider === 'meta') {
     try {
-      const id = await sendViaMeta(to, body);
-      return logMessage({ waNumber: to, direction: 'out', body, providerMessageId: id, status: 'sent' });
+      const id = await sendViaMeta(to, body, options);
+      return logMessage({ waNumber: to, direction: 'out', body, messageType, payload, providerMessageId: id, status: 'sent' });
     } catch (err) {
-      return logMessage({ waNumber: to, direction: 'out', body, status: 'failed', error: err.message });
+      return logMessage({ waNumber: to, direction: 'out', body, messageType, payload, status: 'failed', error: err.message });
     }
   }
-  return logMessage({ waNumber: to, direction: 'out', body, status: 'sent' });
+  return logMessage({ waNumber: to, direction: 'out', body, messageType, payload, status: 'sent' });
+}
+
+/** Send an interactive list message (Meta interactive: list). */
+async function sendInteractiveList(to, { header, body, footer, buttonText = 'Select Service', sections = [] } = {}) {
+  const interactive = {
+    type: 'list',
+    ...(header ? { header: { type: 'text', text: header } } : {}),
+    body: { text: body },
+    ...(footer ? { footer: { text: footer } } : {}),
+    action: {
+      button: String(buttonText || 'Select Option').slice(0, 20),
+      sections,
+    },
+  };
+  return send(to, body, { messageType: 'interactive', interactive });
+}
+
+/** Send interactive reply buttons (Meta interactive: button, max 3). */
+async function sendInteractiveButtons(to, { header, body, footer, buttons = [] } = {}) {
+  const interactive = {
+    type: 'button',
+    ...(header ? { header: { type: 'text', text: header } } : {}),
+    body: { text: body },
+    ...(footer ? { footer: { text: footer } } : {}),
+    action: {
+      buttons: buttons.slice(0, 3).map((b) => ({
+        type: 'reply',
+        reply: {
+          id: String(b.id),
+          title: String(b.title).slice(0, 20),
+        },
+      })),
+    },
+  };
+  return send(to, body, { messageType: 'interactive', interactive });
 }
 
 /**
@@ -181,5 +264,5 @@ function recentNumbers(limit = 30) {
 }
 
 module.exports = {
-  send, sendDocument, logMessage, dispatchPending, notify, conversation, recentNumbers,
+  send, sendInteractiveList, sendInteractiveButtons, sendDocument, logMessage, dispatchPending, notify, conversation, recentNumbers,
 };

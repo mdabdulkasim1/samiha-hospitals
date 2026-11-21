@@ -1,12 +1,12 @@
 {
-  "name": "samiha-polyclinic-erp",
+  "name": "samiha-polyclinic-diagnosis",
   "version": "1.0.0",
   "private": true,
   "description": "SAMIHA POLYCLINIC & DIAGNOSTICS — Hospital ERP: enquiry to exit, OPD/IPD, lab, pharmacy, billing and WhatsApp appointment booking.",
   "main": "src/server.js",
   "type": "commonjs",
   "engines": {
-    "node": ">=20.0.0 <23.0.0"
+    "node": ">=20.0.0"
   },
   "scripts": {
     "start": "node src/server.js",

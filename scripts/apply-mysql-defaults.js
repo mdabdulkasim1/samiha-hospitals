@@ -1,13 +1,16 @@
 'use strict';
 const Database = require('better-sqlite3');
 const mysql = require('mysql2/promise');
+const config = require('../src/config');
 
 async function main() {
   const sqlite = new Database('./data/samiha.db', { readonly: true });
   const pool = mysql.createPool({
-    host: 'localhost',
-    user: 'root',
-    database: 'samiha-polyclinic',
+    host: config.mysql.host,
+    port: config.mysql.port,
+    user: config.mysql.user,
+    password: config.mysql.password,
+    database: config.mysql.database,
     multipleStatements: true,
   });
 

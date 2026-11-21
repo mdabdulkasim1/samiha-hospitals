@@ -774,9 +774,9 @@ CREATE TABLE `password_resets` (
   `token_hash` VARCHAR(255) NULL,
   `requested_by` INT NULL,
   `ip` VARCHAR(255) NULL,
-  `expires_at` DATETIME NULL,
-  `used_at` DATETIME NULL,
-  `created_at` DATETIME NULL
+  `expires_at` VARCHAR(64) NULL,
+  `used_at` VARCHAR(64) NULL,
+  `created_at` VARCHAR(64) NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 DROP TABLE IF EXISTS `patient_history`;
@@ -1160,8 +1160,8 @@ DROP TABLE IF EXISTS `sessions`;
 CREATE TABLE `sessions` (
   `token` VARCHAR(255) NULL,
   `user_id` INT NULL,
-  `created_at` DATETIME NULL,
-  `expires_at` DATETIME NULL,
+  `created_at` VARCHAR(64) NULL,
+  `expires_at` VARCHAR(64) NULL,
   PRIMARY KEY (`token`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -1400,10 +1400,10 @@ CREATE TABLE `whatsapp_messages` (
   `id` INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
   `wa_number` VARCHAR(255) NULL,
   `direction` VARCHAR(255) NULL,
-  `body` VARCHAR(255) NULL,
+  `body` TEXT NULL,
   `message_type` VARCHAR(255) NULL,
   `payload` TEXT,
-  `provider_message_id` INT NULL,
+  `provider_message_id` VARCHAR(255) NULL,
   `status` VARCHAR(100) NULL,
   `error` VARCHAR(255) NULL,
   `created_at` DATETIME NULL

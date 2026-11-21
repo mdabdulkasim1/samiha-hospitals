@@ -1,11 +1,14 @@
 'use strict';
 const mysql = require('mysql2/promise');
+const config = require('../src/config');
 
 async function main() {
   const conn = await mysql.createConnection({
-    host: 'localhost',
-    user: 'root',
-    database: 'samiha-polyclinic',
+    host: config.mysql.host,
+    port: config.mysql.port,
+    user: config.mysql.user,
+    password: config.mysql.password,
+    database: config.mysql.database,
   });
 
   try {
@@ -27,10 +30,10 @@ async function main() {
     console.log('Test query result:', rows);
   } catch (err) {
     console.error('Failed:', err.message);
+    process.exit(1);
   }
 
   await conn.end();
 }
 
 main().catch(console.error);
-
