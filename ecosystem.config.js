@@ -24,7 +24,7 @@ module.exports = {
         NODE_ENV: 'production',
         PORT: 3011,
         DB_ENGINE: 'mysql',
-        DB_HOST: 'localhost',
+        DB_HOST: '76.13.243.217',
         DB_PORT: 3306,
         DB_NAME: 'samihahospitals_app_db',
         DB_USER: 'samihahospitals_app_user',

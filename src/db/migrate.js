@@ -36,6 +36,10 @@ async function migrateMysql() {
       console.log(`[migrate] MySQL active (${config.mysql.host}:${config.mysql.port}/${config.mysql.database}). Tables already exist.`);
     }
 
+    // Apply incremental schema updates (new modules, branches, queue, consumables, expenses)
+    const latestMigrate = require('../../scripts/migrate-mysql-latest');
+    await latestMigrate.run();
+
     // Ensure julianday helper function exists
     try {
       await conn.query('DROP FUNCTION IF EXISTS julianday');

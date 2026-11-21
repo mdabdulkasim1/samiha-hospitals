@@ -19,7 +19,7 @@ async function getPool() {
     decimalNumbers: true,
   });
   pool.on('connection', (c) => {
-    c.query("SET sql_mode = CONCAT(@@sql_mode, ',PIPES_AS_CONCAT')");
+    c.query("SET sql_mode = CONCAT(@@sql_mode, ',PIPES_AS_CONCAT,ANSI_QUOTES')");
   });
   return pool;
 }
@@ -88,11 +88,15 @@ function translateSql(sql) {
   s = s.replace(/date\(\s*([^,\s)]+)\s*,\s*'weekday 1'\s*,\s*'-7 days'\s*\)/gi, 'DATE_SUB(DATE($1), INTERVAL WEEKDAY($1) DAY)');
   s = s.replace(/date\(\s*([^,\s)]+)\s*,\s*'start of month'\s*\)/gi, 'DATE_FORMAT($1, \'%Y-%m-01\')');
 
-  // Escape reserved word `key` on settings table
-  s = s.replace(/(\bSELECT\s+)key(\s*,\s*value\s+FROM\s+settings)/gi, '$1`key`$2');
-  s = s.replace(/(\bsettings\s+WHERE\s+)key(\s*(=|IN|\b))/gi, '$1`key`$2');
+  // SQLite IS NOT ? / IS ? with null-safe comparison in MySQL
+  s = s.replace(/\b([a-zA-Z0-9_\.]+)\s+IS\s+NOT\s+\?/gi, 'NOT ($1 <=> ?)');
+  s = s.replace(/\b([a-zA-Z0-9_\.]+)\s+IS\s+\?/gi, '$1 <=> ?');
+
+  // Escape reserved word `key` on settings & request_context tables
+  s = s.replace(/(\bSELECT\s+)key(\s*,\s*value\s+FROM\s+(?:settings|request_context))/gi, '$1`key`$2');
+  s = s.replace(/(\b(?:settings|request_context)\s+WHERE\s+)key(\s*(=|IN|\b))/gi, '$1`key`$2');
   s = s.replace(/(\bWHERE\s+)key(\s*(=|IN|\b))/gi, '$1`key`$2');
-  s = s.replace(/(\b(?:INSERT(?:\s+IGNORE)?|REPLACE)\s+INTO\s+settings\s*\(\s*)key(\s*,)/gi, '$1`key`$2');
+  s = s.replace(/(\b(?:INSERT(?:\s+IGNORE)?|REPLACE)\s+INTO\s+(?:settings|request_context)\s*\(\s*)key(\s*,)/gi, '$1`key`$2');
   s = s.replace(/(\bON\s+DUPLICATE\s+KEY\s+UPDATE\s+)key(\s*=)/gi, '$1`key`$2');
 
   // Add alias to naked subqueries in FROM clause e.g. FROM (SELECT ...) -> FROM (SELECT ...) AS _derived
@@ -104,6 +108,9 @@ function translateSql(sql) {
   // Include reorder_level in SELECT and GROUP BY for drugs low-stock subqueries
   s = s.replace(/SELECT\s+d\.id\s+FROM\s+drugs\s+d([\s\S]+?)GROUP\s+BY\s+d\.id([\s\S]+?d\.reorder_level)/gi,
     'SELECT d.id, d.reorder_level FROM drugs d$1GROUP BY d.id, d.reorder_level$2');
+
+  // Replace SQLite double-quoted identifiers with MySQL backticks: "col" -> `col`
+  s = s.replace(/"([a-zA-Z0-9_]+)"/g, '`$1`');
 
   // SQLite double pipe string concat works with PIPES_AS_CONCAT
   return s;

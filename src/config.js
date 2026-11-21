@@ -21,7 +21,11 @@ function loadEnvFile(file) {
 }
 
 const root = path.resolve(__dirname, '..');
-loadEnvFile(path.join(root, '.env'));
+const activeEnvFile = process.env.ENV_FILE || (process.env.NODE_ENV === 'production' ? '.env.production' : '.env');
+loadEnvFile(path.join(root, activeEnvFile));
+if (activeEnvFile !== '.env') {
+  loadEnvFile(path.join(root, '.env'));
+}
 
 process.env.TZ = process.env.TZ || 'Asia/Kolkata';
 

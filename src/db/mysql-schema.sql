@@ -1478,17 +1478,3 @@ CREATE INDEX `idx_visits_status` ON `visits` (`status`);
 CREATE INDEX `idx_vitals_patient` ON `vitals` (`patient_id`);
 CREATE INDEX `idx_wa_msgs_number` ON `whatsapp_messages` (`wa_number`, `created_at`);
 
--- Compatibility function for SQLite julianday()
-DROP FUNCTION IF EXISTS `julianday`;
-DELIMITER ;;
-CREATE FUNCTION `julianday`(d VARCHAR(255))
-RETURNS DOUBLE
-DETERMINISTIC
-NO SQL
-BEGIN
-  IF d IS NULL THEN RETURN NULL; END IF;
-  IF d = 'now' THEN RETURN UNIX_TIMESTAMP(NOW()) / 86400.0 + 2440587.5; END IF;
-  RETURN UNIX_TIMESTAMP(d) / 86400.0 + 2440587.5;
-END;;
-DELIMITER ;
-

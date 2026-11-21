@@ -16,6 +16,8 @@
     "db:reset": "node src/db/reset.js",
     "demo": "node scripts/demo-walkthrough.js",
     "setup": "npm run db:migrate && npm run db:seed",
+    "verify:dev": "node tests/verify-mysql-cruds.js",
+    "verify:prod": "node tests/verify-production-db.js",
     "test": "node --test tests/"
   },
   "dependencies": {
