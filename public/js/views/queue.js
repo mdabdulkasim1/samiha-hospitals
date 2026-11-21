@@ -66,6 +66,7 @@
         ...(APP.can(['reception']) ? [{ id: 'arrive', label: '+ Patient arrived', kind: '', onClick: () => openArrival() }] : []),
         ...(APP.can(['reception', 'lab', 'pharmacy', 'nurse']) ? [{ id: 'token', label: 'Issue a token', onClick: () => openIssueToken() }] : []),
         { id: 'tv', label: 'Waiting-room screen', onClick: () => APP.navigate('display', {}) },
+        { id: 'kiosk', label: 'Live TV Kiosk (/tv)', onClick: () => window.open('/tv', '_blank') },
         { id: 'refresh', label: 'Refresh', onClick: () => APP.reload() },
       ]);
 

@@ -55,7 +55,7 @@
 
     async render(el, params) {
       const first = await API.get('/api/queue/display');
-      const floors = first.floors;
+      const floors = (first && first.floors) || [];
       /*
        * Every television shows the same board, and that is the default.
        *
@@ -71,6 +71,7 @@
       const floor = params.floor === undefined ? '' : params.floor;
 
       APP.actions([
+        { id: 'kiosk', label: 'Open TV Kiosk (/tv)', onClick: () => window.open('/tv', '_blank') },
         { id: 'full', label: 'Full screen', onClick: () => goFullScreen(el) },
         ...(mayEdit() ? [{ id: 'slides', label: 'Posters', onClick: () => openSlides() }] : []),
         { id: 'refresh', label: 'Refresh', onClick: () => APP.reload() },
@@ -163,18 +164,20 @@
    * not move under them while they are watching.
    */
   function tableRows(d) {
-    const out = d.panels.map((p) => ({
+    const panels = (d && d.panels) || [];
+    const counters = (d && d.counters) || [];
+    const out = panels.map((p) => ({
       label: p.nowCalling ? p.nowCalling.label : null,
-      room: p.room.name,
-      floor: p.room.floor,
+      room: p.room ? p.room.name : '—',
+      floor: p.room ? p.room.floor : '',
       // Who is behind that door, named on the row. A patient called to OP-4
       // is going to see a person, and the name is what tells them they are
       // at the right door when they get there.
-      doctor: p.room.doctors.join(' · '),
+      doctor: (p.room && p.room.doctors) ? p.room.doctors.join(' · ') : '',
       sub: (p.nowCalling && p.nowCalling.category)
-        ? p.nowCalling.category : p.room.specialties.join(' · '),
-      waiting: p.waiting,
-      upNext: p.upNext,
+        ? p.nowCalling.category : ((p.room && p.room.specialties) ? p.room.specialties.join(' · ') : ''),
+      waiting: p.waiting || 0,
+      upNext: p.upNext || [],
       at: p.nowCalling ? p.nowCalling.at : null,
     }));
 
@@ -183,15 +186,15 @@
      * calling 12-014 is a thing the waiting room needs to see and it is not
      * a room anybody walks to by number.
      */
-    for (const c of d.counters) {
+    for (const c of counters) {
       out.push({
         label: c.nowCalling ? c.nowCalling.label : null,
-        room: c.counter.name,
-        floor: c.counter.location || '',
+        room: c.counter ? c.counter.name : 'Counter',
+        floor: (c.counter && c.counter.location) || '',
         doctor: '',
         sub: '',
-        waiting: c.waiting,
-        upNext: c.upNext,
+        waiting: c.waiting || 0,
+        upNext: c.upNext || [],
         at: c.nowCalling ? c.nowCalling.at : null,
       });
     }
