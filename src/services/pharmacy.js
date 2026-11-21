@@ -139,12 +139,17 @@ function stockOnHand(drugId) {
   ).get(drugId).qty;
 }
 
-function writeLedger({ drugId, batchId, txnType, qtyDelta, refType, refId, notes, userId }) {
+function writeLedger({ drugId, batchId, txnType, qtyDelta, refType, refId, notes, userId,
+                      reason, creditAmount }) {
   const balance = stockOnHand(drugId);
   db.prepare(
-    `INSERT INTO stock_ledger (drug_id, batch_id, txn_type, qty_delta, balance_after, ref_type, ref_id, notes, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(drugId, batchId || null, txnType, qtyDelta, balance, refType || null, refId || null, notes || null, userId || null);
+    `INSERT INTO stock_ledger (drug_id, batch_id, txn_type, qty_delta, balance_after, ref_type,
+                               ref_id, notes, reason, credit_amount, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(drugId, batchId || null, txnType, qtyDelta, balance, refType || null, refId || null,
+    notes || null, reason || null,
+    creditAmount === undefined || creditAmount === null ? null : Number(creditAmount),
+    userId || null);
 }
 
 /**

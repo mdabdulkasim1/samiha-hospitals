@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS users (
   -- 'owner' sits above 'admin': full access to everything, and the only role
   -- that decides what the other roles may see.
   role           TEXT NOT NULL CHECK (role IN
-                   ('owner','admin','reception','counselor','nurse','doctor','lab','pharmacy','cashier','ward')),
+                   ('owner','admin','reception','counselor','nurse','doctor','lab','pharmacy','cashier','ward','store')),
   department_id  INTEGER REFERENCES departments(id),
   active         INTEGER NOT NULL DEFAULT 1,
   last_login_at  TEXT,
@@ -1631,3 +1631,438 @@ CREATE TABLE IF NOT EXISTS document_shares (
 );
 CREATE INDEX IF NOT EXISTS idx_doc_shares_ref ON document_shares(kind, ref_id);
 CREATE INDEX IF NOT EXISTS idx_doc_shares_made ON document_shares(created_at);
+
+-- ----------------------------------------------------------- the expense book
+-- What the clinic spends, under the headings the accounts office asked for.
+--
+-- The cash book next door records money moving. This records a cost being
+-- incurred, which is not the same event: a supplier's invoice dated the 3rd
+-- and paid on the 28th is one cost in this month and one payment in it, and a
+-- clinic that only writes down payments cannot answer "what did October
+-- actually cost" until every bill happens to be settled.
+--
+-- So an expense is the invoice, and payments hang off it. Each payment writes
+-- the cash book entry it always would have — linked both ways — so the money
+-- appears exactly once wherever money is counted, and the cost appears
+-- exactly once wherever costs are counted.
+CREATE TABLE IF NOT EXISTS expense_categories (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  -- Never changes once it has been used: the reports key on it. The name
+  -- above it is the clinic's to reword.
+  code          TEXT NOT NULL UNIQUE,
+  name          TEXT NOT NULL,
+  cost_group    TEXT NOT NULL DEFAULT 'operating'
+                  CHECK (cost_group IN ('setup','operating','finance','schedule')),
+  -- Whether this is a cost of the month at all. See src/db/expenseBook.js.
+  nature        TEXT NOT NULL DEFAULT 'operating'
+                  CHECK (nature IN ('operating','capital','stock','finance',
+                                    'financing_capital','deposit','advance')),
+  -- The row of the owner's monthly comparison this adds to, if any.
+  report_line   TEXT,
+  default_department TEXT NOT NULL DEFAULT 'common',
+  -- Which cash book heading a payment under this one writes itself as, so
+  -- the money appears in the cash flow and on the owner's board under a
+  -- name that means something there too.
+  cash_category TEXT,
+  is_direct     INTEGER NOT NULL DEFAULT 0,
+  is_fixed      INTEGER NOT NULL DEFAULT 0,
+  note          TEXT,
+  -- Shipped with the system, so the report that totals by it can rely on it
+  -- being there. A seeded heading may be reworded and switched off, never
+  -- deleted; one the clinic added itself may be.
+  seeded        INTEGER NOT NULL DEFAULT 0,
+  active        INTEGER NOT NULL DEFAULT 1,
+  sort_order    INTEGER NOT NULL DEFAULT 0,
+  created_by    INTEGER REFERENCES users(id),
+  created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_exp_cat_group ON expense_categories(cost_group, sort_order);
+
+CREATE TABLE IF NOT EXISTS expense_items (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  category_id INTEGER NOT NULL REFERENCES expense_categories(id) ON DELETE CASCADE,
+  name        TEXT NOT NULL,
+  seeded      INTEGER NOT NULL DEFAULT 0,
+  active      INTEGER NOT NULL DEFAULT 1,
+  sort_order  INTEGER NOT NULL DEFAULT 0,
+  created_by  INTEGER REFERENCES users(id),
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (category_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_exp_item_cat ON expense_items(category_id, sort_order);
+
+CREATE TABLE IF NOT EXISTS expenses (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  ref_no        TEXT NOT NULL UNIQUE,
+  category_id   INTEGER NOT NULL REFERENCES expense_categories(id),
+  item_id       INTEGER REFERENCES expense_items(id),
+  department    TEXT NOT NULL DEFAULT 'common',
+  supplier_id   INTEGER REFERENCES suppliers(id),
+  -- A supplier the clinic has no account with — the hardware shop down the
+  -- road — is a name, not a record. Forcing one would stop the entry.
+  supplier_name TEXT,
+  description   TEXT,
+  invoice_no    TEXT,
+  invoice_date  TEXT NOT NULL,
+  -- What the charge is for, where that is a stretch of time: a month's rent,
+  -- a quarter's AMC. Without it a yearly licence read as one costly month.
+  period_from   TEXT,
+  period_to     TEXT,
+  taxable       REAL NOT NULL DEFAULT 0,
+  tax           REAL NOT NULL DEFAULT 0,
+  total         REAL NOT NULL CHECK (total > 0),
+  due_date      TEXT,
+  -- Kept in step with the payments by the service that writes them; never
+  -- typed in. 'void' is the only way a line leaves the totals.
+  status        TEXT NOT NULL DEFAULT 'unpaid'
+                  CHECK (status IN ('unpaid','part_paid','paid','void')),
+  paid          REAL NOT NULL DEFAULT 0,
+  approved_by   INTEGER REFERENCES users(id),
+  approved_at   TEXT,
+  approval_note TEXT,
+  notes         TEXT,
+  created_by    INTEGER REFERENCES users(id),
+  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  voided_at     TEXT,
+  voided_by     INTEGER REFERENCES users(id),
+  void_reason   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(invoice_date);
+CREATE INDEX IF NOT EXISTS idx_expenses_cat ON expenses(category_id, invoice_date);
+CREATE INDEX IF NOT EXISTS idx_expenses_dept ON expenses(department, invoice_date);
+CREATE INDEX IF NOT EXISTS idx_expenses_due ON expenses(status, due_date);
+
+CREATE TABLE IF NOT EXISTS expense_payments (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  expense_id  INTEGER NOT NULL REFERENCES expenses(id) ON DELETE CASCADE,
+  amount      REAL NOT NULL CHECK (amount > 0),
+  paid_on     TEXT NOT NULL,
+  mode        TEXT NOT NULL DEFAULT 'cash'
+                CHECK (mode IN ('cash','card','upi','netbanking','cheque','other')),
+  reference   TEXT,
+  -- The cash book line this payment wrote. One rupee, one place it is counted.
+  cash_book_id INTEGER REFERENCES cash_book(id),
+  created_by  INTEGER REFERENCES users(id),
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_exp_pay ON expense_payments(expense_id);
+
+-- The invoice or receipt itself, and whatever approval came with it.
+--
+-- Held in the database rather than on disk because the container this runs in
+-- is rebuilt on every deploy and anything written beside the code goes with
+-- it. A bill nobody can produce afterwards is a bill that was never filed.
+CREATE TABLE IF NOT EXISTS expense_attachments (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  expense_id  INTEGER NOT NULL REFERENCES expenses(id) ON DELETE CASCADE,
+  kind        TEXT NOT NULL DEFAULT 'invoice'
+                CHECK (kind IN ('invoice','receipt','approval','other')),
+  filename    TEXT NOT NULL,
+  mime        TEXT NOT NULL,
+  bytes       INTEGER NOT NULL DEFAULT 0,
+  content     BLOB NOT NULL,
+  uploaded_by INTEGER REFERENCES users(id),
+  uploaded_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_exp_att ON expense_attachments(expense_id);
+
+-- --------------------------------------------------- stock, as it stood then
+-- The shelf written down at the close of a day, batch by batch.
+--
+-- Without this a stock reconciliation cannot do the one thing it exists for.
+-- Opening stock worked out by rolling today's shelf backwards through the
+-- movements is the same arithmetic as the statement itself, so the two sides
+-- always agree — including on the day somebody edits a quantity by hand or a
+-- bug loses a movement. The difference line reads zero and means nothing.
+--
+-- A snapshot is an independent record: this many packs, at this cost, on this
+-- date. From the next period onwards the statement can be wrong, which is
+-- what makes it worth reading.
+CREATE TABLE IF NOT EXISTS stock_snapshots (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  as_on     TEXT NOT NULL UNIQUE,     -- the close of this day
+  units     REAL NOT NULL DEFAULT 0,
+  value     REAL NOT NULL DEFAULT 0,
+  batches   INTEGER NOT NULL DEFAULT 0,
+  unpriced  INTEGER NOT NULL DEFAULT 0,
+  notes     TEXT,
+  taken_by  INTEGER REFERENCES users(id),
+  taken_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS stock_snapshot_lines (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  snapshot_id INTEGER NOT NULL REFERENCES stock_snapshots(id) ON DELETE CASCADE,
+  batch_id    INTEGER NOT NULL REFERENCES drug_batches(id),
+  drug_id     INTEGER NOT NULL REFERENCES drugs(id),
+  qty         REAL NOT NULL DEFAULT 0,
+  cost        REAL NOT NULL DEFAULT 0,
+  value       REAL NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_snap_lines ON stock_snapshot_lines(snapshot_id);
+
+-- ------------------------------------------------------- the consumables store
+-- Every glove, swab, cannula and bin liner the clinic keeps.
+--
+-- Deliberately not the pharmacy. A medicine is bought in a batch with an
+-- expiry and an MRP, sold to a named patient and taxed; a box of gauze is
+-- received, put on a shelf and used until it runs out. Running them through
+-- the same screens would mean asking a nurse for a batch number and a GST
+-- rate before she could write down that she had taken two rolls of
+-- micropore, and the honest outcome of that is a store nobody updates.
+--
+-- What is on the shelf is never stored as a number. It is the sum of the
+-- movements, every one of which says who and when — because a figure that
+-- can be typed over is a figure nobody can account for, and "the system
+-- says 40 and there are 12" is the conversation this exists to prevent.
+CREATE TABLE IF NOT EXISTS consumable_areas (
+  code       TEXT PRIMARY KEY,
+  label      TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  active     INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS consumables (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  code        TEXT NOT NULL UNIQUE,
+  name        TEXT NOT NULL,
+  description TEXT,
+  area        TEXT NOT NULL REFERENCES consumable_areas(code),
+  -- "Box of 100", "Pkt of 50", "Roll". The only thing that makes a count
+  -- mean anything: twelve of something is twelve boxes or twelve pieces,
+  -- and the difference is a thousand swabs.
+  unit        TEXT NOT NULL DEFAULT 'No.',
+  -- What the purchase order was raised for: the level the store is expected
+  -- to hold, which is not a count of what is on the shelf.
+  indent_qty  REAL NOT NULL DEFAULT 0,
+  -- Below this, the screen asks for it to be re-ordered. Defaults from the
+  -- indent until somebody who knows the usage sets it.
+  reorder_at  REAL,
+  seeded      INTEGER NOT NULL DEFAULT 0,
+  active      INTEGER NOT NULL DEFAULT 1,
+  sort_order  INTEGER NOT NULL DEFAULT 0,
+  created_by  INTEGER REFERENCES users(id),
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_consumables_area ON consumables(area, sort_order);
+
+CREATE TABLE IF NOT EXISTS consumable_movements (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  item_id      INTEGER NOT NULL REFERENCES consumables(id) ON DELETE CASCADE,
+  -- 'opening'  what was on the shelf when the store was first written down
+  -- 'receipt'  a delivery taken in
+  -- 'issue'    given out to a room, a ward or a department
+  -- 'wastage'  damaged, expired or spoiled
+  -- 'return'   sent back to the supplier
+  -- 'count'    a physical count correcting the book, either way
+  kind         TEXT NOT NULL CHECK (kind IN ('opening','receipt','issue','wastage','return','count')),
+  -- Signed: what it does to the shelf. A receipt is positive, an issue is
+  -- negative, a count can be either.
+  qty          REAL NOT NULL,
+  moved_on     TEXT NOT NULL,
+  supplier     TEXT,
+  invoice_no   TEXT,
+  -- What it cost, where anybody knows. Left empty rather than guessed: a
+  -- store valued on invented prices is worse than one not valued at all.
+  unit_cost    REAL,
+  issued_to    TEXT,
+  reason       TEXT,
+  notes        TEXT,
+  created_by   INTEGER REFERENCES users(id),
+  created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_cons_moves ON consumable_movements(item_id, moved_on);
+CREATE INDEX IF NOT EXISTS idx_cons_moves_when ON consumable_movements(moved_on);
+
+-- ===========================================================================
+-- The queue: categories, consulting rooms, and the tokens handed out
+-- ===========================================================================
+
+/*
+ * The clinic's own category list, as it issued it.
+ *
+ * Twenty categories, each with a two-digit code, and a token is that code
+ * and a sequence: 08-001 is the first Paediatrics patient of the day,
+ * 08-002 the next, and 12-001 is the first at the laboratory. The code is
+ * what makes a number spoken in a waiting room mean something — two
+ * counters calling "number 7" tells nobody anything, and 08-007 tells the
+ * right person everything.
+ *
+ * It is a table rather than a list in the code because the clinic will
+ * change it: ENT and Urology are on it before either has a department here,
+ * Oncology is off it, and General and Internal Medicine share one code.
+ * Those are the clinic's decisions about its own front desk.
+ */
+CREATE TABLE IF NOT EXISTS queue_categories (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  -- '01' .. '20'. Text, not a number, because the leading zero is part of
+  -- what is printed and 1-001 is not the token the clinic issued.
+  code       TEXT NOT NULL UNIQUE,
+  name       TEXT NOT NULL,
+  -- 'consult' categories are seen in a consulting room; 'service'
+  -- categories are counters — the lab, the pharmacy, the injection room.
+  kind       TEXT NOT NULL DEFAULT 'consult' CHECK (kind IN ('consult','service')),
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  active     INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+/*
+ * The consulting rooms: two on the ground floor, two on the first.
+ *
+ * Which specialties sit in a room is a separate table, because a room takes
+ * several — four or more — and because it changes when the clinic moves a
+ * clinic around. Nothing about the building is assumed here: the rooms are
+ * entered, and what the patient is told afterwards is read back from them,
+ * so the slip in their hand and the screen on the wall cannot disagree.
+ *
+ * `floor_order` is what the screens sort by, because "First Floor" comes
+ * before "Ground Floor" in the alphabet and after it in the building.
+ */
+CREATE TABLE IF NOT EXISTS op_rooms (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL,                     -- 'OP 1', as painted on the door
+  floor       TEXT NOT NULL,                     -- 'Ground Floor', as a patient says it
+  floor_order INTEGER NOT NULL DEFAULT 0,
+  note        TEXT,
+  active      INTEGER NOT NULL DEFAULT 1,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (floor, name)
+);
+
+/* Which specialties sit in which room. Many per room, by design. */
+CREATE TABLE IF NOT EXISTS op_room_categories (
+  room_id     INTEGER NOT NULL REFERENCES op_rooms(id) ON DELETE CASCADE,
+  category_id INTEGER NOT NULL REFERENCES queue_categories(id) ON DELETE CASCADE,
+  sort_order  INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (room_id, category_id)
+);
+
+/*
+ * A token, as handed over.
+ *
+ * One row per token rather than a number stamped on the visit, because the
+ * clinic's own rule is a separate token for each service a patient goes to:
+ * a child seen in Paediatrics and sent for a blood test holds 08-004 and
+ * then 12-011, and both are real queue positions in different rooms. A
+ * column on the visit could hold one of those two.
+ *
+ * The sequence restarts each morning because it is counted within the issue
+ * date, which means no nightly job can forget to reset it. Past 999 it
+ * simply carries on to 1000, as the clinic's note says.
+ *
+ * `status` is the token's own life, kept here rather than on the visit so
+ * that a service token — a laboratory token with no consultation behind it
+ * — is as callable as any other.
+ */
+CREATE TABLE IF NOT EXISTS queue_tokens (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  category_id  INTEGER NOT NULL REFERENCES queue_categories(id),
+  issue_date   TEXT NOT NULL,                    -- 'YYYY-MM-DD'
+  seq          INTEGER NOT NULL,                 -- 1, 2, 3 … within the category, that day
+  label        TEXT NOT NULL,                    -- '08-001', as printed
+  patient_id   INTEGER REFERENCES patients(id),
+  visit_id     INTEGER REFERENCES visits(id),
+  doctor_id    INTEGER REFERENCES users(id),
+  room_id      INTEGER REFERENCES op_rooms(id),
+  status       TEXT NOT NULL DEFAULT 'waiting'
+                 CHECK (status IN ('waiting','called','serving','done','cancelled')),
+  called_at    TEXT,
+  called_by    INTEGER REFERENCES users(id),
+  call_count   INTEGER NOT NULL DEFAULT 0,
+  passed_at    TEXT,                             -- last time nobody answered
+  serving_at   TEXT,
+  done_at      TEXT,
+  note         TEXT,
+  issued_by    INTEGER REFERENCES users(id),
+  -- Which waiting room called it. Each branch numbers its own day from 001,
+  -- so the branch is part of what makes a token number unique.
+  branch_id    INTEGER REFERENCES branches(id),
+  created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+/*
+ * One 08-001 per branch per day — an index rather than a table constraint,
+ * created in src/db/index.js once the branch column is certain to exist on
+ * an install that predates it. See the note there.
+ */
+CREATE INDEX IF NOT EXISTS idx_queue_tokens_day ON queue_tokens(issue_date, category_id, seq);
+CREATE INDEX IF NOT EXISTS idx_queue_tokens_room ON queue_tokens(issue_date, room_id, status);
+CREATE INDEX IF NOT EXISTS idx_queue_tokens_visit ON queue_tokens(visit_id);
+
+-- ===========================================================================
+-- The asset register's own codes: the branch, the item, and the label
+-- ===========================================================================
+
+/*
+ * The clinic's branches.
+ *
+ * An asset code carries the branch it belongs to — SHC-WHLCH-0326-MPM-001 is
+ * the first wheelchair bought in March 2026 at Melapalayam — so the branch
+ * has to be a list the clinic keeps rather than a word typed on each asset.
+ * Opening at Cheranmahadevi is then adding a row here, and every code minted
+ * afterwards carries CH without anybody editing the format.
+ */
+CREATE TABLE IF NOT EXISTS branches (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  -- Two or three letters, as they appear in the middle of an asset code.
+  code       TEXT NOT NULL UNIQUE,
+  name       TEXT NOT NULL,
+  address    TEXT,
+  is_default INTEGER NOT NULL DEFAULT 0,
+  active     INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+/*
+ * The short code for a kind of thing.
+ *
+ * The second part of an asset code says what the thing is — WHLCH for a
+ * wheelchair, BPAPP for a BP apparatus — and the point of it is that every
+ * wheelchair in the clinic carries the same five letters. That only holds if
+ * the codes are a list rather than something each person shortens their own
+ * way, so they are kept here and reused.
+ *
+ * The clinic adds to it as it buys things it has not bought before, which is
+ * why a code can be created from the asset screen in the same breath as the
+ * asset.
+ */
+CREATE TABLE IF NOT EXISTS asset_item_codes (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  code       TEXT NOT NULL UNIQUE,
+  name       TEXT NOT NULL,
+  category   TEXT,
+  active     INTEGER NOT NULL DEFAULT 1,
+  created_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_item_codes_name ON asset_item_codes(name);
+
+/*
+ * What plays beside the numbers on the waiting-room screen.
+ *
+ * Half the television is the queue and half is the clinic's own poster —
+ * the Sunday package, the new scanner, the vaccination camp. That half is
+ * the only reason anybody looks up at the screen when their number is not
+ * near, so it is worth having, and it is the clinic's to change on a
+ * Saturday night without anybody touching the ERP's code.
+ *
+ * The image lives in the database rather than beside the code, for the same
+ * reason an expense bill does: this container is rebuilt on every deploy,
+ * and a poster written to disk is gone by the next release.
+ */
+CREATE TABLE IF NOT EXISTS display_slides (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  title      TEXT,
+  mime       TEXT NOT NULL,
+  bytes      INTEGER NOT NULL,
+  content    BLOB NOT NULL,
+  -- How long it stays up before the next one, in seconds.
+  seconds    INTEGER NOT NULL DEFAULT 12,
+  -- NULL shows it on every floor's screen; a floor name pins it to one.
+  floor      TEXT,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  active     INTEGER NOT NULL DEFAULT 1,
+  uploaded_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_slides_order ON display_slides(active, sort_order);

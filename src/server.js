@@ -60,19 +60,48 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/kiosk', require('./routes/kiosk'));
 
 app.use('/api', auth.requireAuth);
+
+/*
+ * Nothing is recorded until the person has said where they are.
+ *
+ * Somebody who may work in more than one branch has to choose one at
+ * sign-in, and the browser asks before it shows them anything. This is the
+ * same rule kept on the server, because an unstamped row is the one failure
+ * nobody notices: it simply never appears in the branch figures the owner
+ * reads, and no screen anywhere is wrong enough to show it.
+ *
+ * Reading is left alone — a stray GET from an old tab should say "choose a
+ * branch", not fail — and the branch endpoint itself obviously has to work.
+ */
+app.use('/api', (req, res, next) => {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+  if (req.branchId) return next();
+  const allowed = require('./services/branches').forUser(req.user);
+  if (allowed.length < 2) return next();
+  return res.status(409).json({
+    error: 'Choose which branch you are working in before recording anything.',
+    needsBranch: true,
+    branches: allowed,
+  });
+});
 app.use('/api/me', require('./routes/me'));
 app.use('/api/masters', require('./routes/masters'));
 app.use('/api/patients', require('./routes/patients'));
 app.use('/api/enquiries', require('./routes/enquiries'));
 app.use('/api/appointments', require('./routes/appointments'));
 app.use('/api/visits', require('./routes/visits'));
+app.use('/api/branches', require('./routes/branches'));
+app.use('/api/queue', require('./routes/queue'));
+app.use('/api/schedule', require('./routes/schedule'));
 app.use('/api/financial', require('./routes/financial'));
 app.use('/api/lab', require('./routes/lab'));
 app.use('/api/prescriptions', require('./routes/prescriptions'));
 app.use('/api/pharmacy', require('./routes/pharmacy'));
 app.use('/api/stock', require('./routes/stock'));
+app.use('/api/consumables', require('./routes/consumables'));
 app.use('/api/billing', require('./routes/billing'));
 app.use('/api/accounts', require('./routes/accounts'));
+app.use('/api/expenses', require('./routes/expenses'));
 app.use('/api/assets', require('./routes/assets'));
 app.use('/api/access', require('./routes/access'));
 app.use('/api/owner', require('./routes/owner'));
@@ -187,6 +216,19 @@ function seedIfEmpty() {
   if (users > 0) {
     try { require('./db/catalogue').sync(); }
     catch (err) { console.error('[catalogue] sync failed:', err.message); }
+
+    /*
+     * Everything that happened before the clinic had branches happened at
+     * the clinic. Run once: the alternative is a pile of unattributed
+     * history that makes every branch total wrong by exactly the amount
+     * earned before the second place opened.
+     */
+    try {
+      const out = require('./services/branches').attributeExisting();
+      if (out.attributed) {
+        console.log(`[branches] ${out.attributed} existing record(s) attributed to ${out.branch}.`);
+      }
+    } catch (err) { console.error('[branches] attribution failed:', err.message); }
   }
 
   if (!config.autoSeed) return;

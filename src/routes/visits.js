@@ -11,6 +11,7 @@ const whatsapp = require('../services/whatsapp');
 const audit = require('../lib/audit');
 
 const vitalsService = require('../services/vitals');
+const queueService = require('../services/queue');
 
 const router = express.Router();
 const clinicalRoles = requireRole('reception', 'nurse', 'doctor', 'counselor', 'cashier', 'lab', 'pharmacy');
@@ -109,8 +110,11 @@ router.get('/board', clinicalRoles, wrap((req, res) => {
        LEFT JOIN departments d ON d.id = v.department_id
        LEFT JOIN doctor_profiles dp ON dp.user_id = v.doctor_id
       WHERE date(v.arrived_at) = ?
+        -- The building this screen is in. A board mixing two branches shows
+        -- the desk patients who are not in the room.
+        AND (? IS NULL OR v.branch_id = ?)
       ORDER BY CASE v.status WHEN 'checked_out' THEN 1 ELSE 0 END, v.token_no, v.id`
-  ).all(date);
+  ).all(date, req.branchId, req.branchId);
 
   for (const r of rows) r.consultation_paid = Boolean(r.consultation_paid);
   // The "₹ due" flag on a card belongs to the desks that would collect it.
@@ -131,8 +135,9 @@ router.get('/', clinicalRoles, wrap((req, res) => {
     `SELECT v.*, p.uhid, (p.first_name || ' ' || COALESCE(p.last_name,'')) AS patient_name, u.name AS doctor_name
        FROM visits v JOIN patients p ON p.id = v.patient_id LEFT JOIN users u ON u.id = v.doctor_id
       WHERE (? IS NULL OR v.status = ?) AND (? IS NULL OR v.patient_id = ?)
+        AND (? IS NULL OR v.branch_id = ?)
       ORDER BY v.id DESC LIMIT ? OFFSET ?`
-  ).all(status, status, patientId, patientId, limit, offset);
+  ).all(status, status, patientId, patientId, req.branchId, req.branchId, limit, offset);
   res.json({ rows, page, limit });
 }));
 
@@ -204,9 +209,30 @@ router.post('/arrive', requireRole('reception'), wrap((req, res) => {
       patient.is_uninsured ? 'Patient is uninsured' : 'Financial situation changed', req.user.id);
   }
 
-  audit.log(req, 'arrive', 'visit', visitId, { visitNo, isNew });
+  /*
+   * The queue token, handed out at the moment of arrival.
+   *
+   * It is the number that goes on the 70 mm slip and on the waiting-room
+   * screen — the specialty's code and a sequence that starts again each
+   * morning, 08-001 for the day's first Paediatrics patient. The visit's own
+   * `token_no` above stays as it was: that is the day's serial for the
+   * register, and this is what gets called out.
+   *
+   * A department the clinic has not yet pointed at a category gets no token
+   * rather than somebody else's number, and the desk is told so plainly in
+   * the reply instead of the arrival failing — the patient is in the
+   * building either way.
+   */
+  let queueToken = null;
+  try { queueToken = queueService.tokenForVisit(visitId, { userId: req.user.id }); }
+  catch (err) { queueToken = null; }
+
+  audit.log(req, 'arrive', 'visit', visitId, { visitNo, isNew, token: queueToken ? queueToken.label : null });
   res.status(201).json({
     visit: db.prepare('SELECT * FROM visits WHERE id = ?').get(visitId),
+    queueToken,
+    queueNote: queueToken ? null
+      : 'No queue token: this department has no category yet (Queue \u2192 Set-up).',
     nextStep: 'check_in',
     flags: {
       isNewPatient: isNew, needsPaperwork: isNew, screeningDue: dueScreening,
@@ -610,6 +636,14 @@ router.get('/:id', clinicalRoles, wrap((req, res) => {
   visit.timeline = db.prepare(
     'SELECT ve.*, u.name AS actor_name FROM visit_events ve LEFT JOIN users u ON u.id = ve.actor_id WHERE ve.visit_id = ? ORDER BY ve.id'
   ).all(id);
+  /*
+   * The queue token this visit is holding, so the drawer shows the number
+   * the patient was actually called by rather than the day's serial. Read
+   * only — nothing is issued by opening a record.
+   */
+  const heldTokens = queueService.tokensFor({ visitId: id });
+  visit.queueToken = heldTokens.find((t) => t.status !== 'cancelled') || null;
+  visit.queueTokens = heldTokens;
   res.json(visit);
 }));
 

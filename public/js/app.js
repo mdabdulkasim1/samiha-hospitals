@@ -15,8 +15,14 @@
       { id: 'owner',       label: "Owner's board",    icon: '◈', roles: [], ownerOnly: true },
     ]},
     { group: 'Front office', items: [
-      { id: 'dashboard',   label: 'Dashboard',        icon: '▦', roles: '*' },
+      { id: 'dashboard',   label: 'Dashboard',        icon: '▦', roles: '*', alsoStore: true },
       { id: 'queue',       label: 'Patient Queue',    icon: '⛭', roles: '*' },
+      /*
+       * The screen for the televisions in the two waiting rooms. It is in
+       * the menu because somebody has to open it on the television once a
+       * day; it shows numbers and rooms and no names, so any account may.
+       */
+      { id: 'display',     label: 'Waiting-room TV',  icon: '▣', roles: '*' },
       { id: 'enquiries',   label: 'Enquiries',        icon: '☏', roles: ['admin','reception','counselor','cashier'] },
       { id: 'appointments',label: 'Appointments',     icon: '▤', roles: ['admin','reception','nurse','doctor','counselor','cashier'] },
       { id: 'patients',    label: 'Patients',         icon: '☺', roles: '*' },
@@ -45,7 +51,17 @@
        * knowing the analyser is out of calibration as the owner does;
        * entering and editing belongs to the departments that run the kit.
        */
-      { id: 'assets',      label: 'Assets & Calibration', icon: '⚙', roles: '*' },
+      /*
+       * The consumables store: gloves, dressings, reagents, bin liners.
+       * The nurses are on this list because they are the people who open
+       * the last box, and a store only a manager can update is one that is
+       * updated once a month from memory.
+       */
+      { id: 'consumables', label: 'Consumables Store', icon: '⧉', roles: ['store','admin','nurse'] },
+      // Open to everybody to read — the technician at the bench has as much
+      // business knowing an analyser is overdue as the owner does — and to
+      // the store keeper, whose register it is.
+      { id: 'assets',      label: 'Assets & Calibration', icon: '⚙', roles: '*', alsoStore: true },
     ]},
     { group: 'Money', items: [
       { id: 'billing',     label: 'Billing & Payments', icon: '₹', roles: ['admin','cashier','counselor'] },
@@ -76,14 +92,26 @@
       { id: 'workflow',    label: 'Workflow Map',     icon: '⇄', roles: '*' },
       { id: 'staff',       label: 'Staff & Doctors',  icon: '⚕', roles: ['admin'] },
       /*
+       * The duty chart. Admin and the owner edit it; everybody else who has
+       * to answer "when is the dentist in" can read it, which is why it
+       * sits here rather than behind the staff records.
+       */
+      { id: 'schedule',    label: "Doctors' Timing",  icon: '⏱', roles: '*' },
+      /*
        * The owner's own, and this one really is theirs alone — so it carries
        * ownerOnly rather than a role list. APP.can waves an administrator
        * through every role gate, which would have put this in their menu and
        * then refused them at the door, because the endpoint behind it is the
        * one place admin does not bypass (src/lib/auth.js, requireOwner).
        */
+      /*
+       * The clinic's own places. Admin and the owner only: opening a branch
+       * decides how every figure in the system is attributed from that day
+       * on, and posting staff decides who may sign in where.
+       */
+      { id: 'branches',    label: 'Branches',         icon: '⌂', roles: ['admin'] },
       { id: 'access',      label: 'Screen access',    icon: '◪', roles: [], ownerOnly: true },
-      { id: 'account',     label: 'Account & System', icon: '⚙', roles: '*' },
+      { id: 'account',     label: 'Account & System', icon: '⚙', roles: '*', alsoStore: true },
     ]},
   ];
 
@@ -96,11 +124,27 @@
     views: {},
 
     can(roles) {
-      if (roles === '*') return true;
-      if (!APP.user) return false;
+      if (!APP.user) return roles === '*';
       // Owner and admin pass every gate; see FULL_ACCESS in src/lib/auth.js,
       // which is where it is actually enforced.
-      return ['owner', 'admin'].includes(APP.user.role) || roles.includes(APP.user.role);
+      if (['owner', 'admin'].includes(APP.user.role)) return true;
+      /*
+       * The store keeper is the one role that is not clinical at all, so
+       * "everybody" does not include them. A screen open to all staff — the
+       * patient list, the queue, the reports — is a screen the server
+       * refuses them anyway, and a menu full of doors that open onto an
+       * error is worse than a short menu.
+       */
+      if (APP.user.role === 'store') return roles !== '*' && roles.includes('store');
+      if (roles === '*') return true;
+      return roles.includes(APP.user.role);
+    },
+
+    /** A menu item, with the two screens every account keeps. */
+    canOpenItem(item) {
+      if (!item) return false;
+      if (item.alsoStore && APP.user && APP.user.role === 'store') return true;
+      return APP.can(item.roles);
     },
 
     /*
@@ -125,7 +169,7 @@
       const item = NAV.flatMap((g) => g.items).find((i) => i.id === route);
       if (!item) return true;
       if (item.ownerOnly) return APP.user && APP.user.role === 'owner';
-      return APP.can(item.roles);
+      return APP.canOpenItem(item);
     },
 
     seesMoney() { return APP.can(['cashier', 'counselor']); },
@@ -154,7 +198,29 @@
         // Screens the owner has taken off this role's menu. Visibility only:
         // see src/routes/access.js for why that is not the same as access.
         APP.hiddenScreens = me.hiddenScreens || [];
+        APP.branch = me.branch || null;
+        APP.branches = me.branches || [];
+        /*
+         * The store keeper opens onto the register rather than the clinical
+         * dashboard. Their day's work is the equipment and the cupboard,
+         * and a dashboard of consultations and takings is a screen they
+         * would have to click past every morning.
+         */
+        if (APP.user.role === 'store' && !window.location.hash.replace(/^#\/?/, '')) {
+          window.location.hash = '#/assets';
+        }
         renderShell();
+        /*
+         * Nobody works "somewhere". If this account may stand in more than
+         * one branch and has not said which, it is asked before anything is
+         * shown: every figure on every screen means something different
+         * depending on the answer, and so does everything they are about to
+         * record.
+         */
+        if (!APP.branch && APP.branches.length) {
+          openBranchPicker({ mustChoose: true });
+          return;
+        }
         await router();
         refreshBadges();
         setInterval(refreshBadges, 45000);
@@ -358,6 +424,82 @@
   }
 
   // ------------------------------------------------------------------ shell
+  function paintBranch() {
+    const chip = document.getElementById('branch-chip');
+    if (!chip) return;
+    const name = document.getElementById('branch-name');
+    /*
+     * The branch's own part of its name. A clinic names its places after
+     * itself — "Samiha Healthcare, Cheranmahadevi" — and the half that
+     * tells you which one you are in is the half after the comma.
+     */
+    const short = (b) => (b.name.includes(',') ? b.name.split(',').pop().trim() : b.name);
+    name.textContent = APP.branch ? short(APP.branch) : 'Choose a branch';
+    chip.title = APP.branch ? `${APP.branch.name} (${APP.branch.code}) — click to change` : 'Choose a branch';
+    chip.classList.toggle('one', (APP.branches || []).length < 2);
+    chip.classList.toggle('unset', !APP.branch);
+  }
+
+  /**
+   * Which branch this person is standing in.
+   *
+   * Shown as a choice rather than a setting: the answer decides what the
+   * screens show and what today's work is stamped with, and somebody who
+   * has not answered it should not be looking at a dashboard yet.
+   */
+  function openBranchPicker({ mustChoose = false } = {}) {
+    const mine = APP.branches || [];
+    if (!mine.length) return;
+    if (mine.length === 1 && !mustChoose && APP.branch) {
+      return UI.toast(`You are at ${APP.branch.name}.`);
+    }
+
+    let answered = false;
+    UI.modal({
+      title: mustChoose ? 'Which branch are you working in?' : 'Branch',
+      size: 'narrow',
+      /*
+       * There is no way past this one. Dismissing it would leave somebody
+       * looking at an empty screen with no obvious way back, and the
+       * question has to be answered before anything they do means anything.
+       */
+      onClose() {
+        if (mustChoose && !answered) setTimeout(() => openBranchPicker({ mustChoose: true }), 0);
+      },
+      body: `${mustChoose ? `<div class="alert info">Everything you see and everything you
+          record belongs to the branch you choose here. Change it any time from the top of
+          the screen.</div>` : ''}
+        <div class="branch-list">${mine.map((b) => `
+          <button class="branch-opt ${APP.branch && APP.branch.id === b.id ? 'on' : ''}"
+                  data-branch="${b.id}">
+            <b>${UI.esc(b.name)}</b>
+            <span class="muted small">${UI.esc(b.code)}${b.address ? ` · ${UI.esc(b.address)}` : ''}</span>
+          </button>`).join('')}</div>`,
+      footer: mustChoose ? '' : '<button class="btn ghost" data-act="__close">Close</button>',
+      onMount(modal) {
+        modal.querySelectorAll('[data-branch]').forEach((b) => b.addEventListener('click', async () => {
+          try {
+            const out = await API.post('/api/auth/branch', { branchId: Number(b.dataset.branch) });
+            answered = true;
+            APP.branch = out.branch;
+            UI.closeAllModals();
+            paintBranch();
+            UI.ok(`You are at ${out.branch.name}.`);
+            /*
+             * Everything on screen was read for the other branch, so the
+             * page is read again rather than left showing yesterday's
+             * building.
+             */
+            if (mustChoose) await APP.boot();
+            else await APP.reload();
+          } catch (err) { UI.err(err.message); }
+        }));
+      },
+    });
+  }
+
+  APP.openBranchPicker = openBranchPicker;
+
   function renderShell() {
     if (window.UI && UI.closeAllModals) UI.closeAllModals();
     document.getElementById('root').innerHTML = `
@@ -385,6 +527,12 @@
               <div class="sub" id="page-sub"></div>
             </div>
             <div class="spacer"></div>
+            <!-- Which branch this screen is showing, and the way to change it.
+                 Kept beside the page title rather than buried in a settings
+                 screen: it decides what every figure on the page means. -->
+            <button class="branch-chip" id="branch-chip" title="Branch">
+              <span class="ico">⌂</span><span id="branch-name">—</span>
+            </button>
             <div id="page-actions" class="btn-row"></div>
             <button class="bell" id="downloads" title="Download this department's data"
                     aria-label="Download data" hidden><span class="ico">⤓</span></button>
@@ -398,6 +546,8 @@
       <div class="nav-backdrop" id="nav-backdrop"></div>`;
 
     renderNav();
+    paintBranch();
+    document.getElementById('branch-chip').addEventListener('click', openBranchPicker);
     document.getElementById('logout').addEventListener('click', APP.logout);
     document.getElementById('my-account').addEventListener('click', () => APP.navigate('account'));
     document.getElementById('bell').addEventListener('click', openAlerts);
@@ -560,7 +710,7 @@
            administrator, so there is nothing to be let into here.</div>`;
       return;
     }
-    if (navItem && !navItem.ownerOnly && !APP.can(navItem.roles)) {
+    if (navItem && !navItem.ownerOnly && !APP.canOpenItem(navItem)) {
       document.getElementById('view').innerHTML =
         `<div class="alert danger">Your role (<b>${UI.esc(APP.user.role)}</b>) does not have access to ${UI.esc(navItem.label)}.</div>`;
       return;

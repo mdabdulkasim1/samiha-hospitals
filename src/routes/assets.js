@@ -23,13 +23,22 @@ const { requireRole, requireAuth, seesPrices } = require('../lib/auth');
 const { required, str, int, num, oneOf, bool, paging } = require('../lib/validate');
 const { generate } = require('../lib/ids');
 const audit = require('../lib/audit');
+const codes = require('../services/assetCodes');
 
 const router = express.Router();
 
 /** Anyone signed in may look; the equipment they use is their business. */
 const readRoles = requireAuth;
-/** Keeping it is the owner's, the administrator's and the departments that run it. */
-const keepRoles = requireRole('lab', 'pharmacy', 'ward', 'nurse');
+/**
+ * Keeping it is the owner's, the administrator's, the store keeper's and the
+ * departments that run the equipment.
+ *
+ * The store keeper is the point of the role: somebody whose job is the
+ * cupboard and the equipment in it, with no business in a patient record.
+ */
+const keepRoles = requireRole('store', 'lab', 'pharmacy', 'ward', 'nurse');
+/** Minting a code and printing its label belongs with whoever keeps the register. */
+const codeRoles = requireRole('store', 'ward', 'nurse');
 
 const STATUSES = ['in_use', 'standby', 'under_repair', 'condemned', 'disposed'];
 const EVENT_KINDS = ['calibration', 'service', 'repair', 'moved', 'status', 'note'];
@@ -55,9 +64,11 @@ const addMonths = (date, months) => {
 
 const SELECT = `
   SELECT a.*, d.name AS department_name, u.name AS added_by_name,
+         b.code AS branch_code, b.name AS branch_name,
          (SELECT COUNT(*) FROM asset_events e WHERE e.asset_id = a.id) AS event_count
     FROM assets a
     LEFT JOIN departments d ON d.id = a.department_id
+    LEFT JOIN branches b ON b.id = a.branch_id
     LEFT JOIN users u ON u.id = a.created_by`;
 
 const one = (id) => db.prepare(`${SELECT} WHERE a.id = ?`).get(id);
@@ -97,6 +108,11 @@ router.get('/meta', readRoles, wrap((req, res) => {
     eventKinds: EVENT_KINDS,
     departments: db.prepare('SELECT id, name FROM departments WHERE active = 1 ORDER BY sort_order, name').all(),
     soonDays: SOON_DAYS,
+    // What an asset code is made of, so the screen can show the shape of
+    // one before anybody presses the button.
+    codePrefix: codes.PREFIX,
+    branches: codes.branches(),
+    itemCodes: codes.itemCodes(),
   });
 }));
 
@@ -110,10 +126,12 @@ router.get('/', readRoles, wrap((req, res) => {
   const clauses = ['a.active = 1'];
   const params = [];
   if (q) {
-    clauses.push(`(a.asset_no LIKE ? OR a.name LIKE ? OR a.make LIKE ? OR a.model LIKE ?
-      OR a.serial_no LIKE ? OR a.supplier LIKE ? OR a.location LIKE ?)`);
+    // The asset code is searched too: somebody with a label in their hand
+    // and no scanner types what they can read off it.
+    clauses.push(`(a.asset_no LIKE ? OR a.asset_code LIKE ? OR a.name LIKE ? OR a.make LIKE ?
+      OR a.model LIKE ? OR a.serial_no LIKE ? OR a.supplier LIKE ? OR a.location LIKE ?)`);
     const like = `%${q}%`;
-    params.push(like, like, like, like, like, like, like);
+    params.push(like, like, like, like, like, like, like, like);
   }
   if (category) { clauses.push('a.category = ?'); params.push(category); }
   if (status) { clauses.push('a.status = ?'); params.push(status); }
@@ -156,6 +174,39 @@ function summary(user) {
 
 router.get('/summary', readRoles, wrap((req, res) => res.json(summary(req.user))));
 
+/*
+ * These sit above `/:id` deliberately: Express takes the first route that
+ * matches, and "/branches" is a perfectly good `:id` as far as the router is
+ * concerned. Put them after it and every one of them 404s.
+ */
+/** What a scanner read, back to the asset it is stuck to. */
+router.get('/scan/:code', readRoles, wrap((req, res) => {
+  const found = codes.byCode(req.params.code);
+  if (!found) throw notFound(`Nothing in the register carries ${req.params.code}.`);
+  res.json(decorate([one(found.id)], req.user)[0]);
+}));
+
+router.get('/branches', readRoles, wrap((req, res) => {
+  res.json({ rows: codes.branches({ includeInactive: req.query.all === '1' }) });
+}));
+
+router.get('/item-codes', readRoles, wrap((req, res) => {
+  res.json({ rows: codes.itemCodes({ q: str(req.query.q), includeInactive: req.query.all === '1' }) });
+}));
+
+/** What code this thing would get, shown before anybody commits to it. */
+router.get('/item-codes/suggest', codeRoles, wrap((req, res) => {
+  const name = str(req.query.name);
+  if (!name) throw badRequest('What is the item called?');
+  const existing = db.prepare('SELECT * FROM asset_item_codes WHERE UPPER(name) = ?')
+    .get(codes.itemName(name).toUpperCase());
+  res.json({
+    item: codes.itemName(name),
+    code: existing ? existing.code : codes.suggestCode(name),
+    known: Boolean(existing),
+  });
+}));
+
 router.get('/:id', readRoles, wrap((req, res) => {
   const asset = one(int(req.params.id));
   if (!asset) throw notFound('Asset not found');
@@ -186,6 +237,15 @@ function fieldsFrom(body, existing = {}) {
       : (body.departmentId ? int(body.departmentId) : null),
     status: body.status === undefined
       ? (existing.status || 'in_use') : (oneOf(body.status, STATUSES, 'status') || 'in_use'),
+    /*
+     * The branch that owns it, which is the fourth part of its asset code.
+     * It is set on the asset rather than worked out when the label is
+     * printed, because moving a machine between branches is a thing that
+     * happens and the code must not move with it.
+     */
+    branch_id: body.branchId === undefined
+      ? (existing.branch_id === undefined ? null : existing.branch_id)
+      : (body.branchId ? int(body.branchId) : null),
     supplier: pick('supplier', str),
     po_no: pick('poNo', str, 'po_no'),
     invoice_no: pick('invoiceNo', str, 'invoice_no'),
@@ -259,6 +319,49 @@ router.patch('/:id', keepRoles, wrap((req, res) => {
  * and "what was this report run on" is a question asked years later. So it
  * leaves the active list and keeps its history.
  */
+// ------------------------------------------------- the code on the sticker
+/**
+ * Mint the code for one asset.
+ *
+ * A button rather than something that happens at creation: the clinic
+ * enters equipment as the invoices come in and labels it when it has the
+ * sticker roll in the printer, and those are different afternoons.
+ */
+router.post('/:id/code', codeRoles, wrap((req, res) => {
+  const out = codes.mint(int(req.params.id), {
+    userId: req.user.id,
+    branchId: int(req.body.branchId) || null,
+    itemCode: str(req.body.itemCode) || null,
+  });
+  audit.log(req, 'asset_code', 'asset', out.asset.id, { code: out.code });
+  res.status(201).json({ ...out, asset: one(out.asset.id) });
+}));
+
+/** Everything that has no code yet — the first run over a full store room. */
+router.post('/codes/mint-missing', codeRoles, wrap((req, res) => {
+  const out = codes.mintMissing({
+    userId: req.user.id,
+    branchId: int(req.body.branchId) || null,
+    ids: Array.isArray(req.body.ids) ? req.body.ids.map(Number).filter(Boolean) : null,
+  });
+  audit.log(req, 'asset_code_batch', 'asset', null,
+    { minted: out.minted.length, skipped: out.skipped.length });
+  res.json(out);
+}));
+
+// ----------------------------------------------- the branches and the items
+router.post('/branches', requireRole(), wrap((req, res) => {
+  const row = codes.saveBranch(null, req.body);
+  audit.log(req, 'branch_add', 'branch', row.id, { code: row.code, name: row.name });
+  res.status(201).json(row);
+}));
+
+router.patch('/branches/:id', requireRole(), wrap((req, res) => {
+  const row = codes.saveBranch(int(req.params.id), req.body);
+  audit.log(req, 'branch_update', 'branch', row.id, { code: row.code });
+  res.json(row);
+}));
+
 router.post('/:id/retire', keepRoles, wrap((req, res) => {
   const id = int(req.params.id);
   const asset = db.prepare('SELECT * FROM assets WHERE id = ?').get(id);

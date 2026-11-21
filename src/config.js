@@ -129,5 +129,30 @@ module.exports = {
     appId: env.WHATSAPP_APP_ID || '',
     apiVersion: env.WHATSAPP_API_VERSION || 'v21.0',
     sessionTtlMinutes: Number(env.WHATSAPP_SESSION_TTL_MINUTES || 30),
+    // The WhatsApp Business Account the number belongs to. Only needed to
+    // read back which message templates Meta has approved.
+    wabaId: env.WHATSAPP_WABA_ID || '',
+    /*
+     * The approved template a bill is sent under when the free-form window
+     * has closed.
+     *
+     * WhatsApp lets a business write to a patient freely only within 24
+     * hours of that patient's own last message. A patient paying at the
+     * counter has almost never written to the clinic, so without a template
+     * the bill cannot be delivered at all — which is why this exists.
+     *
+     * `name` is the template as it was approved in Meta Business Manager.
+     * `body` lists what goes into its {{1}}, {{2}}… in order, separated by
+     * pipes, so a clinic whose approved template has three variables rather
+     * than four does not need a code change. Leave `name` empty and nothing
+     * changes: a bill is sent free-form, and a refusal is reported.
+     */
+    billTemplate: {
+      name: env.WHATSAPP_BILL_TEMPLATE || '',
+      language: env.WHATSAPP_TEMPLATE_LANG || 'en',
+      body: env.WHATSAPP_BILL_TEMPLATE_BODY === undefined
+        ? '{patient}|{billNo}|{total}|{balance}'
+        : env.WHATSAPP_BILL_TEMPLATE_BODY,
+    },
   },
 };

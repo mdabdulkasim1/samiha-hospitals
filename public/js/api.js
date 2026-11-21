@@ -26,6 +26,23 @@
     let data = null;
     try { data = text ? JSON.parse(text) : null; } catch { data = text; }
 
+    /*
+     * Nothing may be recorded until the person has said which branch they
+     * are in. The server refuses the write; here the question is simply
+     * asked, so the answer to "why did that not save" is a dialog rather
+     * than a shrug.
+     */
+    if (res.status === 409 && data && data.needsBranch) {
+      if (window.APP && APP.openBranchPicker) {
+        APP.branches = data.branches || APP.branches;
+        APP.openBranchPicker({ mustChoose: true });
+      }
+      const err = new Error(data.error || 'Choose a branch first.');
+      err.status = 409;
+      err.needsBranch = true;
+      throw err;
+    }
+
     if (!res.ok) {
       const err = new Error((data && data.error) || `Request failed (${res.status})`);
       err.status = res.status;
@@ -41,7 +58,10 @@
     post: (p, b) => request('POST', p, b || {}),
     patch: (p, b) => request('PATCH', p, b || {}),
     put: (p, b) => request('PUT', p, b || {}),
-    del: (p) => request('DELETE', p),
+    // A delete may carry a body: the destructive ones ask for a typed
+    // confirmation and a reason, and those belong in the request rather
+    // than in the query string where they end up in a server log.
+    del: (p, b) => request('DELETE', p, b),
     getToken: () => token,
     setToken(value) {
       token = value;

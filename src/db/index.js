@@ -152,6 +152,245 @@ function migrate() {
   // One mobile number is often one household, so a patient can say how they
   // relate to the person the number belongs to.
   ensureColumn('patients', 'relationship_to_primary', 'TEXT');
+  /*
+   * Son of, daughter of, wife of — the line every Indian form and every
+   * file sticker carries, and the one most often used to tell two patients
+   * of the same name apart at a counter. Kept separate from the emergency
+   * contact, which is who to ring and not who somebody is.
+   */
+
+  /*
+   * Which queue category a department's patients are called under, and
+   * which room a doctor sits in.
+   *
+   * Both are links to the clinic's own lists rather than facts about the
+   * department or the doctor, and both are nullable on purpose. General and
+   * Internal Medicine share one category, so the link cannot live on the
+   * category; a locum with no fixed room is sent wherever their specialty
+   * sits, so the room cannot be compulsory.
+   */
+  ensureColumn('departments', 'queue_category_id', 'INTEGER REFERENCES queue_categories(id)');
+  ensureColumn('users', 'op_room_id', 'INTEGER REFERENCES op_rooms(id)');
+  /*
+   * Where a counter is, in the words the directory board in the entrance
+   * uses. A consulting room says where it is because it is a room; the
+   * pharmacy, the X-ray and the scan are not rooms in this sense and still
+   * have to tell a patient which floor to walk to.
+   */
+  ensureColumn('queue_categories', 'location', 'TEXT');
+
+  // =======================================================================
+  // Branches
+  // =======================================================================
+  /*
+   * The clinic is becoming a group.
+   *
+   * One building today, Melapalayam; another location is planned, and the
+   * owner's question is what each one takes and what each one costs. That
+   * makes the branch a fact about almost everything that happens — a visit
+   * happened somewhere, a payment was taken somewhere, an expense was
+   * incurred somewhere — rather than a setting.
+   *
+   * So the branch is stamped on the record at the moment it is made, from
+   * the branch the person is signed in to. Never worked out afterwards from
+   * who entered it: staff move between branches, and a figure that changes
+   * when somebody transfers is not a figure anybody can act on.
+   */
+  ensureColumn('sessions', 'branch_id', 'INTEGER REFERENCES branches(id)');
+  /* Where a staff member normally works. The branches they MAY work in are
+   * a list of their own, below; this is the one they land in. */
+  ensureColumn('users', 'branch_id', 'INTEGER REFERENCES branches(id)');
+
+  db.exec(`CREATE TABLE IF NOT EXISTS user_branches (
+    user_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+    PRIMARY KEY (user_id, branch_id)
+  )`);
+
+  /*
+   * What happened, and where.
+   *
+   * These are the records the owner's questions are made of: who came, what
+   * was billed, what was collected, what was spent. Everything else in the
+   * system hangs off one of them.
+   */
+  const BRANCHED = ['patients', 'appointments', 'visits', 'queue_tokens', 'invoices',
+    'payments', 'pharmacy_sales', 'cash_book', 'expenses',
+    // The rest of the working day, stamped for the same reason: the owner's
+    // question is "how did each place do", and a test ordered or an enquiry
+    // answered is part of the answer.
+    'lab_orders', 'enquiries', 'admissions'];
+  for (const table of BRANCHED) {
+    ensureColumn(table, 'branch_id', 'INTEGER REFERENCES branches(id)');
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_${table}_branch ON ${table}(branch_id)`);
+  }
+
+  /*
+   * Where the stamping actually happens.
+   *
+   * There are some thirty places in this system that create one of the
+   * rows above, and more will be written. Adding `branch_id` to each insert
+   * by hand would work until somebody adds the thirty-first and forgets —
+   * and the failure is silent and expensive: a row with no branch simply
+   * stops appearing in the figures the owner reads, and nothing anywhere
+   * says so.
+   *
+   * So the database does it. `request_context` holds the branch of the
+   * request being served, set by one line of middleware; a trigger on each
+   * table fills in a branch that was left empty. This is safe because the
+   * whole ERP runs on one synchronous connection — a request's handler
+   * runs to completion before another begins, so the context cannot belong
+   * to somebody else's request halfway through an insert.
+   *
+   * Code that knows better still wins: a trigger only fires on NULL.
+   */
+  db.exec(`CREATE TABLE IF NOT EXISTS request_context (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+  )`);
+  for (const table of BRANCHED) {
+    db.exec(`DROP TRIGGER IF EXISTS trg_${table}_branch`);
+    db.exec(`CREATE TRIGGER trg_${table}_branch AFTER INSERT ON ${table}
+             WHEN NEW.branch_id IS NULL
+             BEGIN
+               UPDATE ${table}
+                  SET branch_id = (SELECT CAST(value AS INTEGER) FROM request_context
+                                    WHERE key = 'branch_id')
+                WHERE rowid = NEW.rowid;
+             END`);
+  }
+
+  /*
+   * Making room in the token number for the branch.
+   *
+   * A token was unique by category, day and sequence, which was right while
+   * there was one waiting room. With two, each calls its own numbers from
+   * 001 every morning, so Melapalayam's 08-001 and Cheranmahadevi's 08-001
+   * are different tokens and that constraint refuses the second one.
+   *
+   * SQLite cannot drop a table-level UNIQUE, so the table is rebuilt — once,
+   * guarded by the constraint's own presence — and the rule is reinstated as
+   * an index that counts the branch, with COALESCE so that rows which carry
+   * no branch still collide with each other rather than slipping past on
+   * SQLite's rule that two NULLs are different.
+   *
+   * Foreign keys are suspended for the swap and checked before the commit:
+   * either the table comes out whole or the database is exactly as it was.
+   */
+  const tokensSql = db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'queue_tokens'").get();
+  const UQ = /,?\s*UNIQUE\s*\(\s*category_id\s*,\s*issue_date\s*,\s*seq\s*\)/i;
+  if (tokensSql && UQ.test(tokensSql.sql)) {
+    const columns = db.prepare('PRAGMA table_info(queue_tokens)').all().map((c) => c.name);
+    const rebuilt = tokensSql.sql
+      .replace(/CREATE TABLE\s+(?:IF NOT EXISTS\s+)?["`]?queue_tokens["`]?/i,
+        'CREATE TABLE queue_tokens_rebuild')
+      .replace(UQ, '');
+    const wasOn = db.pragma('foreign_keys', { simple: true });
+    db.pragma('foreign_keys = OFF');
+    try {
+      db.exec('BEGIN');
+      db.exec(rebuilt);
+      const cols = columns.map((c) => `"${c}"`).join(', ');
+      db.exec(`INSERT INTO queue_tokens_rebuild (${cols}) SELECT ${cols} FROM queue_tokens`);
+      db.exec('DROP TABLE queue_tokens');
+      db.exec('ALTER TABLE queue_tokens_rebuild RENAME TO queue_tokens');
+      db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_queue_tokens_seq
+                 ON queue_tokens(category_id, issue_date, seq, COALESCE(branch_id, 0))`);
+      db.exec('CREATE INDEX IF NOT EXISTS idx_queue_tokens_day ON queue_tokens(issue_date, category_id, seq)');
+      db.exec('CREATE INDEX IF NOT EXISTS idx_queue_tokens_room ON queue_tokens(issue_date, room_id, status)');
+      db.exec('CREATE INDEX IF NOT EXISTS idx_queue_tokens_visit ON queue_tokens(visit_id)');
+      db.exec(`CREATE TRIGGER IF NOT EXISTS trg_queue_tokens_branch AFTER INSERT ON queue_tokens
+               WHEN NEW.branch_id IS NULL
+               BEGIN
+                 UPDATE queue_tokens
+                    SET branch_id = (SELECT CAST(value AS INTEGER) FROM request_context
+                                      WHERE key = 'branch_id')
+                  WHERE rowid = NEW.rowid;
+               END`);
+      const broken = db.pragma('foreign_key_check');
+      if (broken.length) throw new Error(`${broken.length} reference(s) would be orphaned`);
+      db.exec('COMMIT');
+      console.log('[migrate] token numbers now start again at 001 in each branch.');
+    } catch (err) {
+      try { db.exec('ROLLBACK'); } catch { /* already rolled back */ }
+      console.error('[migrate] token numbering migration failed, nothing changed:', err.message);
+    } finally {
+      if (wasOn) db.pragma('foreign_keys = ON');
+    }
+  }
+
+  /*
+   * One 08-001 per branch per day, for every install — the one above is
+   * inside the rebuild, this is the one a database that never had the old
+   * constraint gets. COALESCE so that rows carrying no branch still collide
+   * with each other, rather than slipping past on SQLite's rule that two
+   * NULLs are different.
+   */
+  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_queue_tokens_seq
+             ON queue_tokens(category_id, issue_date, seq, COALESCE(branch_id, 0))`);
+
+  /*
+   * When a poster plays.
+   *
+   * The clinic's posters are campaigns — an opening offer that runs from
+   * the 29th to the 10th, a doctor's evening clinic that is only worth
+   * announcing in the evening — so the library keeps many and each one
+   * carries the dates it runs between and the hours of the day it is worth
+   * showing. All four are optional: a poster with none set plays whenever
+   * it is switched on, which is what most of them do.
+   */
+  ensureColumn('display_slides', 'from_date', 'TEXT');
+  ensureColumn('display_slides', 'to_date', 'TEXT');
+  ensureColumn('display_slides', 'from_time', 'TEXT');
+  ensureColumn('display_slides', 'to_time', 'TEXT');
+  /*
+   * The room a doctor sits in for one set of hours.
+   *
+   * A doctor has a usual room, and a morning in OP-1 followed by an evening
+   * clinic upstairs in OP-4 is still an ordinary week — so the hours carry a
+   * room of their own, used when it is set and falling back to the doctor's
+   * usual room and then to wherever the specialty sits. Fixing the hours and
+   * saying which door is one act at the desk, so it is one row here.
+   */
+  ensureColumn('doctor_availability', 'op_room_id', 'INTEGER REFERENCES op_rooms(id)');
+  /*
+   * The same two facts on the weekly rota.
+   *
+   * The duty chart the clinic keeps is a weekly pattern — Dr Prathiba sits
+   * in OP-3 from four to nine, Monday to Saturday — and the room belongs to
+   * the pattern rather than to the doctor, because the evening clinic
+   * upstairs and the morning one downstairs are the same doctor. `note` is
+   * for what the chart's own cells carry: "alternate weeks", "camp day".
+   */
+  ensureColumn('doctor_schedules', 'op_room_id', 'INTEGER REFERENCES op_rooms(id)');
+  ensureColumn('doctor_schedules', 'note', 'TEXT');
+
+  /*
+   * The asset's own code, the one printed on the sticker stuck to the thing
+   * itself: SHC-WHLCH-0326-MPM-001. It is kept beside the register's
+   * internal `asset_no` rather than replacing it, because the two answer
+   * different questions — `asset_no` is this row, and the asset code is
+   * that object in the store room, readable off a label by somebody holding
+   * a scanner and nothing else.
+   *
+   * Nullable, because the clinic mints codes when it is ready to label
+   * things, and an asset entered this morning is still an asset this
+   * afternoon whether or not somebody has printed a sticker for it.
+   */
+  ensureColumn('assets', 'asset_code', 'TEXT');
+  ensureColumn('assets', 'item_code', 'TEXT');
+  ensureColumn('assets', 'branch_id', 'INTEGER REFERENCES branches(id)');
+  ensureColumn('assets', 'code_serial', 'INTEGER');
+  ensureColumn('assets', 'code_minted_at', 'TEXT');
+  ensureColumn('assets', 'code_minted_by', 'INTEGER REFERENCES users(id)');
+  // Two things cannot carry the same label. The index allows many assets
+  // with no code yet, and exactly one holder of each code that exists.
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_assets_code ON assets(asset_code) '
+    + 'WHERE asset_code IS NOT NULL');
+
+  ensureColumn('patients', 'guardian_name', 'TEXT');
+  ensureColumn('patients', 'guardian_relation', 'TEXT');
 
   /*
    * The code a doctor is known by on paper — SPC-MHD-002. It is the only thing
@@ -285,15 +524,23 @@ function migrate() {
   const usersSql = db.prepare(
     "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'"
   ).get();
-  if (usersSql && !/'owner'/.test(usersSql.sql)) {
+  /*
+   * The store keeper's role is added the same way, and for the same reason:
+   * the role list is a CHECK constraint, and SQLite can only change one by
+   * rebuilding the table. Both are handled in one pass, so a database from
+   * before either existed comes forward in a single rewrite.
+   */
+  const missingRole = usersSql && (!/'owner'/.test(usersSql.sql) || !/'store'/.test(usersSql.sql));
+  if (missingRole) {
     const columns = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
     const rebuilt = usersSql.sql
       .replace(/CREATE TABLE\s+(?:IF NOT EXISTS\s+)?["`]?users["`]?/i, 'CREATE TABLE users_rebuild')
       .replace("role IN\n                   ('admin'", "role IN\n                   ('owner','admin'")
-      .replace("role IN ('admin'", "role IN ('owner','admin'");
+      .replace("role IN ('admin'", "role IN ('owner','admin'")
+      .replace("'ward')", "'ward','store')");
 
-    if (!/'owner'/.test(rebuilt)) {
-      console.error('[migrate] could not add the owner role — users table left untouched.');
+    if (!/'owner'/.test(rebuilt) || !/'store'/.test(rebuilt)) {
+      console.error('[migrate] could not extend the role list — users table left untouched.');
     } else {
       const wasOn = db.pragma('foreign_keys', { simple: true });
       db.pragma('foreign_keys = OFF');
@@ -307,10 +554,10 @@ function migrate() {
         const broken = db.pragma('foreign_key_check');
         if (broken.length) throw new Error(`${broken.length} reference(s) would be orphaned`);
         db.exec('COMMIT');
-        console.log('[migrate] users table rebuilt — the owner role is now allowed.');
+        console.log('[migrate] users table rebuilt — the owner and store roles are now allowed.');
       } catch (err) {
         try { db.exec('ROLLBACK'); } catch { /* already rolled back */ }
-        console.error('[migrate] owner role migration failed, nothing changed:', err.message);
+        console.error('[migrate] role migration failed, nothing changed:', err.message);
       } finally {
         if (wasOn) db.pragma('foreign_keys = ON');
       }
@@ -352,6 +599,38 @@ function migrate() {
    * back to a default by category and says which assets it had to guess for.
    */
   ensureColumn('assets', 'life_years', 'INTEGER');
+
+  /*
+   * Why a pack left the shelf without being sold.
+   *
+   * The ledger could say "expiry" and nothing else, so a crushed box, a
+   * vial dropped on the floor and a strip that went out of date were all
+   * one line. The stock reconciliation has to tell them apart — expiry is
+   * a buying mistake, damage is a handling one, and they are fixed by
+   * different people.
+   */
+  /*
+   * A person taken out of the records by the owner.
+   *
+   * The row stays: a consultation, a prescription and a bill all point at
+   * it, and those are the clinic's history, not the person's property. What
+   * goes is everything that says who they were — the name, the contact
+   * details, the signature, the way in. What is left is the staff code the
+   * documents were printed with, which identifies the work without naming
+   * the worker, and that is the posture every printed sheet here already
+   * takes: a doctor's code, never their name.
+   */
+  ensureColumn('users', 'erased_at', 'TEXT');
+  ensureColumn('users', 'erased_by', 'INTEGER REFERENCES users(id)');
+  ensureColumn('users', 'erase_reason', 'TEXT');
+
+  ensureColumn('stock_ledger', 'reason', 'TEXT');
+  /*
+   * What the supplier credited for a pack sent back. Kept beside the stock
+   * movement because a return the clinic was never credited for is the one
+   * worth chasing, and it is invisible if only the quantity is recorded.
+   */
+  ensureColumn('stock_ledger', 'credit_amount', 'REAL');
 
   // Medicaments sit under HSN 3004 unless the formulary says otherwise; a GST
   // invoice must show a code, so nothing is left without one.

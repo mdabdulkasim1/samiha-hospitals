@@ -301,6 +301,45 @@ WHATSAPP_VERIFY_TOKEN=samiha-verify-token</pre>
         <p class="muted small">Restart the server. The banner at the top of this page will turn green.</p>
       </fieldset>
 
+      <fieldset><legend>4 · The bill template, for sending a bill after the day it was raised</legend>
+        <p>WhatsApp lets a business write freely to a patient only for <b>24 hours after that
+           patient's own last message</b>. Somebody paying at the counter has usually never messaged
+           the clinic, so a bill sent to them is refused — unless it goes under a
+           <b>template Meta has approved</b>. The ERP tries the ordinary way first, because inside
+           the window it is free and reads better, and falls back to the template only when it has to.</p>
+
+        <p>Create it in <b>Meta Business Manager → WhatsApp Manager → Message templates</b>:</p>
+        <table class="plain small"><tbody>
+          <tr><td><b>Name</b></td><td><code>samiha_bill</code> — lower case and underscores only</td></tr>
+          <tr><td><b>Category</b></td><td><b>Utility</b>. A bill is a transaction, not marketing;
+            submitted as marketing it will be rejected, and it costs more.</td></tr>
+          <tr><td><b>Language</b></td><td>English — note whether Meta files it as <code>en</code>
+            or <code>en_US</code>, and set <code>WHATSAPP_TEMPLATE_LANG</code> to match</td></tr>
+          <tr><td><b>Header</b></td><td><b>Document</b>. This is the part that carries the PDF;
+            a template without it cannot send a bill at all.</td></tr>
+          <tr><td><b>Body</b></td><td class="mono">Hello {{1}}, here is your bill {{2}} from
+            SAMIHA Polyclinic &amp; Diagnostics. Total {{3}}. {{4}}. Thank you for visiting us.</td></tr>
+          <tr><td><b>Footer</b></td><td>Optional — e.g. <i>Please keep this bill for your records.</i></td></tr>
+        </tbody></table>
+
+        <p class="muted small">Meta asks for a sample when you submit: give it
+          <i>Ayesha Begum</i>, <i>INV261100001</i>, <i>₹500.00</i>, <i>Balance to pay: ₹500.00</i>.
+          Approval usually takes a few minutes and sometimes a day.</p>
+
+        <p>Then set, and restart:</p>
+        <pre class="mono small" style="background:var(--line-2);padding:12px;border-radius:8px;overflow-x:auto">WHATSAPP_BILL_TEMPLATE=samiha_bill
+WHATSAPP_TEMPLATE_LANG=en
+WHATSAPP_WABA_ID=123456789012345</pre>
+        <p class="muted small">The four values the ERP fills in are set by
+          <code>WHATSAPP_BILL_TEMPLATE_BODY</code>, which defaults to
+          <code>{patient}|{billNo}|{total}|{balance}</code>. If your approved wording has three
+          variables rather than four, drop one from that list — <code>{clinic}</code> and
+          <code>{date}</code> are available too. Nothing needs changing in the code.</p>
+
+        <div class="mt"><button class="btn ghost sm" id="wa-tpl-check">Check the template with Meta</button></div>
+        <div id="wa-tpl-out" class="mt"></div>
+      </fieldset>
+
       <fieldset><legend>What the patient can do in chat</legend>
         <div class="grid c2">
           <div>
@@ -328,5 +367,40 @@ WHATSAPP_VERIFY_TOKEN=samiha-verify-token</pre>
         <p class="muted small">All of them are queued in the outbox and retried if a send fails.</p>
       </fieldset>
     </div></div>`;
+
+    /*
+     * Whether the template is actually usable can only be answered by Meta:
+     * it is written and approved over there. Rather than leave the clinic
+     * guessing — and finding out at a counter with a patient waiting — the
+     * guide asks.
+     */
+    const out = body.querySelector('#wa-tpl-out');
+    body.querySelector('#wa-tpl-check').addEventListener('click', async (e) => {
+      e.target.disabled = true;
+      out.innerHTML = UI.loading();
+      try {
+        const r = await API.get('/api/whatsapp/templates');
+        const rows = r.templates.length
+          ? `<table class="plain small mt"><thead><tr><th>Template</th><th>Status</th>
+               <th>Language</th><th>Document header</th><th>Variables</th></tr></thead><tbody>
+               ${r.templates.map((t) => `<tr>
+                 <td class="mono">${UI.esc(t.name)}</td>
+                 <td>${UI.badge(UI.titleise(t.status), t.status === 'APPROVED' ? 'ok' : 'warn')}</td>
+                 <td>${UI.esc(t.language)}</td>
+                 <td>${t.hasDocumentHeader ? 'yes' : '—'}</td>
+                 <td>${t.variables}</td></tr>`).join('')}
+             </tbody></table>`
+          : '';
+        out.innerHTML = (r.ready
+          ? `<div class="alert ok"><b>Ready.</b> Bills can be sent to a patient who has not
+               written to the clinic, under <code>${UI.esc(r.configured.name)}</code>.</div>`
+          : `<div class="alert ${r.provider === 'mock' ? 'info' : 'warn'}"><b>Not ready yet.</b>
+               ${UI.esc(r.verdict || r.reason || 'Meta did not say why.')}</div>`) + rows;
+      } catch (err) {
+        out.innerHTML = `<div class="alert danger">${UI.esc(err.message)}</div>`;
+      } finally {
+        e.target.disabled = false;
+      }
+    });
   }
 })();

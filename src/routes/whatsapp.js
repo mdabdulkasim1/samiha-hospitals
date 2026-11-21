@@ -182,4 +182,51 @@ router.get('/sessions', requireAuth, wrap((_req, res) => {
   ).all());
 }));
 
+/**
+ * ------------------------------------------------------- message templates
+ *
+ * A template is written and approved in Meta Business Manager, outside this
+ * system, and is the only thing WhatsApp will deliver to a patient who has
+ * not messaged the clinic in the last 24 hours. So the one question the ERP
+ * cannot answer from its own records is whether the template named in its
+ * settings exists yet and has been approved.
+ *
+ * This asks Meta, and says plainly whether the clinic's bill template is
+ * ready to use — including the two ways it can be present and still not
+ * work: not approved, or approved without a document header to put the
+ * bill in.
+ */
+router.get('/templates', requireRole('admin'), wrap(async (_req, res) => {
+  const configured = config.whatsapp.billTemplate;
+  const named = String(configured.name || '').trim();
+  const out = await whatsapp.listTemplates();
+
+  const match = out.templates.find((t) => t.name === named
+    && (!configured.language || t.language === configured.language))
+    || out.templates.find((t) => t.name === named)
+    || null;
+
+  const wanted = String(configured.body || '').split('|').map((p) => p.trim()).filter(Boolean).length;
+  let verdict = null;
+  if (!named) verdict = 'No bill template is set. Bills can only be sent inside the 24-hour window.';
+  else if (!out.configured) verdict = out.reason;
+  else if (!match) verdict = `Meta has no template called "${named}"${
+    configured.language ? ` in ${configured.language}` : ''}.`;
+  else if (match.status !== 'APPROVED') verdict = `"${named}" is ${String(match.status).toLowerCase()}, not approved yet.`;
+  else if (!match.hasDocumentHeader) verdict = `"${named}" has no document header, so a bill cannot be attached to it.`;
+  else if (match.variables !== wanted) {
+    verdict = `"${named}" expects ${match.variables} variable(s) and WHATSAPP_BILL_TEMPLATE_BODY supplies ${wanted}.`;
+  }
+
+  res.json({
+    provider: config.whatsapp.provider,
+    configured: { ...configured, name: named, variables: wanted },
+    ready: Boolean(named && match && match.status === 'APPROVED'
+      && match.hasDocumentHeader && match.variables === wanted),
+    verdict,
+    reason: out.reason,
+    templates: out.templates,
+  });
+}));
+
 module.exports = router;

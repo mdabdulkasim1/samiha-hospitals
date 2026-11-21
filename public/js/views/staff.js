@@ -31,6 +31,12 @@
     { value: 'pharmacy', label: 'Pharmacist — dispensing, stock' },
     { value: 'cashier', label: 'Cashier — billing, payments, insurance' },
     { value: 'ward', label: 'Ward sister — beds, admissions, rounds' },
+    /*
+     * The store keeper. Deliberately narrow: the asset register and the
+     * consumables cupboard, and nothing that touches a patient record. It
+     * is the one account in the clinic whose whole job is the equipment.
+     */
+    { value: 'store', label: 'Store keeper — assets, equipment, consumables' },
     { value: 'admin', label: 'Administrator — full access' },
     { value: 'owner', label: 'Owner — full access, and sets what others see' },
   ];
@@ -217,6 +223,16 @@
             // is refused anyway, and offering it is a button that cannot work.
             + (u.id === (APP.user && APP.user.id) ? ''
               : `<button class="btn ghost sm danger" data-del="${u.id}">Delete</button>`)
+            /*
+             * The owner's own button, and nobody else's. Deleting is refused
+             * the moment somebody has treated a patient; this takes the
+             * person's name out while the treating stays on the record. An
+             * administrator does not get it: removing a name from the audit
+             * trail of its own work is not an administrator's to do quietly.
+             */
+            + (isOwner() && u.id !== (APP.user && APP.user.id) && !u.erased_at
+              ? `<button class="btn ghost sm danger" data-erase="${u.id}">Remove name</button>` : '')
+            + (u.erased_at ? UI.badge('Name removed', 'warn') : '')
             + '</div>'),
       },
     ];
@@ -246,6 +262,86 @@
         const user = rows.find((r) => String(r.id) === btn.dataset.del);
         if (user) openDeleteStaff(user);
       });
+    });
+    host.querySelectorAll('[data-erase]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const user = rows.find((r) => String(r.id) === btn.dataset.erase);
+        if (user) openEraseStaff(user);
+      });
+    });
+  }
+
+
+  /**
+   * The owner taking a person's name out of the records.
+   *
+   * Deleting the account is refused the moment somebody has treated a
+   * patient, and rightly: the consultation points at them and a record that
+   * cannot say who signed it is worth less than no record. This is the other
+   * answer — the name, the contact details, the signature and the way in all
+   * go; the work stays, under the staff code it was always filed against.
+   *
+   * What will survive is listed before anything happens, because "their data
+   * stays" is easy to say and worth showing. The staff code has to be typed:
+   * this cannot be undone, and the row above the one somebody meant to press
+   * is another person.
+   */
+  async function openEraseStaff(user) {
+    let plan;
+    try {
+      plan = await API.get(`/api/masters/staff/${user.id}/erasure`);
+    } catch (err) { return UI.err(err.message); }
+
+    UI.modal({
+      title: `Remove ${user.name} from the records`,
+      body: `
+        <div class="alert warn"><b>This cannot be undone.</b>
+          ${UI.esc(user.name)} becomes <b>${UI.esc(plan.becomes)}</b> everywhere in the system —
+          name, email, telephone, signature and registration number gone, and the sign-in with
+          them.</div>
+
+        <p class="muted small">Everything they did stays exactly where it is, filed under
+          <code>${UI.esc(plan.staffCode)}</code>${plan.doctorCode
+    ? ` and <code>${UI.esc(plan.doctorCode)}</code>` : ''} — which is what every prescription and
+          bill the clinic prints already carries, instead of a name.</p>
+
+        ${plan.keeps.length ? `<h4>What stays</h4>
+          <table class="plain small"><tbody>${plan.keeps.map((k) => `<tr>
+            <td>${UI.esc(k.what)}</td><td class="num"><b>${UI.num(k.count)}</b></td></tr>`).join('')}
+          </tbody></table>`
+    : '<p class="muted">Nothing in the clinic\'s records points at this account at all.</p>'}
+
+        ${plan.caveats.length ? `<h4 class="mt">What this does not reach</h4>
+          <ul class="muted small">${plan.caveats.map((c) => `<li>${UI.esc(c)}</li>`).join('')}</ul>` : ''}
+
+        <div class="mt">
+          ${UI.field({ name: 'reason', label: 'Why', required: true,
+    placeholder: 'Entered by mistake · left the clinic and asked to be removed · duplicate record' })}
+          ${UI.field({ name: 'confirm', label: `Type ${plan.staffCode} to confirm`, required: true,
+    placeholder: plan.staffCode })}
+        </div>
+        <div id="erase-out"></div>`,
+      footer: `<button class="btn ghost" data-act="__close">Cancel</button>
+               <button class="btn danger" data-act="erase">Remove the name</button>`,
+      onAction: async (act, modal) => {
+        if (act !== 'erase') return undefined;
+        const values = UI.formValues(modal);
+        const out = modal.querySelector('#erase-out');
+        if (!values.reason || !values.confirm) {
+          out.innerHTML = '<div class="alert danger mt">Both the reason and the code are needed.</div>';
+          return 'keep';
+        }
+        try {
+          const done = await API.post(`/api/masters/staff/${user.id}/erase`, values);
+          UI.ok(`Removed. The records now read ${done.name}.`);
+          APP.reload();
+        } catch (err) {
+          out.innerHTML = `<div class="alert danger mt">${UI.esc(err.message)}</div>`;
+          return 'keep';
+        }
+        return undefined;
+      },
     });
   }
 
@@ -477,9 +573,20 @@
    * across a range — "Tuesdays and Fridays, 6 to 8, for the next month" is one
    * entry, not twelve.
    */
-  function openAvailability(doctor, onDone) {
+  async function openAvailability(doctor, onDone) {
     const today = UI.today();
     const monthOut = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+
+    /*
+     * The consulting rooms, offered here rather than on a screen of their
+     * own, because "when does this doctor sit" and "which door do their
+     * patients knock on" is one question asked once. Whatever is chosen is
+     * what the queue prints on the token slip and shows on the waiting-room
+     * screen for these hours.
+     */
+    let rooms = [];
+    try { rooms = (await API.get('/api/queue/rooms')).rows; } catch { rooms = []; }
+    const usual = rooms.find((r) => r.id === doctor.op_room_id);
 
     UI.modal({
       title: `Visiting hours — ${doctor.name}`,
@@ -515,6 +622,17 @@
             ${UI.field({ name: 'maxTokens', label: 'Maximum patients', type: 'number', min: 0, value: 0,
               hint: '0 = as many as the hours hold' })}
           </div>
+          ${rooms.length ? `<label class="field"><span>Consulting room for these hours</span>
+            <select name="roomId">
+              <option value="">${usual ? `Their usual room — ${UI.esc(usual.name)}, ${UI.esc(usual.floor)}`
+                : 'Wherever the specialty sits'}</option>
+              ${rooms.map((r) => `<option value="${r.id}">${UI.esc(r.name)} · ${UI.esc(r.floor)}${
+                r.categories.length ? ` — ${UI.esc(r.categories.map((c) => c.name).join(', '))}` : ''
+              }</option>`).join('')}
+            </select>
+            <small class="muted">This is the room printed on the patient's token slip and shown
+              on the waiting-room screen for these hours.</small>
+          </label>` : ''}
           ${UI.field({ name: 'note', label: 'Note', placeholder: 'Evening OPD, camp day…' })}
         </form>
         <div id="av-preview" class="alert ok"></div>`,
@@ -583,12 +701,14 @@
         const payload = {
           startTime: v.startTime, endTime: v.endTime,
           slotMinutes: v.slotMinutes, maxTokens: v.maxTokens, note: v.note,
+          roomId: v.roomId || null,
         };
         if (getMode() === 'single') payload.date = v.date;
         else Object.assign(payload, { from: v.from, to: v.to, weekdays: getWeekdays() });
 
         const res = await API.post(`/api/masters/doctors/${doctor.id}/availability`, payload);
-        UI.ok(`${res.added} visiting day(s) fixed.`);
+        const room = rooms.find((r) => String(r.id) === String(v.roomId));
+        UI.ok(`${res.added} visiting day(s) fixed${room ? ` in ${room.name}, ${room.floor}` : ''}.`);
         if (res.skipped.length) {
           UI.warn(`${res.skipped.length} day(s) skipped — hours already set: ` +
             res.skipped.slice(0, 3).map((x) => x.date).join(', ') + (res.skipped.length > 3 ? '…' : ''));
@@ -761,6 +881,11 @@
           `${r.note ? `<div class="muted small">${UI.esc(r.note)}</div>` : ''}` },
         { label: 'Hours', render: (r) => `${UI.esc(UI.to12h(r.start_time))} – ${UI.esc(UI.to12h(r.end_time))}` +
           `<div class="muted small">${UI.esc(r.slot_minutes)} min per patient</div>` },
+        // The door these hours send patients to, which is what the queue
+        // prints on the token slip.
+        { label: 'Room', render: (r) => (r.room_name
+          ? `${UI.esc(r.room_name)}<div class="muted small">${UI.esc(r.room_floor || '')}</div>`
+          : '<span class="muted">Usual room</span>') },
         { label: 'Holds', num: true, render: (r) => UI.num(r.capacity) },
         { label: 'Booked', num: true, render: (r) => UI.num(r.booked) },
         { label: 'Free', num: true, render: (r) => r.free

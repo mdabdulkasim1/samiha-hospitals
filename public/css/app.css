@@ -966,3 +966,305 @@ tbody tr.panel-head.panel-sub td { background: transparent; border-top: 1px soli
 .pk-item b { font-variant-numeric: tabular-nums; color: var(--ink-2); font-weight: 600; }
 .pk-sum { margin: 9px 0 4px; font-size: 12.6px; line-height: 1.5;
   background: var(--teal-soft); border: 1px solid #CFE4E8; border-radius: 7px; padding: 8px 10px; }
+
+/* ======================================================================
+   The queue: lanes at the desk, the set-up cards, and the television
+   ====================================================================== */
+
+/* One lane per category. Wide enough that a name and a reason fit on one
+   line, because a wrapped reason is a reason nobody reads. */
+.q-lanes { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); }
+.q-lane { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+.q-lane > header { display: flex; justify-content: space-between; align-items: baseline;
+  gap: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--line-2); }
+.q-lane > header b { font-size: 14.5px; }
+
+/* The category code, as it is printed on the token. */
+.q-code { display: inline-block; min-width: 26px; padding: 1px 6px; margin-right: 6px;
+  border-radius: 5px; background: var(--crimson); color: #fff;
+  font-size: 11.5px; font-weight: 700; font-variant-numeric: tabular-nums; text-align: center; }
+
+.q-now { padding: 8px 0; border-bottom: 1px solid var(--line-2); }
+.q-next { display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  padding: 8px 0; border-bottom: 1px solid var(--line-2); }
+.q-line { padding-top: 6px; max-height: 340px; overflow-y: auto; }
+
+.q-row { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; padding: 6px 0;
+  border-bottom: 1px solid var(--line-2); }
+.q-row:last-child { border-bottom: 0; }
+.q-row .q-who { grid-column: 1; font-size: 12.4px; color: var(--ink-2); }
+.q-row .q-acts { grid-row: 1 / span 2; grid-column: 2; align-self: center;
+  display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+.q-row.serving { background: var(--teal-soft); border-radius: 7px; padding: 6px 8px; }
+.q-row.called { background: var(--orange-soft); border-radius: 7px; padding: 6px 8px; }
+.q-label { font-size: 15px; font-variant-numeric: tabular-nums; letter-spacing: .01em; }
+.q-pos { display: inline-block; min-width: 20px; color: var(--ink-3);
+  font-size: 11.5px; font-variant-numeric: tabular-nums; }
+
+/* Set-up: the rooms, and what sits in them. */
+.q-rooms { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+.q-room { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+.q-room.off { opacity: .6; }
+.q-room > header { display: flex; justify-content: space-between; align-items: center;
+  gap: 8px; margin-bottom: 8px; }
+.q-chip { display: inline-block; margin: 2px 2px 0 0; padding: 2px 7px; border-radius: 999px;
+  background: var(--teal-soft); border: 1px solid #CFE4E8; font-size: 11.5px; }
+.q-pick { display: grid; gap: 4px 12px; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+.q-tick { display: flex; align-items: center; gap: 6px; font-size: 12.8px; font-weight: 400; }
+.q-tick input { width: auto; margin: 0; }
+
+/* ---------------------------------------------------------- the television
+   Read from across a room, never operated.
+
+   It wears the clinic's own colours rather than a neutral dark theme: the
+   teal of the cross for the ground it stands on, the maroon of the heart
+   for the bands that carry words, the orange for the one thing the eye
+   should go to first, and white for the numbers. A screen on a wall in a
+   waiting room is signage, and signage that does not match the board in the
+   entrance reads as somebody else's.
+
+   Dark ground, because a waiting room is lit from above and a white screen
+   on a wall is a lamp pointed at the people sitting under it.
+
+   EVERY SIZE HERE IS A MULTIPLE OF --u, and that is the important part. The
+   clinic's sets are 32-inch, usually 1366 × 768 — fewer pixels across than
+   a laptop — and they are read from the far side of the same room as any
+   larger screen, so they need the bigger type rather than the smaller.
+   Sizing in vw alone would have given them two-thirds of what a 55-inch
+   screen shows, which is exactly backwards. --u mixes width and height so
+   the layout follows the shape of the screen, and the zoom is set for the
+   size the clinic actually hung. The rule of thumb being met: a character
+   wants about one centimetre of height for every three metres somebody
+   reads it from. */
+.tv {
+  /* The clinic's sets are 32-inch, which is the size this is drawn for. */
+  --tv-zoom: 1.3;
+  --u: calc((0.62vw + 0.55vh) * var(--tv-zoom));
+  background: linear-gradient(165deg, #0F4C58 0%, #0B3D47 58%, #10343C 100%);
+  color: #fff; border-radius: 12px; padding: calc(1.1 * var(--u)) calc(1.2 * var(--u));
+  min-height: 78vh; display: flex; flex-direction: column; gap: calc(.7 * var(--u));
+  position: relative; z-index: 6;
+}
+/* Full screen on a television, with room at the edges: older sets overscan,
+   and a clock cropped off the corner is a clock nobody can read. */
+.tv-fs { border-radius: 0; height: 100vh; min-height: 100vh;
+  padding: calc(2 * var(--u)) calc(2.2 * var(--u)); }
+
+/* The name band: the clinic's maroon, ruled underneath in its orange. */
+.tv-head {
+  display: flex; align-items: center; gap: var(--u);
+  background: linear-gradient(90deg, #7C142A, #9E1B34 60%, #A82742);
+  border-bottom: calc(.22 * var(--u)) solid var(--orange);
+  border-radius: 10px; padding: calc(.55 * var(--u)) var(--u);
+}
+.tv-logo { width: calc(2.6 * var(--u)); height: calc(2.6 * var(--u)); background: #fff;
+  border-radius: 10px; padding: calc(.35 * var(--u)); flex: none; }
+.tv-logo img { width: 100%; height: 100%; display: block; }
+.tv-badge { font-size: calc(1.7 * var(--u)); font-weight: 800; letter-spacing: .05em; color: #fff; }
+.tv-floor { font-size: calc(1.25 * var(--u)); color: #F7D3DA; margin-left: auto; }
+.tv-clock { font-size: calc(1.45 * var(--u)); font-variant-numeric: tabular-nums;
+  color: #fff; font-weight: 600; }
+
+.tv-split { flex: 1; display: grid; grid-template-columns: 1.3fr 1fr;
+  gap: calc(.8 * var(--u)); min-height: 0; }
+
+/* The board. One row per place a patient can be called to, in a fixed order
+   all day: a row that moves under somebody watching for it is a row they
+   have to find again. */
+.tv-board { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.14);
+  border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
+/* The rows share whatever height the screen has, so four of them on a quiet
+   morning and seven at eleven o'clock both fill the board without either
+   scrolling or leaving a gap at the bottom. Nothing on a television can be
+   scrolled to, so anything that does not fit is not there at all. */
+.tv-rows { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.tv-rows .tv-row { flex: 1 1 0; min-height: 0; }
+/* The token column is sized for the longest number the clinic can issue —
+   a four-digit sequence past 999 — so the room beside it never gets pushed
+   into it. */
+.tv-row { display: grid; grid-template-columns: calc(10.8 * var(--u)) 1fr auto; align-items: center;
+  gap: calc(.6 * var(--u)); padding: calc(.45 * var(--u)) calc(.9 * var(--u));
+  border-bottom: 1px solid rgba(255,255,255,.10); }
+.tv-row:last-child { border-bottom: 0; }
+.tv-row-head { background: var(--crimson); color: #fff; font-size: calc(.95 * var(--u));
+  letter-spacing: .1em; text-transform: uppercase;
+  padding: calc(.5 * var(--u)) calc(.9 * var(--u)); border-bottom: 0; flex: none; }
+.tv-row-head .tv-wait-head { text-align: right; }
+.tv-row-head div { font-weight: 700; }
+
+/* One line, always. A token broken across two lines is read as two
+   numbers by somebody glancing up from the far side of the room. */
+.tv-token { font-size: calc(2.45 * var(--u)); line-height: 1.05; font-weight: 800; color: #fff;
+  font-variant-numeric: tabular-nums; letter-spacing: 0; white-space: nowrap; }
+.tv-room-no { font-size: calc(1.7 * var(--u)); line-height: 1.1; font-weight: 700; color: #fff; }
+.tv-sub { font-size: calc(.92 * var(--u)); color: #BBD7DE; line-height: 1.25; }
+.tv-next { font-size: calc(.86 * var(--u)); color: #FFC79A; font-variant-numeric: tabular-nums; }
+
+/* The one just called: a white card in the clinic's maroon and teal, with
+   the orange edge the rest of the screen saves for exactly this. Picked out
+   rather than enlarged, so the row heights stay put and nothing jumps while
+   somebody is reading. */
+.tv-row.lit { background: #fff; box-shadow: inset calc(.3 * var(--u)) 0 0 var(--orange); }
+.tv-row.lit .tv-token { color: var(--crimson); }
+.tv-row.lit .tv-room-no { color: var(--teal-dark); }
+.tv-row.lit .tv-sub { color: #43555F; }
+.tv-row.lit .tv-next { color: var(--orange-dark); }
+.tv-row.idle .tv-token { color: rgba(255,255,255,.30); }
+.tv-row.idle .tv-room-no { color: rgba(255,255,255,.72); }
+.tv-empty { padding: calc(4 * var(--u)) calc(1.5 * var(--u)); text-align: center;
+  color: #BBD7DE; font-size: calc(1.3 * var(--u)); }
+
+/* The clinic's poster: on white, and the whole picture, never cropped — a
+   package price cut off at the edge is worse than a margin. */
+.tv-ad { background: #fff; border: 1px solid rgba(255,255,255,.22); border-radius: 12px;
+  overflow: hidden; display: flex; align-items: center; justify-content: center; min-height: 0; }
+.tv-ad img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.tv-ad-none { text-align: center; padding: calc(1.5 * var(--u)); color: var(--teal-dark); }
+.tv-ad-logo { width: calc(8 * var(--u)); max-width: 80%; margin: 0 auto calc(1.5 * var(--u));
+  display: block; }
+.tv-ad-badge { font-size: calc(1.8 * var(--u)); font-weight: 800; letter-spacing: .05em;
+  color: var(--crimson); }
+.tv-ad-line { font-size: var(--u); color: var(--teal); margin-top: calc(.6 * var(--u));
+  letter-spacing: .08em; }
+.tv-ad-hint { font-size: calc(.86 * var(--u)); color: var(--orange-dark);
+  margin-top: calc(1.8 * var(--u)); }
+
+.tv-foot { font-size: calc(.86 * var(--u)); color: #9FC0C8; text-align: center; }
+
+/* The posters, as the clinic manages them. */
+.sl-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+.sl-card { border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
+  background: var(--surface); position: relative; }
+.sl-card.off { opacity: .55; }
+/* The ones actually on the wall this minute, so the library reads at a
+   glance rather than by working the dates out. */
+.sl-card.live { border-color: var(--ok); box-shadow: 0 0 0 1px var(--ok) inset; }
+.sl-card img { width: 100%; height: 150px; object-fit: contain; background: var(--bg); display: block; }
+.sl-meta { padding: 8px 10px; }
+.sl-when { color: var(--teal); font-variant-numeric: tabular-nums; }
+.sl-pick { position: absolute; top: 6px; left: 6px; background: #fff; border: 1px solid var(--line);
+  border-radius: 6px; padding: 3px 5px; line-height: 0; }
+.sl-pick input { width: auto; margin: 0; }
+
+/* One row of buttons over the whole library: tick what should change, then
+   say what to do with it. A campaign is a set of posters, not one. */
+.sl-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 10px; margin-bottom: 10px; border: 1px solid var(--line);
+  border-radius: 9px; background: var(--bg); position: sticky; top: 0; z-index: 2; }
+.sl-all { display: flex; align-items: center; gap: 6px; font-size: 12.8px; font-weight: 600; }
+.sl-all input { width: auto; margin: 0; }
+
+
+
+/* The token slip, previewed on screen at roughly its printed size. */
+.tslip-preview { border: 1px solid var(--line); border-radius: 8px; background: #fff;
+  display: inline-block; padding: 4px; }
+.row-gap { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+
+/* Who sits in which OP: one line per specialty, one dropdown to move it. */
+.q-alloc { width: 100%; }
+.q-alloc td, .q-alloc th { padding: 6px 10px; }
+.q-alloc select { width: auto; min-width: 190px; }
+.q-duty { font-size: 12.6px; line-height: 1.45; }
+.warn-text { color: var(--orange-dark); }
+
+/* The asset label, previewed on screen at its printed size. */
+.asset-label-preview { display: inline-block; border: 1px solid var(--line);
+  border-radius: 6px; background: #fff; padding: 3px; }
+/* An asset code, wherever it is read rather than scanned. */
+.a-code { font-variant-numeric: tabular-nums; letter-spacing: .02em; font-weight: 700; }
+
+/* The floor against each room, so a patient reading OP-3 on the downstairs
+   screen knows to go up. Said on every row rather than only in the header:
+   one television may be carrying the whole building. */
+.tv-room-line { display: flex; align-items: baseline; gap: calc(.5 * var(--u));
+  flex-wrap: wrap; }
+.tv-floor-tag { font-size: calc(.86 * var(--u)); font-weight: 700; letter-spacing: .04em;
+  color: #0B3D47; background: #FFC79A; border-radius: 999px;
+  padding: calc(.1 * var(--u)) calc(.45 * var(--u)); white-space: nowrap; }
+.tv-row.lit .tv-floor-tag { background: var(--orange); color: #fff; }
+.tv-row.idle .tv-floor-tag { background: rgba(255,255,255,.18); color: rgba(255,255,255,.8); }
+/* The doctor behind the door, named on the row rather than in a heading:
+   one board plays on every television, so the row has to say everything. */
+.tv-doc { color: #fff; font-weight: 700; }
+.tv-row.lit .tv-doc { color: var(--crimson); }
+
+/* How many are still in that queue, on the same line as the room it is for.
+   A patient works out from it whether to sit down again or stay standing,
+   which is the question they ask after "where do I go". */
+.tv-wait { text-align: right; min-width: calc(3.2 * var(--u)); }
+.tv-wait-n { font-size: calc(1.5 * var(--u)); font-weight: 800; line-height: 1;
+  font-variant-numeric: tabular-nums; color: #FFC79A; }
+.tv-wait-l { font-size: calc(.72 * var(--u)); letter-spacing: .08em;
+  text-transform: uppercase; color: #BBD7DE; }
+.tv-row.lit .tv-wait-n { color: var(--orange-dark); }
+.tv-row.lit .tv-wait-l { color: #74858E; }
+.tv-row.idle .tv-wait-n { color: rgba(255,255,255,.35); }
+
+/* ======================================================================
+   The duty chart
+   ====================================================================== */
+
+/* The week, as a grid somebody used to a spreadsheet can read. */
+.sc-grid { width: 100%; border-collapse: collapse; font-size: 13px; }
+.sc-grid th, .sc-grid td { padding: 7px 9px; border-bottom: 1px solid var(--line);
+  vertical-align: top; text-align: left; }
+.sc-grid thead th { background: var(--bg); font-size: 11.5px; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--ink-3); white-space: nowrap; }
+.sc-grid th.sc-day { text-align: center; min-width: 92px; }
+.sc-grid th.sc-day.today { color: var(--crimson); }
+.sc-who { min-width: 170px; }
+.sc-grid select { width: auto; min-width: 92px; }
+
+.sc-cell { text-align: center; color: var(--ink-3); }
+.sc-cell.on { background: var(--teal-soft); color: var(--ink); }
+.sc-cell.editable { cursor: pointer; }
+.sc-cell.editable:hover { outline: 2px solid var(--teal); outline-offset: -2px; }
+.sc-win { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+.sc-awaiting td { background: var(--crimson-soft); }
+.sc-awaiting .sc-who { color: var(--crimson); }
+
+/* One day, drawn the way the printed chart is: an hour ruler and a bar per
+   clinic, so "who is in at six" and "is anybody double-booked" are both
+   answered by looking rather than by reading. */
+.sc-ruler, .sc-bar-row { display: grid; grid-template-columns: 220px 1fr; align-items: center; }
+.sc-ruler { border-bottom: 1px solid var(--line); padding-bottom: 4px; margin-bottom: 4px; }
+.sc-rowhead { padding: 6px 10px 6px 0; }
+.sc-track { position: relative; height: 30px; background: var(--bg);
+  border-radius: 6px; overflow: hidden; }
+.sc-ruler .sc-track { background: none; height: 18px; }
+.sc-tick { position: absolute; top: 0; font-size: 10.5px; color: var(--ink-3);
+  transform: translateX(-50%); white-space: nowrap; }
+.sc-bar-row { border-bottom: 1px solid var(--line-2); }
+.sc-bar-row.off .sc-rowhead { opacity: .6; }
+.sc-bar { position: absolute; top: 3px; bottom: 3px; background: var(--teal); color: #fff;
+  border-radius: 5px; font-size: 11px; font-weight: 600; display: flex; align-items: center;
+  justify-content: center; overflow: hidden; white-space: nowrap; padding: 0 4px;
+  font-variant-numeric: tabular-nums; }
+.sc-none { position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+  font-size: 11.5px; color: var(--ink-3); }
+.sc-tbc { position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+  font-size: 11.5px; color: var(--crimson); }
+.sc-bar-row.awaiting .sc-track { background: var(--crimson-soft); }
+.sc-clear { width: 1%; white-space: nowrap; padding-left: 0 !important; }
+
+/* ----------------------------------------------------------- the branch
+   Which building this screen is showing. Beside the page title because it
+   decides what every figure on the page means, not in a settings screen. */
+.branch-chip { display: inline-flex; align-items: center; gap: 6px; height: 34px;
+  padding: 0 12px; border: 1px solid var(--line); border-radius: 999px;
+  background: var(--surface); color: var(--ink-2); font: inherit; font-size: 12.8px;
+  font-weight: 600; cursor: pointer; white-space: nowrap; }
+.branch-chip:hover { border-color: var(--teal); color: var(--teal); }
+.branch-chip .ico { font-size: 14px; }
+.branch-chip span:not(.ico) { max-width: 20ch; overflow: hidden; text-overflow: ellipsis; }
+.branch-chip.one { cursor: default; }
+.branch-chip.one:hover { border-color: var(--line); color: var(--ink-2); }
+.branch-chip.unset { border-color: var(--crimson); color: var(--crimson); }
+
+.branch-list { display: grid; gap: 8px; }
+.branch-opt { display: flex; flex-direction: column; gap: 2px; align-items: flex-start;
+  padding: 11px 13px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--surface); font: inherit; text-align: left; cursor: pointer; }
+.branch-opt:hover { border-color: var(--teal); background: var(--teal-soft); }
+.branch-opt.on { border-color: var(--teal); background: var(--teal-soft); }

@@ -4,10 +4,11 @@ const { db } = require('../db');
 const config = require('../config');
 const clinic = require('../services/clinic');
 const auth = require('../lib/auth');
-const { wrap, unauthorized, badRequest } = require('../lib/http');
+const { wrap, unauthorized, badRequest, forbidden } = require('../lib/http');
 const { required, str } = require('../lib/validate');
 const audit = require('../lib/audit');
 const mailer = require('../services/mailer');
+const branches = require('../services/branches');
 
 const router = express.Router();
 
@@ -34,7 +35,18 @@ router.post('/login', wrap((req, res) => {
     throw unauthorized('Invalid credentials');
   }
 
-  const session = auth.createSession(user.id);
+  /*
+   * Where this sign-in lands.
+   *
+   * Somebody posted to one branch goes straight there; somebody who may
+   * stand in several — the owner, the administrator — chooses, and the
+   * session carries no branch until they do. The screen asks; nothing is
+   * guessed on their behalf, because the choice decides what every figure
+   * they are about to read means.
+   */
+  const allowed = branches.forUser(user);
+  const landing = branches.landingFor(user);
+  const session = auth.createSession(user.id, landing ? landing.id : null);
   db.prepare("UPDATE users SET last_login_at = datetime('now') WHERE id = ?").run(user.id);
   res.cookie(config.session.cookieName, session.token, {
     httpOnly: true,
@@ -47,6 +59,9 @@ router.post('/login', wrap((req, res) => {
     token: session.token,
     expiresAt: session.expiresAt,
     user: { id: user.id, name: user.name, role: user.role, staffCode: user.staff_code, email: user.email, departmentId: user.department_id },
+    branch: landing,
+    branches: allowed,
+    needsBranch: !landing && allowed.length > 1,
   });
 }));
 
@@ -75,7 +90,39 @@ router.get('/me', wrap((req, res) => {
      * roles, which is what actually keeps anybody out of anything.
      */
     hiddenScreens: require('./access').hiddenFor(req.user),
+    /*
+     * Which branch this session is standing in, and which ones it may
+     * stand in. The screen shows the first and offers the rest; everything
+     * written from here is stamped with the first.
+     */
+    branch: branches.byId(req.branchId),
+    branches: branches.forUser(req.user),
+    needsBranch: !req.branchId,
   });
+}));
+
+/**
+ * Move this session to another branch.
+ *
+ * The same act whether it is the first choice of the morning or the owner
+ * looking at the other place: the session moves, and from that moment the
+ * screens show that branch and new records are stamped with it. Work
+ * already recorded does not move — it happened where it happened.
+ */
+router.post('/branch', auth.requireAuth, wrap((req, res) => {
+  const branchId = Number(req.body.branchId);
+  const branch = branches.byId(branchId);
+  if (!branch || !branch.active) throw badRequest('That branch is not open.');
+  /*
+   * Not an expired session — a real account asking for a place it does not
+   * work in, which is a refusal rather than a prompt to sign in again.
+   */
+  if (!branches.mayUse(req.user, branchId)) {
+    throw forbidden(`You are not posted to ${branch.name}.`);
+  }
+  auth.setSessionBranch(req.sessionToken, branchId);
+  audit.log(req, 'branch.switch', 'branch', branchId, { code: branch.code });
+  res.json({ branch });
 }));
 
 router.post('/change-password', auth.requireAuth, wrap(async (req, res) => {

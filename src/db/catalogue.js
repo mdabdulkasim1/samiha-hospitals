@@ -65,6 +65,157 @@ function sync({ quiet = false } = {}) {
     upsert('departments', 'code', { code, name, kind, sort_order });
   }
 
+  // ------------------------------------------------------- the queue categories
+  /*
+   * The twenty queue categories the clinic issued, with their codes.
+   *
+   * A token is the code and a daily sequence — 08-001 is the morning's
+   * first Paediatrics patient — so these codes are printed on paper and
+   * read off a wall, and they are the clinic's to set. Only a code the
+   * table has never seen is added: a category renamed, reordered or
+   * switched off stays exactly as the clinic left it.
+   *
+   * The list is not the department list and is not meant to be. ENT and
+   * Urology are on it before either has a doctor here, General and
+   * Internal Medicine share one code, and Oncology is deliberately off it.
+   */
+  for (const [code, name, kind, depts] of require('./queueCategories').CATEGORIES) {
+    const existing = db.prepare('SELECT id FROM queue_categories WHERE code = ?').get(code);
+    const id = existing ? existing.id : db.prepare(
+      'INSERT INTO queue_categories (code, name, kind, sort_order) VALUES (?, ?, ?, ?)')
+      .run(code, name, kind, Number(code)).lastInsertRowid;
+
+    /*
+     * Point the matching departments at it, where they exist and are not
+     * already pointed somewhere. Never repointed: a clinic that has moved
+     * its General Practice patients onto another category meant to.
+     */
+    for (const deptCode of depts) {
+      db.prepare(`UPDATE departments SET queue_category_id = ?
+                   WHERE code = ? AND queue_category_id IS NULL`).run(id, deptCode);
+    }
+  }
+
+  // -------------------------------------------------------- the four OP rooms
+  /*
+   * The building, as the floor plan draws it: out-patient rooms 1 and 2 on
+   * the ground floor, 3 and 4 on the first, numbered straight through
+   * rather than one and two on each floor. OP-3 is the dental room on the
+   * plan, which is why the dentist is put there below.
+   *
+   * Only a room the table has never heard of is added, and the rename below
+   * carries an older install across. What sits in each room is the clinic's
+   * to change at any time, which is the whole point of the screen that
+   * edits it.
+   */
+  const ROOMS = [
+    ['Ground Floor', 1, 'OP-1'], ['Ground Floor', 1, 'OP-2'],
+    ['First Floor', 2, 'OP-3'], ['First Floor', 2, 'OP-4'],
+    /*
+     * The two imaging rooms, from the floor plan: the scan downstairs, the
+     * X-ray up. They are rooms a doctor can be allocated to — the
+     * radiologist sits in one — rather than consulting rooms, so they carry
+     * no specialty of their own and stay off the waiting-room board until
+     * somebody is actually called to them.
+     */
+    ['Ground Floor', 1, 'USG'],
+    ['First Floor', 2, 'X-Ray'],
+  ];
+
+  /*
+   * An install from before the rooms were numbered through the building had
+   * "OP 1" and "OP 2" on each floor. Renamed rather than added beside, so
+   * the tokens already issued against those rooms still point at the room
+   * the patient was sent to.
+   */
+  for (const [floor, name, became] of [
+    ['Ground Floor', 'OP 1', 'OP-1'], ['Ground Floor', 'OP 2', 'OP-2'],
+    ['First Floor', 'OP 1', 'OP-3'], ['First Floor', 'OP 2', 'OP-4'],
+  ]) {
+    const old = db.prepare('SELECT id FROM op_rooms WHERE floor = ? AND name = ?').get(floor, name);
+    const taken = db.prepare('SELECT id FROM op_rooms WHERE floor = ? AND name = ?').get(floor, became);
+    if (old && !taken) db.prepare('UPDATE op_rooms SET name = ? WHERE id = ?').run(became, old.id);
+  }
+
+  for (const [floor, floor_order, name] of ROOMS) {
+    const seen = db.prepare('SELECT id FROM op_rooms WHERE floor = ? AND name = ?').get(floor, name);
+    if (!seen) {
+      db.prepare('INSERT INTO op_rooms (floor, floor_order, name) VALUES (?, ?, ?)')
+        .run(floor, floor_order, name);
+    }
+  }
+
+  // ------------------------------------------- who sits in which room, to start
+  /*
+   * The clinic's own allocation, written against its category sheet: ENT,
+   * General Medicine and General Surgery in OP-1; Obstetrics and Paediatrics
+   * in OP-2; the dentist in OP-3; and the rest of the specialists upstairs
+   * in OP-4.
+   *
+   * Written once and then left alone for good. A specialty is moved between
+   * rooms whenever a doctor is away — that is a normal morning here — and a
+   * restart that quietly put every clinic back where it started would undo
+   * the move the front desk made an hour ago. So the mark goes in the
+   * settings table the first time this runs, and nothing touches the
+   * allocation again.
+   */
+  const ALLOCATED = 'queue.rooms_allocated';
+  if (!db.prepare('SELECT 1 FROM settings WHERE key = ?').get(ALLOCATED)) {
+    const placement = {
+      'OP-1': ['03', '05', '06'],
+      'OP-2': ['07', '08'],
+      'OP-3': ['10'],
+      'OP-4': ['01', '02', '04', '09', '11'],
+    };
+    for (const [roomName, codes] of Object.entries(placement)) {
+      const room = db.prepare('SELECT id FROM op_rooms WHERE name = ?').get(roomName);
+      if (!room) continue;
+      // Never over a room the clinic has already filled in itself.
+      const already = db.prepare('SELECT COUNT(*) AS c FROM op_room_categories WHERE room_id = ?')
+        .get(room.id).c;
+      if (already) continue;
+      codes.forEach((code, i) => {
+        const cat = db.prepare('SELECT id FROM queue_categories WHERE code = ?').get(code);
+        if (!cat) return;
+        db.prepare(`INSERT OR IGNORE INTO op_room_categories (room_id, category_id, sort_order)
+                    VALUES (?, ?, ?)`).run(room.id, cat.id, i);
+      });
+    }
+    db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)')
+      .run(ALLOCATED, new Date().toISOString());
+  }
+
+  // ------------------------------------------------ where the counters are
+  /*
+   * A counter is not a consulting room, so it has no row in op_rooms — and
+   * a patient holding 19-004 still has to be told that the X-ray is
+   * upstairs. These are the floors from the directory board in the
+   * entrance, filled in only where nothing has been entered, so a counter
+   * the clinic has since moved stays where the clinic put it.
+   */
+  for (const [code, where] of [
+    ['13', 'Ground Floor'],
+    ['14', 'Ground Floor'],
+    ['19', 'First Floor'],
+    ['20', 'Ground Floor'],
+  ]) {
+    db.prepare(`UPDATE queue_categories SET location = ?
+                 WHERE code = ? AND (location IS NULL OR location = '')`).run(where, code);
+  }
+
+  // ----------------------------------------------------------- the branches
+  /*
+   * Melapalayam, which is the clinic. Its code is the middle of every asset
+   * label printed here — SHC-WHLCH-0326-MPM-001 — and a second branch is a
+   * row added beside it, after which codes minted there carry its letters
+   * instead. Inserted only if the table is empty, so a clinic that has
+   * renamed or added to this is left alone.
+   */
+  if (!db.prepare('SELECT 1 FROM branches').get()) {
+    db.prepare(`INSERT INTO branches (code, name, address, is_default)
+                VALUES ('MPM', 'Melapalayam', 'Nethaji Road, Melapalayam - 627 005', 1)`).run();
+  }
+
   // ------------------------------------------------------------------- assets
   /*
    * The equipment the clinic bought, from its purchase orders. Matched on the
@@ -451,7 +602,27 @@ function sync({ quiet = false } = {}) {
       console.log(`[catalogue]   kept ${k.code} at ${k.at} — the tariff says ${k.wanted}`);
     }
   }
-  return { added, tariff, revisions };
+  /*
+   * The headings the clinic's money is spent under. Insert-if-absent, like
+   * everything else here: a heading the clinic has reworded or switched off
+   * stays as the clinic left it.
+   */
+  const book = require('./expenseBook').load(db);
+  if (!quiet && (book.added || book.items)) {
+    console.log(`[expenses] ${book.added} heading(s) and ${book.items} item(s) added to the expense book.`);
+  }
+
+  /*
+   * The consumables store: gloves, swabs, bin liners. Insert-if-absent like
+   * everything else here — an item the clinic has renamed or switched off
+   * stays as the clinic left it.
+   */
+  const store = require('./consumables').load(db);
+  if (!quiet && (store.added || store.areas)) {
+    console.log(`[consumables] ${store.added} item(s) and ${store.areas} area(s) added to the store.`);
+  }
+
+  return { added, tariff, revisions, expenseBook: book, consumables: store };
 }
 
 module.exports = { sync };

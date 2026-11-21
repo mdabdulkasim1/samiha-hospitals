@@ -239,6 +239,52 @@ function caption(kind, doc) {
  * bill is still reachable if the patient clears the attachment or reads it on
  * a device that will not open one. Both are recorded in the conversation.
  */
+/**
+ * What goes into the approved template's {{1}}, {{2}}…
+ *
+ * The order is set in configuration rather than here, because the template
+ * is written and approved in Meta Business Manager by whoever set the
+ * account up, and a clinic whose approved wording has three variables
+ * instead of four should not need the code changed.
+ */
+function templateParams(kind, doc) {
+  const owed = Number(doc.balance) > 0.009
+    ? `Balance to pay: ${money(doc.balance)}`
+    : 'Paid in full - nothing further to pay';
+  const values = {
+    patient: doc.patientName || 'Patient',
+    billNo: doc.docNo,
+    total: money(doc.net),
+    balance: owed,
+    clinic: kind === 'pharmacy_sale' ? config.pharmacy.name : clinic.profile().name,
+    date: new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }),
+  };
+  return String(config.whatsapp.billTemplate.body || '')
+    .split('|').map((part) => part.trim()).filter(Boolean)
+    .map((part) => part.replace(/\{(\w+)\}/g, (_, key) => (
+      values[key] === undefined ? '' : String(values[key]))));
+}
+
+/** Whether a template has been named for bills, and is therefore available. */
+const templateReady = () => Boolean(String(config.whatsapp.billTemplate.name || '').trim());
+
+/**
+ * Send a bill to a number.
+ *
+ * Free-form first: inside the 24 hours after a patient's own last message
+ * WhatsApp allows anything, the document carries a caption in the clinic's
+ * own words, and Meta charges nothing for it.
+ *
+ * Outside that window WhatsApp refuses, and the fallback is an approved
+ * template — the only thing it will carry to somebody who has not written
+ * in. If no template has been configured, the refusal is reported as it
+ * stands: the bill is built and stored either way, so the counter can print
+ * it or read out the link while the patient is still there.
+ *
+ * The line with the link follows only a send that actually landed; after a
+ * refusal it would be refused too, and would put a second failure in the
+ * record for the same bill.
+ */
 async function sendToWhatsApp({ kind, refId, to, userId }) {
   const number = dial(to);
   if (!number) throw badRequest('Enter the patient\'s WhatsApp number — ten digits, or with its country code.');
@@ -246,14 +292,36 @@ async function sendToWhatsApp({ kind, refId, to, userId }) {
   const doc = build(kind, refId);
   const share = store({ kind, refId, doc, waNumber: number, channel: 'whatsapp', userId });
   const url = linkFor(share.token);
+  const note = caption(kind, doc);
 
-  const message = await whatsapp.sendDocument(number, {
-    link: url, filename: doc.filename, caption: caption(kind, doc),
+  let via = 'document';
+  let message = await whatsapp.sendDocument(number, {
+    link: url, filename: doc.filename, caption: note,
   });
+  let failed = Boolean(message && message.status === 'failed');
+
+  // The window has closed and the clinic has a template for exactly this.
+  const windowClosed = failed && whatsapp.isWindowClosed({ message: message.error });
+  if (windowClosed && templateReady()) {
+    const template = config.whatsapp.billTemplate;
+    const sentUnder = await whatsapp.sendDocumentTemplate(number, {
+      name: template.name.trim(),
+      language: template.language,
+      link: url,
+      filename: doc.filename,
+      params: templateParams(kind, doc),
+      body: note,
+    });
+    if (sentUnder) {
+      message = sentUnder;
+      via = 'template';
+      failed = sentUnder.status === 'failed';
+    }
+  }
+
   if (message) {
     db.prepare('UPDATE document_shares SET message_id = ? WHERE id = ?').run(message.id, share.id);
   }
-  const failed = Boolean(message && message.status === 'failed');
   if (!failed) {
     // The link in words, for a phone that will not open the attachment.
     await whatsapp.send(number, `Your bill ${doc.docNo} can also be opened here:\n${url}\n`
@@ -262,6 +330,7 @@ async function sendToWhatsApp({ kind, refId, to, userId }) {
 
   return {
     sent: !failed,
+    via: failed ? null : via,
     token: share.token,
     url,
     filename: doc.filename,
@@ -270,6 +339,10 @@ async function sendToWhatsApp({ kind, refId, to, userId }) {
     provider: config.whatsapp.provider,
     expiresAt: share.expires_at,
     error: failed ? message.error : null,
+    // So the counter can be told the one thing that would have got it
+    // through, rather than only that it did not.
+    windowClosed: Boolean(windowClosed),
+    templateReady: templateReady(),
   };
 }
 
@@ -321,5 +394,6 @@ function history(kind, refId) {
 }
 
 module.exports = {
-  build, sendToWhatsApp, linkOnly, fetch, expired, history, linkFor, dial, prune, LINK_DAYS,
+  build, sendToWhatsApp, linkOnly, fetch, expired, history, linkFor, dial, prune,
+  templateParams, templateReady, LINK_DAYS,
 };

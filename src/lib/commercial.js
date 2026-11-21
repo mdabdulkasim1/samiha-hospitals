@@ -175,7 +175,33 @@ const COST_BOOK = {
   // Reagents are not inventoried, so purchases are the only figure there is.
   // Reported as a direct cost of the laboratory with the caveat attached.
   'Lab reagents & kits': { line: 'medicinesConsumed', nature: 'direct', department: 'laboratory', fixed: false, estimated: true },
+  // Used on patients here, so a direct cost of the department that used it.
+  // Like reagents, it is counted from the purchase rather than from what was
+  // consumed, because neither is inventoried — hence `estimated`.
+  'Treatment consumables': { line: 'medicinesConsumed', nature: 'direct', department: 'procedures', fixed: false, estimated: true },
+  'Radiology & ECG supplies': { line: 'medicinesConsumed', nature: 'direct', department: 'imaging', fixed: false, estimated: true },
+  'Home collection costs': { line: 'medicinesConsumed', nature: 'direct', department: 'laboratory', fixed: false, estimated: true },
   'Equipment purchase': { line: null, nature: 'capital', fixed: false },
+  // Building the clinic, not running it. Out of the operating subtotal and
+  // into the capital figure, where the owner reads it as an investment.
+  'Building & fit-out': { line: null, nature: 'capital', fixed: false },
+  'Furniture & IT hardware': { line: null, nature: 'capital', fixed: false },
+  'Pre-opening & inauguration': { line: null, nature: 'capital', fixed: false },
+  'Waste disposal': { line: 'maintenanceAdmin', nature: 'overhead', fixed: true },
+  'Ambulance & transport': { line: 'maintenanceAdmin', nature: 'overhead', fixed: false },
+  'Software & subscriptions': { line: 'maintenanceAdmin', nature: 'overhead', fixed: true },
+  // Bank fees are a cost of being open; loan interest is the price of the
+  // money and belongs below the line. They were one heading, and the
+  // separate one keeps a card terminal rental out of the interest figure.
+  'Bank & payment charges': { line: 'maintenanceAdmin', nature: 'overhead', fixed: true },
+  /*
+   * A deposit and an advance are money out against something the clinic
+   * still owns or is still owed, so neither is a cost. Grouped with capital
+   * here because that is the figure on the board for "money that left and
+   * did not become an expense"; the expense book keeps them on their own
+   * schedules, where the difference between the two matters.
+   */
+  'Deposit or advance paid': { line: null, nature: 'capital', fixed: false },
   'Equipment maintenance': { line: 'maintenanceAdmin', nature: 'overhead', fixed: true },
   'Housekeeping & security': { line: 'maintenanceAdmin', nature: 'overhead', fixed: true },
   'Printing & stationery': { line: 'maintenanceAdmin', nature: 'overhead', fixed: false },

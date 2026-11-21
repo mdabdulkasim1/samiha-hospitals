@@ -13,8 +13,10 @@
    * sorts by that date, the overdue ones sit at the top in red, and the
    * summary counts them whether anybody opens this screen or not.
    */
-  const KEEP = ['lab', 'pharmacy', 'ward', 'nurse'];
+  const KEEP = ['store', 'lab', 'pharmacy', 'ward', 'nurse'];
   const canKeep = () => APP.can(KEEP);
+  /** Minting a code and printing its label is the store keeper's work. */
+  const canCode = () => APP.can(['store', 'ward', 'nurse']);
 
   const STATE = {
     expired: { label: 'Expired', kind: 'danger' },
@@ -61,6 +63,12 @@
           ${canKeep() ? '<button class="btn sm" id="a-add" style="margin-left:auto">' +
     '+ Add a machine or tool</button>' : ''}
         </div>
+        <div class="card-head" style="border-top:1px solid var(--line-2)">
+          <input type="search" id="a-scan" placeholder="Scan a label, or type an asset code…"
+            style="max-width:300px">
+          ${canCode() ? '<button class="btn ghost sm" id="a-sheet">Print labels</button>'
+    + '<button class="btn ghost sm" id="a-mint-all">Create the missing codes</button>' : ''}
+        </div>
           <div class="card-body tight" id="a-list">${UI.loading()}</div></div>`;
 
       const add = el.querySelector('#a-add');
@@ -83,6 +91,23 @@
           e.stopPropagation();
           openEvent(data.rows.find((r) => String(r.id) === b.dataset.cal), 'calibration', load);
         }));
+        host.querySelectorAll('[data-label]').forEach((b) => b.addEventListener('click', (e) => {
+          e.stopPropagation();
+          AssetLabel.print(data.rows.find((r) => String(r.id) === b.dataset.label));
+        }));
+        host.querySelectorAll('[data-mint]').forEach((b) => b.addEventListener('click', (e) => {
+          e.stopPropagation();
+          mintCode(data.rows.find((r) => String(r.id) === b.dataset.mint), load);
+        }));
+        // What the current filter would print, so "label the whole store
+        // room" and "label the four things I just entered" are one button.
+        const sheet = el.querySelector('#a-sheet');
+        if (sheet) {
+          const coded = data.rows.filter((r) => r.asset_code);
+          sheet.disabled = !coded.length;
+          sheet.textContent = `Print ${coded.length} label(s)`;
+          sheet.onclick = () => AssetLabel.print(coded);
+        }
         // Clicking an alert tile filters the list to what it counted.
         el.querySelectorAll('[data-filter]').forEach((t) => t.addEventListener('click', () => {
           el.querySelector('#a-due').value = t.dataset.filter;
@@ -92,6 +117,25 @@
 
       ['#a-cat', '#a-due', '#a-status'].forEach((s) =>
         el.querySelector(s).addEventListener('change', load));
+
+      /*
+       * A scanner is a keyboard that types very fast and presses Enter, so
+       * the box needs nothing special: read the code, open the asset. This
+       * is the one thing the labels exist for.
+       */
+      el.querySelector('#a-scan').addEventListener('keydown', async (e) => {
+        if (e.key !== 'Enter') return;
+        const code = e.target.value.trim();
+        if (!code) return;
+        try {
+          const found = await API.get(`/api/assets/scan/${encodeURIComponent(code)}`);
+          e.target.value = '';
+          APP.navigate('assets', { id: found.id });
+        } catch (err) { UI.err(err.message); e.target.select(); }
+      });
+
+      const mintAll = el.querySelector('#a-mint-all');
+      if (mintAll) mintAll.addEventListener('click', () => mintMissing(load));
       el.querySelector('#a-q').addEventListener('keydown', (e) => { if (e.key === 'Enter') load(); });
       await load();
     },
@@ -130,6 +174,15 @@
     { label: 'Asset', render: (a) => `<b>${UI.esc(a.name)}</b>` +
       `<div class="muted small"><code>${UI.esc(a.asset_no)}</code>` +
       `${a.make || a.model ? ` · ${UI.esc([a.make, a.model].filter(Boolean).join(' '))}` : ''}</div>` },
+    /*
+     * The code on the sticker, which is the only identifier that exists
+     * outside this screen. An asset without one reads as what it is — not
+     * labelled yet — with the button that fixes it right there, because
+     * the person who notices is the person holding the sticker roll.
+     */
+    { label: 'Asset code', render: (a) => (a.asset_code
+      ? `<code class="a-code">${UI.esc(a.asset_code)}</code>`
+      : '<span class="muted small">not labelled yet</span>') },
     { label: 'Category', render: (a) => UI.esc(a.category || '—') },
     { label: 'Where', render: (a) => UI.esc(a.location || a.department_name || '—') +
       (a.serial_no ? `<div class="muted small">SN ${UI.esc(a.serial_no)}</div>` : '') },
@@ -137,6 +190,9 @@
     { label: 'Status', render: (a) => UI.badge(UI.titleise(a.status),
       a.status === 'in_use' ? 'ok' : a.status === 'under_repair' ? 'warn' : '') },
     { label: 'Calibration', render: dueCell },
+    ...(canCode() ? [{ label: '', render: (a) => (a.asset_code
+      ? `<button class="btn ghost sm" data-label="${a.id}">Print label</button>`
+      : `<button class="btn sm" data-mint="${a.id}">Create code</button>`) }] : []),
     ...(canKeep() ? [{ label: '', render: (a) => a.needs_calibration
       ? `<button class="btn ghost sm" data-cal="${a.id}">Record calibration</button>` : '' }] : []),
   ];
@@ -149,6 +205,10 @@
     APP.setSubtitle(`${a.asset_no} · ${a.name}`);
     APP.actions([
       { id: 'back', label: '← All assets', onClick: () => APP.navigate('assets') },
+      ...(canCode() ? [a.asset_code
+        ? { id: 'label', label: 'Print the label', kind: '', onClick: () => AssetLabel.print(a) }
+        : { id: 'mint', label: 'Create the asset code', kind: '', onClick: () => mintCode(a, () => APP.reload()) },
+      ] : []),
       ...(canKeep() ? [
         { id: 'edit', label: 'Edit details', onClick: () => openAsset(a, () => APP.reload()) },
         { id: 'cal', label: 'Record calibration', kind: '', onClick: () => openEvent(a, 'calibration', () => APP.reload()) },
@@ -168,13 +228,24 @@
         This needs calibrating${a.calibration_months ? ` every ${UI.esc(a.calibration_months)} months` : ''},
         and no date has been entered yet. Record the last calibration and the due date follows.</div>` : ''}
 
+      ${a.asset_code ? `<div class="card mb"><div class="card-head"><h3>The label on it</h3>
+        <span class="muted small">50 × 25 mm · scan it to find this page</span>
+        ${canCode() ? '<button class="btn sm" id="a-print" style="margin-left:auto">Print the label</button>' : ''}
+        </div>
+        <div class="card-body" id="a-label"></div></div>`
+    : (canCode() ? `<div class="alert warn">This asset has no code yet, so there is nothing to
+        stick on it. <b>Create the asset code</b> above mints one and prints the label.</div>` : '')}
+
       <div class="grid c2">
         <div class="card"><div class="card-head"><h3>The equipment</h3></div>
           <div class="card-body"><dl class="kv">
+            ${row('Asset code', a.asset_code
+    ? `<code class="a-code">${UI.esc(a.asset_code)}</code>`
+    : '<span class="muted">not labelled yet</span>')}
             ${row('Asset number', `<code>${UI.esc(a.asset_no)}</code>`)}
             ${row('Name', UI.esc(a.name))}
             ${row('Category', UI.esc(a.category || ''))}
-            ${row('Make &amp; model', UI.esc([a.make, a.model].filter(Boolean).join(' ')))}
+            ${row('Make & model', UI.esc([a.make, a.model].filter(Boolean).join(' ')))}
             ${row('Serial number', a.serial_no ? UI.esc(a.serial_no) : '')}
             ${row('Quantity', UI.num(a.quantity))}
             ${row('Location', UI.esc(a.location || a.department_name || ''))}
@@ -184,6 +255,7 @@
 
         <div class="card"><div class="card-head"><h3>Where it came from</h3></div>
           <div class="card-body"><dl class="kv">
+            ${row('Branch', UI.esc(a.branch_name || ''))}
             ${row('Supplier', UI.esc(a.supplier || ''))}
             ${row('Purchase order', a.po_no ? `<code>${UI.esc(a.po_no)}</code>` : '')}
             ${row('Invoice', a.invoice_no ? UI.esc(a.invoice_no) : '')}
@@ -215,6 +287,143 @@
           { label: 'Reference', render: (e) => e.reference ? `<code>${UI.esc(e.reference)}</code>` : '—' },
           { label: 'Next due', render: (e) => e.next_due ? UI.esc(UI.date(e.next_due)) : '—' },
         ], a.events, { emptyText: 'Nothing recorded against this asset yet.' })}</div></div>`;
+
+    paintLabel(el, a);
+  }
+
+  /** Paint the sticker preview and bind its print button, after the page. */
+  function paintLabel(el, a) {
+    const host = el.querySelector('#a-label');
+    if (host) host.innerHTML = AssetLabel.preview(a);
+    const btn = el.querySelector('#a-print');
+    if (btn) btn.addEventListener('click', () => AssetLabel.print(a));
+  }
+
+  // ------------------------------------------------------- the code and label
+  /**
+   * Mint the code for one asset, and show it before it is committed.
+   *
+   * The preview matters more than it looks: the code carries the month it
+   * was bought and the branch that owns it, so a wrong purchase date or a
+   * wrong branch produces a sticker that will be on that machine for ten
+   * years. Showing the finished code with the item code it will use gives
+   * somebody the one chance to say "that is not a wheelchair".
+   */
+  async function mintCode(asset, onDone) {
+    if (!asset) return;
+    const branches = meta.branches || [];
+    let suggestion = { code: '', item: asset.name, known: false };
+    try {
+      suggestion = await API.get('/api/assets/item-codes/suggest'
+        + API.qs({ name: asset.name }));
+    } catch { /* fall back to whatever the server decides on save */ }
+
+    const month = (asset.purchase_date || '').match(/^(\d{4})-(\d{2})/);
+    const stamp = month ? `${month[2]}${month[1].slice(2)}` : '????';
+    const branch = branches.find((b) => b.id === asset.branch_id) || branches[0];
+
+    UI.modal({
+      title: `Asset code — ${asset.name}`,
+      size: '',
+      body: `
+        ${asset.purchase_date ? '' : `<div class="alert warn">This asset has no purchase date.
+          The code carries the month it was bought, so add the date first.</div>`}
+        <form id="ac-form">
+          <div class="grid c2">
+            ${UI.field({ name: 'itemCode', label: 'Item code', value: suggestion.code,
+              hint: suggestion.known
+                ? `Already used for ${suggestion.item} — keep it, so every one matches.`
+                : `Suggested from "${suggestion.item}". Change it if the clinic says otherwise.` })}
+            ${UI.field({ name: 'branchId', label: 'Branch',
+              value: branch ? branch.id : '',
+              options: branches.map((b) => ({ value: b.id, label: `${b.code} · ${b.name}` })) })}
+          </div>
+        </form>
+        <div class="alert ok" id="ac-preview"></div>
+        <div class="muted small">Samiha Healthcare · item · month bought · branch · serial.
+          The serial counts within that item at that branch, so this is the
+          <i>n</i>th one here.</div>
+        <div id="ac-out"></div>`,
+      footer: `<button class="btn ghost" data-act="__close">Cancel</button>
+               <button class="btn" data-act="mint">Create the code</button>`,
+      onMount(modal) {
+        const draw = () => {
+          const v = UI.formValues(modal.querySelector('#ac-form'));
+          const b = branches.find((x) => String(x.id) === String(v.branchId));
+          modal.querySelector('#ac-preview').innerHTML =
+            `<b class="a-code">${UI.esc(meta.codePrefix || 'SHC')}-${UI.esc((v.itemCode || '?').toUpperCase())}`
+            + `-${UI.esc(stamp)}-${UI.esc(b ? b.code : '?')}-00n</b>`;
+        };
+        modal.querySelectorAll('#ac-form input, #ac-form select')
+          .forEach((i) => i.addEventListener('input', draw));
+        draw();
+      },
+      async onAction(act, modal) {
+        if (act !== 'mint') return;
+        const v = UI.formValues(modal.querySelector('#ac-form'));
+        try {
+          const out = await API.post(`/api/assets/${asset.id}/code`, {
+            itemCode: v.itemCode, branchId: v.branchId,
+          });
+          UI.closeModal();
+          UI.ok(`${asset.name} is ${out.code}.`);
+          /*
+           * Straight to the printer. The reason somebody pressed this
+           * button is that they are standing at the machine with a sticker
+           * roll, and a code with no label on the thing is only half of it.
+           */
+          AssetLabel.print(out.asset);
+          if (onDone) onDone();
+        } catch (err) {
+          modal.querySelector('#ac-out').innerHTML = `<div class="alert danger mt">${UI.esc(err.message)}</div>`;
+          return 'keep';
+        }
+      },
+    });
+  }
+
+  /**
+   * Code everything that has none.
+   *
+   * The first run over a store room that already has things in it. What
+   * cannot be coded is listed rather than guessed at — almost always a
+   * missing purchase date, which the code cannot be made up for.
+   */
+  function mintMissing(onDone) {
+    const branches = meta.branches || [];
+    UI.modal({
+      title: 'Create the missing asset codes',
+      size: '',
+      body: `<div class="alert info">Every asset on the register without a code gets one, using
+          the month it was bought and the branch below. Anything already coded is left alone —
+          a code, once printed on a sticker, never changes.</div>
+        <form id="am-form">
+          ${UI.field({ name: 'branchId', label: 'Branch',
+            value: (branches.find((b) => b.is_default) || branches[0] || {}).id || '',
+            options: branches.map((b) => ({ value: b.id, label: `${b.code} · ${b.name}` })) })}
+        </form>
+        <div id="am-out"></div>`,
+      footer: `<button class="btn ghost" data-act="__close">Cancel</button>
+               <button class="btn" data-act="go">Create the codes</button>`,
+      async onAction(act, modal) {
+        if (act !== 'go') return;
+        const v = UI.formValues(modal.querySelector('#am-form'));
+        const out = await API.post('/api/assets/codes/mint-missing', { branchId: v.branchId });
+        UI.ok(`${out.minted.length} code(s) created.`);
+        if (out.skipped.length) {
+          modal.querySelector('#am-out').innerHTML = `<div class="alert warn mt">
+            <b>${UI.num(out.skipped.length)} could not be coded.</b>
+            <ul class="small">${out.skipped.slice(0, 10).map((x) =>
+            `<li>${UI.esc(x.name)} — ${UI.esc(x.reason)}</li>`).join('')}</ul>
+            ${out.skipped.length > 10 ? `<div class="small">…and ${UI.num(out.skipped.length - 10)} more.</div>` : ''}
+          </div>`;
+          if (onDone) onDone();
+          return 'keep';
+        }
+        UI.closeModal();
+        if (onDone) onDone();
+      },
+    });
   }
 
   // --------------------------------------------------------------- the forms
@@ -254,13 +463,17 @@
           </div>
           <div class="grid c3">
             ${UI.field({ name: 'invoiceNo', label: 'Invoice', value: a.invoice_no || '' })}
-            ${UI.field({ name: 'purchaseDate', label: 'Purchased', type: 'date', value: a.purchase_date || '' })}
+            ${UI.field({ name: 'purchaseDate', label: 'Purchased', type: 'date', value: a.purchase_date || '',
+              hint: 'The asset code carries this month.' })}
             ${UI.field({ name: 'unitCost', label: 'Rate (₹)', type: 'number', step: '0.01',
               value: a.unit_cost === null || a.unit_cost === undefined ? '' : a.unit_cost })}
           </div>
-          <div class="grid c2">
+          <div class="grid c3">
             ${UI.field({ name: 'warrantyUntil', label: 'Warranty until', type: 'date', value: a.warranty_until || '' })}
             ${UI.field({ name: 'amcUntil', label: 'AMC until', type: 'date', value: a.amc_until || '' })}
+            ${UI.field({ name: 'branchId', label: 'Branch', value: a.branch_id || '',
+              options: (meta.branches || []).map((b) => ({ value: b.id, label: `${b.code} · ${b.name}` })),
+              hint: 'Whose asset it is. The code carries it.' })}
           </div>
         </fieldset>
 

@@ -40,15 +40,19 @@ function isOnLeave(doctorId, dateStr) {
  * weekly pattern. With none, the weekly `doctor_schedules` rota applies.
  */
 function sessionsFor(doctorId, dateStr) {
+  // `op_room_id` comes back with the window because the queue sends the
+  // patient to the door these particular hours name — the weekly rota has
+  // no room of its own, so it answers null and the queue falls back to the
+  // doctor's usual room and then to wherever the specialty sits.
   const fixed = db.prepare(
-    `SELECT id, start_time, end_time, slot_minutes, max_tokens, note, 'fixed' AS origin
+    `SELECT id, start_time, end_time, slot_minutes, max_tokens, note, op_room_id, 'fixed' AS origin
        FROM doctor_availability WHERE doctor_id = ? AND avail_date = ? ORDER BY start_time`
   ).all(doctorId, dateStr);
   if (fixed.length) return fixed;
 
   const weekday = parseDateKey(dateStr).getDay();
   return db.prepare(
-    `SELECT id, start_time, end_time, slot_minutes, max_tokens, NULL AS note, 'weekly' AS origin
+    `SELECT id, start_time, end_time, slot_minutes, max_tokens, note, op_room_id, 'weekly' AS origin
        FROM doctor_schedules WHERE doctor_id = ? AND weekday = ? AND active = 1 ORDER BY start_time`
   ).all(doctorId, weekday);
 }

@@ -3,7 +3,7 @@ const express = require('express');
 const crypto = require('crypto');
 const { db } = require('../db');
 const { wrap, notFound, conflict, badRequest, forbidden } = require('../lib/http');
-const { requireRole, seesPrices, hasFullAccess } = require('../lib/auth');
+const { requireRole, requireOwner, seesPrices, hasFullAccess } = require('../lib/auth');
 const { required, str, num, int, bool } = require('../lib/validate');
 const audit = require('../lib/audit');
 const { generate, doctorCode } = require('../lib/ids');
@@ -52,8 +52,10 @@ router.get('/departments', wrap((req, res) => {
   res.json(db.prepare(
     `SELECT d.*,
             (SELECT COUNT(*) FROM users u
-              WHERE u.department_id = d.id AND u.role = 'doctor' AND u.active = 1) AS doctor_count
+              WHERE u.department_id = d.id AND u.role = 'doctor' AND u.active = 1) AS doctor_count,
+            q.code AS queue_category_code, q.name AS queue_category_name
        FROM departments d
+       LEFT JOIN queue_categories q ON q.id = d.queue_category_id
       WHERE d.active = 1 AND (? IS NULL OR d.kind = ?)
       ORDER BY d.sort_order, d.name`
   ).all(kind, kind));
@@ -75,14 +77,30 @@ router.get('/staff', wrap((req, res) => {
     `SELECT u.id, u.staff_code, u.name, u.email, u.phone, u.role, u.active, u.department_id,
             d.name AS department_name, dp.doctor_code, dp.qualification, dp.specialization,
             dp.consult_fee, dp.follow_up_fee, dp.slot_minutes, dp.room_no,
-            u.password_set_at, u.last_login_at, setter.name AS password_set_by_name
+            u.password_set_at, u.last_login_at, setter.name AS password_set_by_name,
+            u.erased_at,
+            -- Which consulting room they sit in, so the queue can send
+            -- their patients to the right door without being told twice.
+            u.op_room_id, r.name AS op_room_name, r.floor AS op_room_floor,
+            -- Which branch they are posted to, and which one their sign-in
+            -- lands in. Shown on the staff list because "who is at the new
+            -- place on Tuesday" is a staffing question, not a settings one.
+            u.branch_id,
+            (SELECT group_concat(ub.branch_id) FROM user_branches ub
+              WHERE ub.user_id = u.id) AS branch_ids_csv
        FROM users u
        LEFT JOIN users setter ON setter.id = u.password_set_by
        LEFT JOIN departments d ON d.id = u.department_id
+       LEFT JOIN op_rooms r ON r.id = u.op_room_id
        LEFT JOIN doctor_profiles dp ON dp.user_id = u.id
       WHERE (? IS NULL OR u.role = ?)
       ORDER BY u.role, u.name`
   ).all(role, role);
+  for (const r of rows) {
+    r.branch_ids = String(r.branch_ids_csv || '').split(',').filter(Boolean).map(Number);
+    delete r.branch_ids_csv;
+    if (!r.branch_ids.length && r.branch_id) r.branch_ids = [r.branch_id];
+  }
   // A consultation fee is a rate like any other on the tariff.
   if (!seesPrices(req.user)) for (const r of rows) { r.consult_fee = null; r.follow_up_fee = null; }
   res.json(rows);
@@ -248,8 +266,10 @@ router.get('/doctors/:id/availability', wrap((req, res) => {
   const from = str(req.query.from) || scheduling.dateKey(new Date());
   const to = str(req.query.to) || scheduling.dateKey(new Date(Date.now() + 60 * 86400000));
   const rows = db.prepare(
-    `SELECT a.*, u.name AS set_by FROM doctor_availability a
+    `SELECT a.*, u.name AS set_by, r.name AS room_name, r.floor AS room_floor
+       FROM doctor_availability a
        LEFT JOIN users u ON u.id = a.created_by
+       LEFT JOIN op_rooms r ON r.id = a.op_room_id
       WHERE a.doctor_id = ? AND a.avail_date BETWEEN ? AND ?
       ORDER BY a.avail_date, a.start_time`
   ).all(doctorId, from, to);
@@ -301,6 +321,15 @@ router.post('/doctors/:id/availability', requireRole('admin', 'reception'), wrap
   const slotMinutes = int(req.body.slotMinutes, 15) || 15;
   const maxTokens = int(req.body.maxTokens, 0);
   const note = str(req.body.note);
+  /*
+   * The room for these hours. Optional: without it the queue sends patients
+   * to the doctor's usual room, and failing that to wherever the specialty
+   * sits. With it, the token printed at the desk names this door.
+   */
+  const roomId = int(req.body.roomId) || null;
+  if (roomId && !db.prepare('SELECT 1 FROM op_rooms WHERE id = ? AND active = 1').get(roomId)) {
+    throw badRequest('That consulting room is not in use.');
+  }
 
   // Work out which dates this applies to.
   let dates = [];
@@ -336,14 +365,16 @@ router.post('/doctors/:id/availability', requireRole('admin', 'reception'), wrap
 
       const info = db.prepare(
         `INSERT INTO doctor_availability
-           (doctor_id, avail_date, start_time, end_time, slot_minutes, max_tokens, note, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-      ).run(doctorId, date, start, end, slotMinutes, maxTokens, note, req.user.id);
+           (doctor_id, avail_date, start_time, end_time, slot_minutes, max_tokens, note,
+            op_room_id, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(doctorId, date, start, end, slotMinutes, maxTokens, note, roomId, req.user.id);
       added.push({ id: info.lastInsertRowid, date });
     }
   })();
 
-  audit.log(req, 'set_availability', 'doctor', doctorId, { added: added.length, start, end });
+  audit.log(req, 'set_availability', 'doctor', doctorId,
+    { added: added.length, start, end, roomId });
   res.status(201).json({ added: added.length, skipped, dates: added });
 }));
 
@@ -686,6 +717,61 @@ router.delete('/staff/:id', adminOnly, wrap((req, res) => {
   audit.log(req, 'delete', 'user', id, { staffCode: user.staff_code, name: user.name, role: user.role });
   res.json({ ok: true, id, name: user.name, staffCode: user.staff_code });
 }));
+
+/*
+ * ------------------------------------- removing a person from the records
+ *
+ * Deleting the row is refused above, and for a good reason: a consultation,
+ * a prescription and a bill all point at the account, and several of those
+ * references cannot be empty, so deleting the person means deleting the
+ * patient's record of being treated.
+ *
+ * This is the other answer. Everything that says who the person was is
+ * erased — name, email, telephone, signature, registration number, their
+ * way in — and every record they made stays exactly where it is, under the
+ * staff code it was always filed against.
+ *
+ * The owner alone. An administrator can already create and disable
+ * accounts; taking a person's name off the audit trail of their own work is
+ * a different act, and the one thing an administrator must not be able to
+ * do quietly to their own tracks.
+ */
+const erasure = require('../services/staffErasure');
+
+/** What would be erased, and what would survive it. Shown before the owner commits. */
+router.get('/staff/:id/erasure', requireOwner, wrap((req, res) => {
+  res.json(erasure.preview(int(req.params.id)));
+}));
+
+router.post('/staff/:id/erase', requireOwner, wrap((req, res) => {
+  const id = int(req.params.id);
+  const before = erasure.preview(id);
+
+  /*
+   * The staff code has to be typed out. Not a flourish: this cannot be
+   * undone, the list it is pressed from is alphabetical, and the row above
+   * the one somebody meant is another human being.
+   */
+  if (str(req.body.confirm) !== before.staffCode) {
+    throw badRequest(`Type ${before.staffCode} to confirm removing this person from the records.`);
+  }
+
+  const after = erasure.erase(id, { reason: str(req.body.reason), by: req.user.id });
+
+  /*
+   * The audit line names the code and not the person, which is the whole
+   * point — writing the erased name into the audit detail would put it
+   * straight back into the database it was just taken out of.
+   */
+  audit.log(req, 'erase', 'user', id, {
+    staffCode: before.staffCode, doctorCode: before.doctorCode, role: before.role,
+    reason: str(req.body.reason), recordsKept: before.keeps,
+  });
+  res.json({ ...after, kept: before.keeps });
+}));
+
+/** Who has been taken out of the records, when, and why. */
+router.get('/staff-erased', requireOwner, wrap((_req, res) => res.json(erasure.erased())));
 
 router.post('/services', adminOnly, wrap((req, res) => {
   required(req.body, ['code', 'name', 'price']);

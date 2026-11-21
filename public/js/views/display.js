@@ -1,0 +1,556 @@
+/**
+ * The screen in the waiting room.
+ *
+ * This is the one page in the ERP nobody operates. It goes on a television
+ * on the wall, on one floor, and is then left alone for the day — so it is
+ * built for being read across a room rather than for being clicked.
+ *
+ * The television is split the way the clinic asked for and the way every
+ * polyclinic screen is split: numbers on one side, the clinic's own poster
+ * on the other. Both halves earn their place. The numbers are why a patient
+ * looks up; the poster is why they keep looking when their number is
+ * nowhere near, which is the only reason anybody reads it at all.
+ *
+ * The left half is a table of two columns, token and room, because that is
+ * the question being asked — "where do I go with 08-004" — and a table
+ * answers it in one glance without the eye hunting between panels. Rows
+ * stay in the same place all day: a patient who has learned that
+ * Paediatrics is the third row should not have to find it again every time
+ * somebody is called.
+ *
+ * No patient names. A waiting room is a public place; a number on a wall
+ * tells the right person everything and everybody else nothing. Doctors'
+ * names are on it because those are on the door anyway.
+ */
+(function () {
+  'use strict';
+
+  let timer = null;
+  let slideTimer = null;
+  let lastCalled = '';
+  let slideAt = 0;
+
+  const isManagement = () => Boolean(APP.user && ['owner', 'admin'].includes(APP.user.role));
+  const mayEdit = () => isManagement() || APP.can(['reception']);
+
+  /*
+   * The screens are 32-inch sets, so that is what everything here is sized
+   * for and there is nothing to choose.
+   *
+   * A 32-inch panel is usually 1366 × 768 — fewer pixels across than a
+   * laptop — and it is read from the far side of the same waiting room as
+   * any larger one, so it needs the bigger type rather than the smaller.
+   * Every size on the screen is a multiple of one unit (--u in app.css)
+   * that mixes the viewport's width and height, so a set that turns out to
+   * be 1920 × 1080 simply draws the same layout larger.
+   *
+   * Six lines, because a television cannot be scrolled: a seventh row only
+   * shrinks the numbers that are the whole point.
+   */
+  const TV_ROWS = 6;
+
+  APP.register('display', {
+    title: 'Waiting-room screen',
+    subtitle: 'For the television — pick a floor, then press full screen',
+
+    async render(el, params) {
+      const first = await API.get('/api/queue/display');
+      const floors = first.floors;
+      /*
+       * Every television shows the same board, and that is the default.
+       *
+       * The clinic runs five or six sets and wants one picture on all of
+       * them: a patient sitting downstairs should see that 02-004 has been
+       * called to OP-4 upstairs, because that is where they have to walk.
+       * Which is why every row carries its floor and its doctor rather than
+       * leaning on a heading — the heading is the same on every screen.
+       *
+       * A single floor is still available for a set hung outside one
+       * department's door, but nobody has to choose it.
+       */
+      const floor = params.floor === undefined ? '' : params.floor;
+
+      APP.actions([
+        { id: 'full', label: 'Full screen', onClick: () => goFullScreen(el) },
+        ...(mayEdit() ? [{ id: 'slides', label: 'Posters', onClick: () => openSlides() }] : []),
+        { id: 'refresh', label: 'Refresh', onClick: () => APP.reload() },
+      ]);
+
+      el.innerHTML = `
+        <div class="search-row no-print" id="tv-pick">
+          ${floors.map((f) => `<button class="btn ${f === floor ? '' : 'ghost'}"
+            data-floor="${UI.esc(f)}">${UI.esc(f)}</button>`).join('')}
+          <button class="btn ${floor === '' ? '' : 'ghost'}" data-floor="">All floors</button>
+          <span class="muted small" style="align-self:center">
+            Laid out for the 32-inch screens. Press Full screen on the television —
+            it refreshes itself.</span>
+        </div>
+        <div class="tv" id="tv"></div>`;
+
+      el.querySelectorAll('[data-floor]').forEach((b) => b.addEventListener('click', () =>
+        APP.navigate('display', { floor: b.dataset.floor })));
+
+      const host = el.querySelector('#tv');
+      await paint(host, floor);
+
+      /*
+       * Five seconds. A waiting-room screen is the one place in this ERP
+       * where a stale number has a person standing in front of it, and the
+       * payload is a few dozen numbers.
+       */
+      clearInterval(timer);
+      timer = setInterval(() => {
+        if (APP.route !== 'display') { clearInterval(timer); clearInterval(slideTimer); return; }
+        paint(host, floor).catch(() => {});
+      }, 5000);
+    },
+  });
+
+  // ------------------------------------------------------------- the screen
+  async function paint(host, floor) {
+    const d = await API.get('/api/queue/display' + API.qs({ floor }));
+    /*
+     * As many lines as this television can carry at readable size, which is
+     * fewer on a small one. A television cannot be scrolled, so a row past
+     * the bottom is not a row anybody sees — and squeezing more in shrinks
+     * the type until the numbers stop being readable from the back of the
+     * room, which is the one thing this screen has to do.
+     */
+    const rows = tableRows(d).slice(0, TV_ROWS);
+    const newest = rows.filter((r) => r.at).sort((a, b) =>
+      String(b.at).localeCompare(String(a.at)))[0] || null;
+
+    host.innerHTML = `
+      <div class="tv-head">
+        <div class="tv-logo"><img src="/assets/logo-icon.svg" alt=""></div>
+        <div class="tv-badge">${UI.esc(d.clinic)}</div>
+        <div class="tv-floor">${UI.esc(d.floor || 'All floors')}</div>
+        <div class="tv-clock">${UI.esc(String(d.at).slice(11, 16))}</div>
+      </div>
+
+      <div class="tv-split">
+        <div class="tv-board">
+          <div class="tv-row tv-row-head">
+            <div>Token No</div>
+            <div>Room No</div>
+            <div class="tv-wait-head">Waiting</div>
+          </div>
+          <div class="tv-rows">
+            ${rows.length ? rows.map((r) => row(r, newest)).join('')
+    : '<div class="tv-empty">Please wait — numbers will be called here</div>'}
+          </div>
+        </div>
+        <div class="tv-ad" id="tv-ad"></div>
+      </div>
+
+      <div class="tv-foot">Keep your slip · ${UI.esc(UI.date(d.date))}</div>`;
+
+    paintAd(host, d.slides || []);
+
+    // A soft chime when the newest number changes, if the television has any
+    // sound at all. Silent failure is the right failure here.
+    if (newest && newest.label !== lastCalled) {
+      if (lastCalled) chime();
+      lastCalled = newest.label;
+    }
+  }
+
+  /**
+   * One line per place a patient can be called to, in a fixed order.
+   *
+   * Rooms that have nobody in them stay on the board showing a dash rather
+   * than dropping off it, so the row a patient has learned to look at does
+   * not move under them while they are watching.
+   */
+  function tableRows(d) {
+    const out = d.panels.map((p) => ({
+      label: p.nowCalling ? p.nowCalling.label : null,
+      room: p.room.name,
+      floor: p.room.floor,
+      // Who is behind that door, named on the row. A patient called to OP-4
+      // is going to see a person, and the name is what tells them they are
+      // at the right door when they get there.
+      doctor: p.room.doctors.join(' · '),
+      sub: (p.nowCalling && p.nowCalling.category)
+        ? p.nowCalling.category : p.room.specialties.join(' · '),
+      waiting: p.waiting,
+      upNext: p.upNext,
+      at: p.nowCalling ? p.nowCalling.at : null,
+    }));
+
+    /*
+     * The counters sit under the consulting rooms, because the laboratory
+     * calling 12-014 is a thing the waiting room needs to see and it is not
+     * a room anybody walks to by number.
+     */
+    for (const c of d.counters) {
+      out.push({
+        label: c.nowCalling ? c.nowCalling.label : null,
+        room: c.counter.name,
+        floor: c.counter.location || '',
+        doctor: '',
+        sub: '',
+        waiting: c.waiting,
+        upNext: c.upNext,
+        at: c.nowCalling ? c.nowCalling.at : null,
+      });
+    }
+    return out;
+  }
+
+  function row(r, newest) {
+    const lit = newest && r.label && r.label === newest.label && r.room === newest.room;
+    return `<div class="tv-row ${lit ? 'lit' : ''} ${r.label ? '' : 'idle'}">
+      <div class="tv-token">${r.label ? UI.esc(r.label) : '—'}</div>
+      <div class="tv-where">
+        <div class="tv-room-line">
+          <span class="tv-room-no">${UI.esc(r.room)}</span>
+          ${r.floor ? `<span class="tv-floor-tag">${UI.esc(r.floor)}</span>` : ''}
+        </div>
+        ${r.doctor || r.sub ? `<div class="tv-sub">
+          ${r.doctor ? `<span class="tv-doc">${UI.esc(r.doctor)}</span>` : ''}
+          ${r.doctor && r.sub ? ' · ' : ''}${r.sub ? UI.esc(r.sub) : ''}
+        </div>` : ''}
+        ${r.upNext && r.upNext.length
+    ? `<div class="tv-next">Next: ${r.upNext.map((t) => UI.esc(t.label)).join('  ')}</div>` : ''}
+      </div>
+      <div class="tv-wait">
+        <div class="tv-wait-n">${UI.num(r.waiting || 0)}</div>
+        <div class="tv-wait-l">waiting</div>
+      </div>
+    </div>`;
+  }
+
+  /**
+   * The clinic's poster, on the other half.
+   *
+   * Several rotate on their own timers. With none loaded the half is not
+   * left blank — it carries the clinic's name and the number being called,
+   * in large type, which is better than a grey rectangle on a wall.
+   */
+  /*
+   * The poster, fetched with the session token rather than left to the
+   * browser's cookie.
+   *
+   * An <img src> cannot carry an Authorization header, so it relies on the
+   * session cookie — and a television left signed in for days outlives that
+   * cookie while the page itself carries on working off the token in local
+   * storage. The result is a screen whose numbers are live and whose poster
+   * is a broken-image box. Fetching the bytes ourselves and handing the
+   * <img> a blob removes that whole class of failure.
+   */
+  const posterCache = new Map();
+  async function posterUrl(id) {
+    if (posterCache.has(id)) return posterCache.get(id);
+    const token = API.getToken && API.getToken();
+    const res = await fetch(`/api/queue/slides/${id}/image`,
+      { headers: token ? { Authorization: `Bearer ${token}` } : {}, credentials: 'same-origin' });
+    if (!res.ok) throw new Error(`poster ${res.status}`);
+    const url = URL.createObjectURL(await res.blob());
+    posterCache.set(id, url);
+    return url;
+  }
+
+  function paintAd(host, slides) {
+    const ad = host.querySelector('#tv-ad');
+    if (!ad) return;
+    clearInterval(slideTimer);
+
+    if (!slides.length) {
+      ad.innerHTML = adFallback();
+      return;
+    }
+
+    const show = async (i) => {
+      slideAt = i % slides.length;
+      const s = slides[slideAt];
+      try {
+        const url = await posterUrl(s.id);
+        // The board may have moved on while the bytes were coming.
+        if (slides[slideAt] && slides[slideAt].id === s.id) {
+          ad.innerHTML = `<img src="${url}" alt="${UI.esc(s.title || '')}">`;
+        }
+      } catch {
+        /*
+         * A poster that will not load is not worth a broken-image box on a
+         * wall: the clinic's own name goes there instead, and the next one
+         * in the rotation is tried when its turn comes.
+         */
+        ad.innerHTML = adFallback();
+      }
+      clearInterval(slideTimer);
+      // One image needs no timer at all; several change on their own seconds.
+      if (slides.length > 1) {
+        slideTimer = setInterval(() => show(slideAt + 1), Math.max(3, s.seconds || 12) * 1000);
+      }
+    };
+    show(slideAt);
+  }
+
+  const adFallback = () => `<div class="tv-ad-none">
+    <img class="tv-ad-logo" src="/assets/logo.svg" alt="">
+    <div class="tv-ad-badge">SAMIHA HEALTHCARE</div>
+    <div class="tv-ad-line">Care · Compassion · Commitment</div>
+    ${mayEdit() ? '<div class="tv-ad-hint">Posters → add an image to fill this half</div>' : ''}
+  </div>`;
+
+  function goFullScreen(el) {
+    const target = el.querySelector('#tv') || el;
+    target.classList.add('tv-fs');
+    if (target.requestFullscreen) target.requestFullscreen().catch(() => {});
+  }
+
+  /** Two short tones. No audio file to ship and nothing to fail to load. */
+  function chime() {
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      const ctx = new Ctx();
+      [880, 1175].forEach((hz, i) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.frequency.value = hz;
+        osc.type = 'sine';
+        gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + 0.02 + i * 0.22);
+        gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.20 + i * 0.22);
+        osc.connect(gain).connect(ctx.destination);
+        osc.start(ctx.currentTime + i * 0.22);
+        osc.stop(ctx.currentTime + 0.24 + i * 0.22);
+      });
+      setTimeout(() => ctx.close().catch(() => {}), 1200);
+    } catch { /* a television with no sound is still a television */ }
+  }
+
+  // -------------------------------------------------------------- the posters
+  /**
+   * What plays on the other half.
+   *
+   * Deliberately simple: choose a picture, say how long it stays up, say
+   * which floor it is for. The clinic designs its posters wherever it
+   * designs them and loads the finished image, which is how a Sunday
+   * package gets onto the wall on a Saturday night without anybody
+   * touching this system's code.
+   */
+  async function openSlides() {
+    const floors = (await API.get('/api/queue/display')).floors;
+
+    UI.modal({
+      title: 'Posters on the waiting-room screen',
+      size: 'wide',
+      body: `
+        <div class="alert info">A picture — JPEG or PNG, up to 6 MB — sits on the right half of
+          the television beside the numbers, and several take turns.
+          <b>Design it nearly square, a touch taller than wide — 1200 × 1280 px.</b>
+          On the clinic's 32-inch screens that half measures about 557 × 594 points, so 1200 × 1280
+          prints sharp with room to spare. The whole picture is always shown, never cropped, so
+          any other shape simply sits inside that space with a margin — keep the price and the
+          phone number away from the last few millimetres in case a set overscans.</div>
+
+        <div class="sl-bar">
+          <label class="sl-all"><input type="checkbox" id="sl-check-all"> Select all</label>
+          <span class="muted small" id="sl-count">none selected</span>
+          <span style="flex:1"></span>
+          <button class="btn sm ghost" data-bulk="on">Put on the screen</button>
+          <button class="btn sm ghost" data-bulk="off">Take off</button>
+          <button class="btn sm" data-bulk="when">Set dates &amp; times…</button>
+          <button class="btn sm ghost" data-bulk="remove">Remove</button>
+        </div>
+
+        <div id="sl-list">${UI.loading()}</div>
+
+        <fieldset class="mt"><legend>Add a poster</legend>
+          <form id="sl-form">
+            <input type="file" id="sl-file" accept="image/jpeg,image/png,image/webp,image/gif">
+            <div class="grid c3 mt">
+              ${UI.field({ name: 'title', label: 'What it is', placeholder: 'Opening offer — ₹300 package' })}
+              ${UI.field({ name: 'seconds', label: 'Seconds on screen', type: 'number', value: 12, min: 3, max: 120 })}
+              ${UI.field({ name: 'floor', label: 'Which screen',
+    options: [{ value: '', label: 'Every screen' }].concat(floors.map((f) => ({ value: f, label: f }))) })}
+            </div>
+            <div class="grid c4">
+              ${UI.field({ name: 'fromDate', label: 'Runs from', type: 'date' })}
+              ${UI.field({ name: 'toDate', label: 'Until', type: 'date' })}
+              ${UI.field({ name: 'fromTime', label: 'From (time of day)', type: 'time' })}
+              ${UI.field({ name: 'toTime', label: 'Until (time of day)', type: 'time' })}
+            </div>
+            <div class="muted small">Leave the dates and times empty and it plays whenever it is
+              on the screen.</div>
+          </form>
+          <div id="sl-out"></div>
+        </fieldset>`,
+      footer: `<button class="btn ghost" data-act="__close">Close</button>
+               <button class="btn" data-act="add">Add the poster</button>`,
+      async onMount(modal) { await refreshSlides(modal); },
+      async onAction(act, modal) {
+        if (act !== 'add') return;
+        const file = modal.querySelector('#sl-file').files[0];
+        if (!file) { UI.err('Choose an image first.'); return 'keep'; }
+        const v = UI.formValues(modal.querySelector('#sl-form'));
+        try {
+          await API.post('/api/queue/slides', {
+            data: await readFile(file), title: v.title || file.name, seconds: v.seconds,
+            floor: v.floor, fromDate: v.fromDate, toDate: v.toDate,
+            fromTime: v.fromTime, toTime: v.toTime,
+          });
+          UI.ok('Poster added.');
+          modal.querySelector('#sl-file').value = '';
+          await refreshSlides(modal);
+          return 'keep';
+        } catch (err) {
+          modal.querySelector('#sl-out').innerHTML = `<div class="alert danger mt">${UI.esc(err.message)}</div>`;
+          return 'keep';
+        }
+      },
+    });
+  }
+
+  /**
+   * The library, with what is on the wall this minute marked.
+   *
+   * The clinic keeps far more posters than are up at any moment — last
+   * month's offer, next month's camp — so the list is everything it holds
+   * and the badge says which are playing. Dates alone cannot be read at a
+   * glance to work that out.
+   */
+  async function refreshSlides(modal) {
+    const { rows } = await API.get('/api/queue/slides');
+    modal.querySelector('#sl-list').innerHTML = rows.length
+      ? `<div class="sl-grid">${rows.map(slideCard).join('')}</div>`
+      : UI.empty('No posters yet — the other half of the screen carries the clinic name.', '🖼');
+    wireSlides(modal, rows);
+  }
+
+  const windowText = (s) => {
+    const bits = [];
+    if (s.from_date || s.to_date) {
+      bits.push(`${s.from_date ? UI.date(s.from_date) : 'any day'} – ${s.to_date ? UI.date(s.to_date) : 'no end'}`);
+    }
+    if (s.from_time || s.to_time) {
+      bits.push(`${s.from_time ? UI.to12h(s.from_time) : 'all day'} – ${s.to_time ? UI.to12h(s.to_time) : 'close'}`);
+    }
+    return bits.join(' · ');
+  };
+
+  const slideCard = (s) => `
+    <div class="sl-card ${s.active ? '' : 'off'} ${s.playing ? 'live' : ''}">
+      <label class="sl-pick"><input type="checkbox" data-pick="${s.id}"></label>
+      <img data-poster="${s.id}" alt="">
+      <div class="sl-meta">
+        <b>${UI.esc(s.title || 'Untitled')}</b>
+        <div class="muted small">${UI.esc(s.seconds)}s · ${UI.esc(s.floor || 'every screen')}
+          · ${UI.esc((s.bytes / 1024).toFixed(0))} KB</div>
+        ${windowText(s) ? `<div class="small sl-when">${UI.esc(windowText(s))}</div>` : ''}
+        <div class="mt">${s.playing ? UI.badge('On the screen now', 'ok')
+    : UI.badge(s.active ? 'Waiting for its dates' : 'Off', s.active ? 'warn' : '')}</div>
+      </div>
+    </div>`;
+
+  function wireSlides(modal, rows) {
+    const picked = () => [...modal.querySelectorAll('[data-pick]:checked')].map((i) => Number(i.dataset.pick));
+    const count = () => {
+      const n = picked().length;
+      modal.querySelector('#sl-count').textContent = n ? `${n} selected` : 'none selected';
+    };
+
+    modal.querySelectorAll('[data-poster]').forEach(async (img) => {
+      try { img.src = await posterUrl(Number(img.dataset.poster)); } catch { img.remove(); }
+    });
+    modal.querySelectorAll('[data-pick]').forEach((i) => i.addEventListener('change', count));
+
+    const all = modal.querySelector('#sl-check-all');
+    all.checked = false;
+    all.onchange = () => {
+      modal.querySelectorAll('[data-pick]').forEach((i) => { i.checked = all.checked; });
+      count();
+    };
+    count();
+
+    modal.querySelectorAll('[data-bulk]').forEach((b) => {
+      b.onclick = async () => {
+        const ids = picked();
+        if (!ids.length) return UI.err('Tick the posters first.');
+        const what = b.dataset.bulk;
+        if (what === 'when') return setWindow(modal, ids, rows);
+        if (what === 'remove') {
+          return UI.modal({
+            title: `Remove ${ids.length} poster(s)?`,
+            size: 'narrow',
+            body: '<div class="alert warn">The pictures are deleted. Taking them off the screen '
+              + 'instead keeps them for next time.</div>',
+            footer: `<button class="btn ghost" data-act="__close">Cancel</button>
+                     <button class="btn" data-act="go">Remove them</button>`,
+            async onAction(act) {
+              if (act !== 'go') return;
+              await API.post('/api/queue/slides/bulk', { ids, action: 'remove' });
+              UI.closeModal();
+              UI.ok(`${ids.length} poster(s) removed.`);
+              await refreshSlides(modal);
+            },
+          });
+        }
+        await API.post('/api/queue/slides/bulk', { ids, active: what === 'on' });
+        UI.ok(`${ids.length} poster(s) ${what === 'on' ? 'put on the screen' : 'taken off'}.`);
+        await refreshSlides(modal);
+      };
+    });
+  }
+
+  /**
+   * Dates and hours for everything ticked.
+   *
+   * A campaign is a set of posters with one set of dates, so they are given
+   * it together — and an offer that ends on the 10th comes down on the 11th
+   * without anybody having to remember.
+   */
+  function setWindow(modal, ids, rows) {
+    const first = rows.find((r) => r.id === ids[0]) || {};
+    UI.modal({
+      title: `When should ${ids.length} poster(s) play?`,
+      size: '',
+      body: `<form id="sw-form">
+          <div class="grid c2">
+            ${UI.field({ name: 'fromDate', label: 'Runs from', type: 'date', value: first.from_date || '' })}
+            ${UI.field({ name: 'toDate', label: 'Until (last day)', type: 'date', value: first.to_date || '' })}
+          </div>
+          <div class="grid c2">
+            ${UI.field({ name: 'fromTime', label: 'From (time of day)', type: 'time', value: first.from_time || '' })}
+            ${UI.field({ name: 'toTime', label: 'Until (time of day)', type: 'time', value: first.to_time || '' })}
+          </div>
+          ${UI.field({ name: 'seconds', label: 'Seconds on screen', type: 'number', min: 3, max: 120,
+    value: first.seconds || 12 })}
+        </form>
+        <div class="muted small">Clear a box to lift that limit. Dates with no times play all day;
+          times with no dates play every day.</div>
+        <div id="sw-out"></div>`,
+      footer: `<button class="btn ghost" data-act="__close">Cancel</button>
+               <button class="btn" data-act="save">Save for all ticked</button>`,
+      async onAction(act, sub) {
+        if (act !== 'save') return;
+        const v = UI.formValues(sub.querySelector('#sw-form'));
+        try {
+          await API.post('/api/queue/slides/bulk', {
+            ids,
+            fromDate: v.fromDate || '', toDate: v.toDate || '',
+            fromTime: v.fromTime || '', toTime: v.toTime || '',
+            seconds: v.seconds,
+          });
+          UI.closeModal();
+          UI.ok(`${ids.length} poster(s) updated.`);
+          await refreshSlides(modal);
+        } catch (err) {
+          sub.querySelector('#sw-out').innerHTML = `<div class="alert danger mt">${UI.esc(err.message)}</div>`;
+          return 'keep';
+        }
+      },
+    });
+  }
+
+  /** A file input hands back bytes; the server takes a data URL. */
+  const readFile = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('That file could not be read.'));
+    reader.readAsDataURL(file);
+  });
+}());
