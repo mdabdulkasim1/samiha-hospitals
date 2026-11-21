@@ -4,7 +4,7 @@ set -e
 # ==========================================
 # Configuration
 # ==========================================
-APP_NAME="samiha-hospital"
+APP_NAME="samiha-polyclinic-diagnosis"
 ECOSYSTEM_CONFIG="ecosystem.config.js"
 
 echo "=========================================="

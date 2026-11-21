@@ -1,7 +1,7 @@
 module.exports = {
   apps: [
     {
-      name: 'samiha-hospital',
+      name: 'samiha-polyclinic-diagnosis',
       cwd: __dirname,
       script: 'src/server.js',
       instances: 1,
