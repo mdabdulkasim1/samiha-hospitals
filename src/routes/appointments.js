@@ -26,27 +26,178 @@ router.get('/availability', deskRoles, wrap((req, res) => {
   res.json({ dates: scheduling.nextAvailableDates(doctorId, int(req.query.count, 7) || 7) });
 }));
 
+// ---------------------------------------------------------------- upcoming
+/**
+ * Upcoming appointment list based on the service list.
+ * Supports filtering by service, department, doctor, status, date window, and patient search.
+ */
+router.get('/upcoming', deskRoles, wrap((req, res) => {
+  const serviceId = req.query.serviceId ? int(req.query.serviceId) : null;
+  const departmentId = req.query.departmentId ? int(req.query.departmentId) : null;
+  const doctorId = req.query.doctorId ? int(req.query.doctorId) : null;
+  const status = str(req.query.status);
+  const days = req.query.days ? int(req.query.days) : null;
+  const q = str(req.query.q);
+  const { limit, offset, page } = paging(req.query, 100);
+
+  // Active services for the service list dropdown & categorization
+  const services = db.prepare(
+    'SELECT id, code, name, category, bill_group, price FROM services WHERE active = 1 ORDER BY category, name'
+  ).all();
+
+  // Active clinical departments
+  const departments = db.prepare(
+    'SELECT id, code, name, kind FROM departments WHERE active = 1 ORDER BY name'
+  ).all();
+
+  // Date constraints: from today onwards
+  const today = new Date().toISOString().slice(0, 10);
+  let maxDate = null;
+  if (days && days > 0) {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    maxDate = d.toISOString().slice(0, 10);
+  }
+
+  // Build conditions
+  const conditions = [
+    'date(a.scheduled_at) >= ?'
+  ];
+  const params = [today];
+
+  if (maxDate) {
+    conditions.push('date(a.scheduled_at) <= ?');
+    params.push(maxDate);
+  }
+
+  if (serviceId) {
+    conditions.push('a.service_id = ?');
+    params.push(serviceId);
+  }
+
+  if (departmentId) {
+    conditions.push('a.department_id = ?');
+    params.push(departmentId);
+  }
+
+  if (doctorId) {
+    conditions.push('a.doctor_id = ?');
+    params.push(doctorId);
+  }
+
+  if (status) {
+    conditions.push('a.status = ?');
+    params.push(status);
+  } else if (!req.query.allStatus) {
+    // By default, upcoming appointments exclude cancelled and no-show
+    conditions.push("a.status NOT IN ('cancelled', 'no_show')");
+  }
+
+  if (q) {
+    conditions.push(`(
+      p.first_name LIKE ? OR p.last_name LIKE ? OR p.uhid LIKE ? OR p.phone LIKE ?
+      OR a.guest_name LIKE ? OR a.guest_phone LIKE ? OR a.appt_no LIKE ?
+    )`);
+    const term = `%${q}%`;
+    params.push(term, term, term, term, term, term, term);
+  }
+
+  const whereClause = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+
+  const sql = `
+    SELECT a.*,
+           u.name AS doctor_name,
+           d.name AS department_name,
+           s.name AS service_name,
+           s.code AS service_code,
+           s.price AS service_price,
+           s.category AS service_category,
+           p.uhid,
+           (p.first_name || ' ' || COALESCE(p.last_name, '')) AS patient_name,
+           p.phone AS patient_phone,
+           (SELECT v.id FROM visits v WHERE v.appointment_id = a.id) AS visit_id
+      FROM appointments a
+      LEFT JOIN users u ON u.id = a.doctor_id
+      LEFT JOIN departments d ON d.id = a.department_id
+      LEFT JOIN services s ON s.id = a.service_id
+      LEFT JOIN patients p ON p.id = a.patient_id
+      ${whereClause}
+      ORDER BY a.scheduled_at ASC
+      LIMIT ? OFFSET ?
+  `;
+
+  const rows = db.prepare(sql).all(...params, limit, offset);
+
+  // Compute summary stats across upcoming appointments
+  const allUpcoming = db.prepare(`
+    SELECT a.id, a.scheduled_at, a.status, a.service_id, a.department_id,
+           COALESCE(s.name, CASE WHEN a.visit_kind = 'follow_up' THEN 'Consultation — follow-up' ELSE 'Consultation — new patient' END) AS service_name,
+           COALESCE(d.name, 'General') AS department_name
+      FROM appointments a
+      LEFT JOIN services s ON s.id = a.service_id
+      LEFT JOIN departments d ON d.id = a.department_id
+     WHERE date(a.scheduled_at) >= ?
+       AND a.status NOT IN ('cancelled', 'no_show')
+  `).all(today);
+
+  const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+  const next7Days = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+
+  const summary = {
+    total: allUpcoming.length,
+    today: allUpcoming.filter(r => (r.scheduled_at || '').slice(0, 10) === today).length,
+    tomorrow: allUpcoming.filter(r => (r.scheduled_at || '').slice(0, 10) === tomorrow).length,
+    thisWeek: allUpcoming.filter(r => (r.scheduled_at || '').slice(0, 10) <= next7Days).length,
+    byService: {},
+    byDepartment: {},
+  };
+
+  for (const r of allUpcoming) {
+    summary.byService[r.service_name] = (summary.byService[r.service_name] || 0) + 1;
+    summary.byDepartment[r.department_name] = (summary.byDepartment[r.department_name] || 0) + 1;
+  }
+
+  res.json({
+    rows: rows.map(r => ({
+      ...r,
+      display_name: patientLabel(r),
+      when: scheduling.humanDateTime(r.scheduled_at),
+      service_label: r.service_name || (r.visit_kind === 'follow_up' ? 'Consultation — follow-up' : 'Consultation — new patient'),
+    })),
+    services,
+    departments,
+    summary,
+    today,
+    page,
+    limit,
+  });
+}));
+
 // -------------------------------------------------------------------- list
 router.get('/', deskRoles, wrap((req, res) => {
   const date = str(req.query.date);
   const status = str(req.query.status);
   const doctorId = req.query.doctorId ? int(req.query.doctorId) : null;
+  const serviceId = req.query.serviceId ? int(req.query.serviceId) : null;
   const { limit, offset, page } = paging(req.query, 100);
 
   const rows = db.prepare(
     `SELECT a.*, u.name AS doctor_name, d.name AS department_name,
+            s.name AS service_name, s.code AS service_code, s.price AS service_price,
             p.uhid, (p.first_name || ' ' || COALESCE(p.last_name, '')) AS patient_name,
             p.phone AS patient_phone,
             (SELECT v.id FROM visits v WHERE v.appointment_id = a.id) AS visit_id
        FROM appointments a
        LEFT JOIN users u ON u.id = a.doctor_id
        LEFT JOIN departments d ON d.id = a.department_id
+       LEFT JOIN services s ON s.id = a.service_id
        LEFT JOIN patients p ON p.id = a.patient_id
       WHERE (? IS NULL OR date(a.scheduled_at) = ?)
         AND (? IS NULL OR a.status = ?)
         AND (? IS NULL OR a.doctor_id = ?)
+        AND (? IS NULL OR a.service_id = ?)
       ORDER BY a.scheduled_at LIMIT ? OFFSET ?`
-  ).all(date, date, status, status, doctorId, doctorId, limit, offset);
+  ).all(date, date, status, status, doctorId, doctorId, serviceId, serviceId, limit, offset);
 
   res.json({ rows: rows.map((r) => ({ ...r, display_name: patientLabel(r), when: scheduling.humanDateTime(r.scheduled_at) })), page, limit });
 }));
@@ -152,14 +303,15 @@ router.post('/', deskRoles, wrap((req, res) => {
   const dateStr = scheduledAt.slice(0, 10);
   const apptNo = generate('appointment');
   const token = scheduling.nextToken(doctorId, dateStr);
+  const serviceId = int(req.body.serviceId) || null;
 
   const info = db.prepare(
     `INSERT INTO appointments
-       (appt_no, patient_id, guest_name, guest_phone, doctor_id, department_id, scheduled_at,
+       (appt_no, patient_id, guest_name, guest_phone, doctor_id, department_id, service_id, scheduled_at,
         slot_minutes, token_no, visit_kind, source, status, reason, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'booked', ?, ?)`
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'booked', ?, ?)`
   ).run(apptNo, patientId, str(req.body.guestName), phone(req.body.guestPhone), doctorId,
-        int(req.body.departmentId) || doctor.department_id, scheduledAt,
+        int(req.body.departmentId) || doctor.department_id, serviceId, scheduledAt,
         int(req.body.slotMinutes, doctor.slot_minutes || 15) || 15, token,
         str(req.body.visitKind, 'new'), str(req.body.source, 'reception'),
         str(req.body.reason), req.user.id);
@@ -207,6 +359,9 @@ router.patch('/:id', deskRoles, wrap((req, res) => {
   }
   if (req.body.patientId) {
     db.prepare('UPDATE appointments SET patient_id = ? WHERE id = ?').run(int(req.body.patientId), id);
+  }
+  if (req.body.serviceId !== undefined) {
+    db.prepare('UPDATE appointments SET service_id = ? WHERE id = ?').run(int(req.body.serviceId) || null, id);
   }
   if (req.body.reason !== undefined) {
     db.prepare('UPDATE appointments SET reason = ? WHERE id = ?').run(str(req.body.reason), id);

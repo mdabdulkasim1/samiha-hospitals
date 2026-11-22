@@ -25,6 +25,7 @@
       { id: 'display',     label: 'Waiting-room TV',  icon: '▣', roles: '*' },
       { id: 'enquiries',   label: 'Enquiries',        icon: '☏', roles: ['admin','reception','counselor','cashier'] },
       { id: 'appointments',label: 'Appointments',     icon: '▤', roles: ['admin','reception','nurse','doctor','counselor','cashier'] },
+      { id: 'upcoming-appointments', label: 'Upcoming Appointment List', icon: '◷', roles: ['admin','reception','nurse','doctor','counselor','cashier'] },
       { id: 'patients',    label: 'Patients',         icon: '☺', roles: '*' },
       /*
        * Everybody in the clinic gets asked "who is this and what have we done

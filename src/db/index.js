@@ -75,6 +75,7 @@ function migrate() {
   // Columns added after the first release, for databases created earlier.
   ensureColumn('departments', 'kind', "TEXT NOT NULL DEFAULT 'specialist'");
   ensureColumn('departments', 'sort_order', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn('appointments', 'service_id', 'INTEGER REFERENCES services(id)');
   ensureColumn('patients', 'stage', "TEXT NOT NULL DEFAULT 'registered'");
   ensureColumn('patients', 'enquiry_at', 'TEXT');
   for (const [col, def] of [

@@ -195,6 +195,7 @@ CREATE TABLE IF NOT EXISTS appointments (
   guest_phone    TEXT,
   doctor_id      INTEGER NOT NULL REFERENCES users(id),
   department_id  INTEGER REFERENCES departments(id),
+  service_id     INTEGER REFERENCES services(id),
   scheduled_at   TEXT NOT NULL,
   slot_minutes   INTEGER NOT NULL DEFAULT 15,
   token_no       INTEGER,

@@ -7,13 +7,19 @@
     subtitle: 'Schedule and day list',
 
     async render(el, params) {
-      APP.actions([{ id: 'new', label: '+ Book appointment', kind: '',
-        onClick: () => openBooking(params) }]);
+      APP.actions([
+        { id: 'new', label: '+ Book appointment', kind: '', onClick: () => openBooking(params) },
+        { id: 'upcoming', label: '◷ Upcoming Appointment List', kind: 'teal', onClick: () => APP.navigate('upcoming-appointments') },
+      ]);
 
       const date = params.date || UI.today();
       if (params.enquiryId || params.name) setTimeout(() => openBooking(params), 60);
 
       el.innerHTML = `
+        <div class="tabs mb">
+          <button type="button" class="active" id="tab-dayview">📅 Day Schedule</button>
+          <button type="button" id="tab-upcoming">◷ Upcoming Appointment List</button>
+        </div>
         <div class="search-row">
           <input type="date" id="a-date" value="${UI.esc(date)}">
           <select id="a-status">
@@ -23,6 +29,8 @@
           </select>
         </div>
         <div class="card"><div class="card-body tight" id="alist">${UI.loading()}</div></div>`;
+
+      el.querySelector('#tab-upcoming').addEventListener('click', () => APP.navigate('upcoming-appointments'));
 
       const load = async () => {
         const host = el.querySelector('#alist');
@@ -54,9 +62,10 @@
 
   // ------------------------------------------------------------- booking flow
   async function openBooking(params = {}) {
-    const [doctors, departments] = await Promise.all([
+    const [doctors, departments, services] = await Promise.all([
       API.get('/api/masters/staff?role=doctor'),
       API.get('/api/masters/departments?kind=specialist'),
+      API.get('/api/masters/services').catch(() => []),
     ]);
     // The front desk picks the doctor the patient asked for, so the list is a
     // scrollable panel grouped by speciality rather than a cramped dropdown.
@@ -97,6 +106,15 @@
                 <div class="picker-list" id="bk-doclist"></div>
               </div>
               <div id="bk-doc-chosen"></div>
+              ${UI.field({
+                name: 'serviceId',
+                label: 'Service (from Service List)',
+                value: params.serviceId || '',
+                options: [
+                  { value: '', label: 'Auto (Consultation default)' },
+                  ...(services || []).map((s) => ({ value: s.id, label: `${s.name} (${UI.money(s.price)})` })),
+                ],
+              })}
               <div class="grid c2">
                 ${UI.field({ name: 'visitKind', label: 'Type', value: 'new',
                   options: [{ value: 'new', label: 'New consultation' }, { value: 'follow_up', label: 'Follow-up' },
@@ -133,6 +151,7 @@
           source: values.source,
           reason: values.reason,
         };
+        if (values.serviceId) payload.serviceId = Number(values.serviceId);
         if (state.patient) payload.patientId = state.patient.id;
         else { payload.guestName = values.guestName; payload.guestPhone = values.guestPhone; }
 
@@ -316,4 +335,6 @@
       },
     });
   }
+
+  window.Appointments = { openBooking, openAppointment };
 })();

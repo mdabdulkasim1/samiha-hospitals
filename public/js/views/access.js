@@ -108,6 +108,7 @@
     whatsapp: '*', reports: '*', workflow: '*', assets: '*',
     enquiries: ['admin', 'reception', 'counselor', 'cashier'],
     appointments: ['admin', 'reception', 'nurse', 'doctor', 'counselor', 'cashier'],
+    'upcoming-appointments': ['admin', 'reception', 'nurse', 'doctor', 'counselor', 'cashier'],
     vitals: ['admin', 'nurse', 'doctor'],
     myclinic: ['admin', 'doctor'],
     consult: ['admin', 'doctor'],

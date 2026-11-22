@@ -409,6 +409,8 @@ async function run() {
       ['vitals', 'amended_at', 'DATETIME NULL'],
       ['vitals', 'amended_by', 'INT NULL'],
 
+      ['appointments', 'service_id', 'INT NULL'],
+
       ['services', 'bill_group', 'VARCHAR(100) NULL'],
 
       ['lab_tests', 'bill_group', 'VARCHAR(100) NULL'],
