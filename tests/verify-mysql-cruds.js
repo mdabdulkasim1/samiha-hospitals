@@ -17,6 +17,17 @@ async function main() {
   });
 
   const tokens = {};
+  const toCleanup = {
+    branches: [],
+    tokens: [],
+    rooms: [],
+    categories: [],
+    consumables: [],
+    expenses: [],
+    expenseItems: [],
+    patients: [],
+    visits: [],
+  };
 
   async function api(method, path, body, token) {
     const headers = { 'Content-Type': 'application/json' };
@@ -80,6 +91,7 @@ async function main() {
     }, tokens.admin);
     assert.strictEqual(createBranchRes.status, 201, 'Branch creation should return 201: ' + JSON.stringify(createBranchRes.body));
     const newBranchId = createBranchRes.body.id;
+    toCleanup.branches.push(newBranchId);
     console.log(`  ✔ Branch created via API: id=${newBranchId}, code=${branchCode}`);
 
     // Verify in MySQL
@@ -96,6 +108,11 @@ async function main() {
     const [dbBranchUpdated] = await sqlConn.query('SELECT name FROM branches WHERE id = ?', [newBranchId]);
     assert.strictEqual(dbBranchUpdated[0].name, 'Test Branch Location Updated');
     console.log('  ✔ Branch update verified in MySQL');
+
+    // Clean up test branch immediately so production & dev databases stay clean
+    await sqlConn.query('DELETE FROM branches WHERE id = ?', [newBranchId]);
+    toCleanup.branches = toCleanup.branches.filter(id => id !== newBranchId);
+    console.log('  ✔ Cleaned up test branch');
 
     // Switch active session back to branch 1
     await api('POST', '/api/auth/branch', { branchId: 1 }, tokens.admin);
@@ -120,6 +137,7 @@ async function main() {
     }, tokens.admin);
     assert.strictEqual(createCatRes.status, 201, 'Create queue category should return 201: ' + JSON.stringify(createCatRes.body));
     const catId = createCatRes.body.id;
+    toCleanup.categories.push(catId);
 
     // Create OP Room
     const roomName = 'OP-T' + Date.now().toString().slice(-4);
@@ -131,6 +149,7 @@ async function main() {
     }, tokens.admin);
     assert.strictEqual(createRoomRes.status, 201, 'Create OP room should return 201: ' + JSON.stringify(createRoomRes.body));
     const roomId = createRoomRes.body.id;
+    toCleanup.rooms.push(roomId);
 
     // Allocate category to room
     const allocRes = await api('POST', `/api/queue/categories/${catId}/room`, {
@@ -146,6 +165,7 @@ async function main() {
     }, tokens.admin);
     assert.strictEqual(issueRes.status, 201);
     const tokenId = issueRes.body.id;
+    toCleanup.tokens.push(tokenId);
     console.log(`  ✔ Token issued: id=${tokenId}, label=${issueRes.body.label}`);
 
     // Verify token in MySQL
@@ -210,6 +230,17 @@ async function main() {
     assert.ok(dbDuty.length >= 1);
     console.log('  ✔ Doctor schedule slot stored and verified in MySQL table `doctor_schedules`');
 
+    // Clean up test schedule, queue token, op room category allocation, op room, and queue category
+    await sqlConn.query('DELETE FROM doctor_schedules WHERE doctor_id = 9 AND weekday = 1 AND note = "Routine morning clinic"');
+    await sqlConn.query('DELETE FROM queue_tokens WHERE id = ?', [tokenId]);
+    await sqlConn.query('DELETE FROM op_room_categories WHERE room_id = ? OR category_id = ?', [roomId, catId]);
+    await sqlConn.query('DELETE FROM op_rooms WHERE id = ?', [roomId]);
+    await sqlConn.query('DELETE FROM queue_categories WHERE id = ?', [catId]);
+    toCleanup.tokens = toCleanup.tokens.filter(id => id !== tokenId);
+    toCleanup.rooms = toCleanup.rooms.filter(id => id !== roomId);
+    toCleanup.categories = toCleanup.categories.filter(id => id !== catId);
+    console.log('  ✔ Cleaned up test schedule, queue token, test room and test category');
+
     // -----------------------------------------------------------------
     // 5. Consumables Store CRUD
     // -----------------------------------------------------------------
@@ -224,6 +255,7 @@ async function main() {
     }, tokens.admin);
     assert.strictEqual(createConRes.status, 201, 'Create consumable should return 201: ' + JSON.stringify(createConRes.body));
     const conId = createConRes.body.id;
+    toCleanup.consumables.push(conId);
 
     // Movement: Stock receipt
     const receiptRes = await api('POST', `/api/consumables/${conId}/movements`, {
@@ -254,6 +286,12 @@ async function main() {
     assert.strictEqual(dbConMov.length, 2);
     console.log('  ✔ Consumables CRUD, movements & stock balances (25 in - 5 out = 20) verified in MySQL');
 
+    // Clean up test consumable movements and consumable
+    await sqlConn.query('DELETE FROM consumable_movements WHERE item_id = ?', [conId]);
+    await sqlConn.query('DELETE FROM consumables WHERE id = ?', [conId]);
+    toCleanup.consumables = toCleanup.consumables.filter(id => id !== conId);
+    console.log('  ✔ Cleaned up test consumable movements and consumable');
+
     // -----------------------------------------------------------------
     // 6. Expense Book CRUD
     // -----------------------------------------------------------------
@@ -269,6 +307,7 @@ async function main() {
     }, tokens.admin);
     assert.strictEqual(expItemRes.status, 201);
     const expItemId = expItemRes.body.id;
+    toCleanup.expenseItems.push(expItemId);
 
     // Create expense invoice
     const createExpRes = await api('POST', '/api/expenses', {
@@ -283,6 +322,7 @@ async function main() {
     }, tokens.admin);
     assert.strictEqual(createExpRes.status, 201, 'Create expense invoice should return 201: ' + JSON.stringify(createExpRes.body));
     const expenseId = createExpRes.body.id;
+    toCleanup.expenses.push(expenseId);
     console.log(`  ✔ Expense invoice booked: id=${expenseId}, ref=${createExpRes.body.ref_no}`);
 
     // Pay expense
@@ -302,6 +342,14 @@ async function main() {
     const [dbExpPay] = await sqlConn.query('SELECT * FROM expense_payments WHERE expense_id = ?', [expenseId]);
     assert.strictEqual(dbExpPay.length, 1);
     console.log('  ✔ Expense entry and payment settled and verified in MySQL `expenses` & `expense_payments`');
+
+    // Clean up test expense payment, expense, and expense item
+    await sqlConn.query('DELETE FROM expense_payments WHERE expense_id = ?', [expenseId]);
+    await sqlConn.query('DELETE FROM expenses WHERE id = ?', [expenseId]);
+    await sqlConn.query('DELETE FROM expense_items WHERE id = ?', [expItemId]);
+    toCleanup.expenses = toCleanup.expenses.filter(id => id !== expenseId);
+    toCleanup.expenseItems = toCleanup.expenseItems.filter(id => id !== expItemId);
+    console.log('  ✔ Cleaned up test expense payments, expense invoice, and item');
 
     // -----------------------------------------------------------------
     // 7. Asset Item Codes & Minting CRUD
@@ -345,6 +393,7 @@ async function main() {
     }, tokens.admin);
     assert.strictEqual(createPatRes.status, 201, 'Create patient should return 201: ' + JSON.stringify(createPatRes.body));
     const patientId = createPatRes.body.id;
+    toCleanup.patients.push(patientId);
 
     // Check branch_id in MySQL
     const [dbPat] = await sqlConn.query('SELECT branch_id, guardian_name FROM patients WHERE id = ?', [patientId]);
@@ -361,6 +410,7 @@ async function main() {
     }, tokens.admin);
     assert.strictEqual(createVisitRes.status, 201, 'Arrive visit should return 201: ' + JSON.stringify(createVisitRes.body));
     const visitId = createVisitRes.body.visit?.id || createVisitRes.body.id;
+    toCleanup.visits.push(visitId);
 
     const [dbVisit] = await sqlConn.query('SELECT branch_id FROM visits WHERE id = ?', [visitId]);
     assert.strictEqual(dbVisit[0].branch_id, 1, 'Visit must be stamped with active branch_id 1');
@@ -370,6 +420,13 @@ async function main() {
     const previewRes = await api('GET', `/api/patients/${patientId}/removal`, undefined, tokens.owner);
     assert.strictEqual(previewRes.status, 200);
     assert.strictEqual(previewRes.body.canRemove, false, 'Patient with visits cannot be removed');
+
+    // Clean up test visit and clinical record test patient
+    await sqlConn.query('DELETE FROM visits WHERE id = ?', [visitId]);
+    await sqlConn.query('DELETE FROM patients WHERE id = ?', [patientId]);
+    toCleanup.visits = toCleanup.visits.filter(id => id !== visitId);
+    toCleanup.patients = toCleanup.patients.filter(id => id !== patientId);
+    console.log('  ✔ Cleaned up test visit and clinical guard test patient');
 
     // Create a standalone test patient to verify owner removal
     const testPatPhone = '9' + Math.floor(100000000 + Math.random() * 899999999);
@@ -400,6 +457,43 @@ async function main() {
     console.log('  ALL CRUD OPERATIONS CONFIRMED 100% OPERATIONAL ON MYSQL!');
     console.log('='.repeat(70) + '\n');
   } finally {
+    try {
+      if (toCleanup.visits.length) {
+        await sqlConn.query('DELETE FROM visits WHERE id IN (?)', [toCleanup.visits]);
+      }
+      if (toCleanup.patients.length) {
+        await sqlConn.query('DELETE FROM patients WHERE id IN (?)', [toCleanup.patients]);
+      }
+      if (toCleanup.expenses.length) {
+        await sqlConn.query('DELETE FROM expense_payments WHERE expense_id IN (?)', [toCleanup.expenses]);
+        await sqlConn.query('DELETE FROM expenses WHERE id IN (?)', [toCleanup.expenses]);
+      }
+      if (toCleanup.expenseItems.length) {
+        await sqlConn.query('DELETE FROM expense_items WHERE id IN (?)', [toCleanup.expenseItems]);
+      }
+      if (toCleanup.consumables.length) {
+        await sqlConn.query('DELETE FROM consumable_movements WHERE item_id IN (?)', [toCleanup.consumables]);
+        await sqlConn.query('DELETE FROM consumables WHERE id IN (?)', [toCleanup.consumables]);
+      }
+      if (toCleanup.tokens.length) {
+        await sqlConn.query('DELETE FROM queue_tokens WHERE id IN (?)', [toCleanup.tokens]);
+      }
+      if (toCleanup.rooms.length || toCleanup.categories.length) {
+        await sqlConn.query('DELETE FROM op_room_categories WHERE room_id IN (?) OR category_id IN (?)', [
+          toCleanup.rooms.length ? toCleanup.rooms : [0],
+          toCleanup.categories.length ? toCleanup.categories : [0]
+        ]);
+      }
+      if (toCleanup.rooms.length) {
+        await sqlConn.query('DELETE FROM op_rooms WHERE id IN (?)', [toCleanup.rooms]);
+      }
+      if (toCleanup.categories.length) {
+        await sqlConn.query('DELETE FROM queue_categories WHERE id IN (?)', [toCleanup.categories]);
+      }
+      if (toCleanup.branches.length) {
+        await sqlConn.query('DELETE FROM branches WHERE id IN (?)', [toCleanup.branches]);
+      }
+    } catch (_) {}
     await sqlConn.end();
   }
 }
