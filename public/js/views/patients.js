@@ -942,9 +942,14 @@
         if (act !== 'save') return;
         const form = modal.querySelector('#conv-form');
         if (!form.reportValidity()) return 'keep';
-        const res = await API.post(`/api/patients/${p.id}/register`, collectRegistration(form));
-        UI.ok(res.message);
-        APP.reload();
+        try {
+          const res = await API.post(`/api/patients/${p.id}/register`, collectRegistration(form));
+          UI.ok(res.message);
+          APP.reload();
+        } catch (err) {
+          UI.err(err.message || 'Could not register patient');
+          return 'keep';
+        }
       },
     });
   }

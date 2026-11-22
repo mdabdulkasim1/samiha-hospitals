@@ -120,16 +120,24 @@ runAsWorker(async ({ action, sql, params = [] }) => {
   const p = await getPool();
   const querySql = translateSql(sql);
 
+  // Normalize ISO datetime parameters (e.g. 2026-11-22T08:00:16.461Z) to MySQL format (2026-11-22 08:00:16)
+  const cleanParams = (Array.isArray(params) ? params : []).map((val) => {
+    if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z?$/.test(val)) {
+      return val.slice(0, 19).replace('T', ' ');
+    }
+    return val;
+  });
+
   if (action === 'get') {
-    const [rows] = await p.query(querySql, params);
+    const [rows] = await p.query(querySql, cleanParams);
     return Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
   }
   if (action === 'all') {
-    const [rows] = await p.query(querySql, params);
+    const [rows] = await p.query(querySql, cleanParams);
     return Array.isArray(rows) ? rows : [];
   }
   if (action === 'run') {
-    const [res] = await p.query(querySql, params);
+    const [res] = await p.query(querySql, cleanParams);
     return {
       changes: res ? res.affectedRows : 0,
       lastInsertRowid: res ? res.insertId : 0,

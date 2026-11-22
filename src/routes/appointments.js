@@ -29,7 +29,7 @@ router.get('/availability', deskRoles, wrap((req, res) => {
 // ---------------------------------------------------------------- upcoming
 /**
  * Upcoming appointment list based on the service list.
- * Supports filtering by service, department, doctor, status, date window, and patient search.
+ * Supports filtering by service, department, doctor, status, date window, weekly/monthly diary ranges, and patient search.
  */
 router.get('/upcoming', deskRoles, wrap((req, res) => {
   const serviceId = req.query.serviceId ? int(req.query.serviceId) : null;
@@ -37,8 +37,12 @@ router.get('/upcoming', deskRoles, wrap((req, res) => {
   const doctorId = req.query.doctorId ? int(req.query.doctorId) : null;
   const status = str(req.query.status);
   const days = req.query.days ? int(req.query.days) : null;
+  const fromDate = str(req.query.fromDate);
+  const toDate = str(req.query.toDate);
+  const month = str(req.query.month);
   const q = str(req.query.q);
-  const { limit, offset, page } = paging(req.query, 100);
+  const maxLimit = (req.query.diary === '1' || req.query.view === 'weekly' || req.query.view === 'monthly') ? 1000 : 100;
+  const { limit, offset, page } = paging(req.query, maxLimit);
 
   // Active services for the service list dropdown & categorization
   const services = db.prepare(
@@ -50,24 +54,48 @@ router.get('/upcoming', deskRoles, wrap((req, res) => {
     'SELECT id, code, name, kind FROM departments WHERE active = 1 ORDER BY name'
   ).all();
 
-  // Date constraints: from today onwards
+  // Active consulting doctors
+  const doctors = db.prepare(
+    `SELECT u.id, u.name, d.name AS department_name, dp.specialization, dp.room_no
+       FROM users u
+       LEFT JOIN departments d ON d.id = u.department_id
+       LEFT JOIN doctor_profiles dp ON dp.user_id = u.id
+      WHERE u.role = 'doctor' AND u.active = 1
+      ORDER BY u.name`
+  ).all();
+
+  // Date constraints: from today onwards or specific diary window
   const today = new Date().toISOString().slice(0, 10);
-  let maxDate = null;
-  if (days && days > 0) {
-    const d = new Date();
-    d.setDate(d.getDate() + days);
-    maxDate = d.toISOString().slice(0, 10);
-  }
+  const conditions = [];
+  const params = [];
 
-  // Build conditions
-  const conditions = [
-    'date(a.scheduled_at) >= ?'
-  ];
-  const params = [today];
-
-  if (maxDate) {
+  if (month && /^\d{4}-\d{2}$/.test(month)) {
+    const [y, m] = month.split('-').map(Number);
+    const startOfMonth = `${month}-01`;
+    const lastDay = new Date(y, m, 0).getDate();
+    const endOfMonth = `${month}-${String(lastDay).padStart(2, '0')}`;
+    conditions.push('date(a.scheduled_at) >= ?');
+    params.push(startOfMonth);
     conditions.push('date(a.scheduled_at) <= ?');
-    params.push(maxDate);
+    params.push(endOfMonth);
+  } else if (fromDate && toDate) {
+    conditions.push('date(a.scheduled_at) >= ?');
+    params.push(fromDate);
+    conditions.push('date(a.scheduled_at) <= ?');
+    params.push(toDate);
+  } else if (fromDate) {
+    conditions.push('date(a.scheduled_at) >= ?');
+    params.push(fromDate);
+  } else {
+    // Default: from today onwards
+    conditions.push('date(a.scheduled_at) >= ?');
+    params.push(today);
+    if (days && days > 0) {
+      const d = new Date();
+      d.setDate(d.getDate() + days);
+      conditions.push('date(a.scheduled_at) <= ?');
+      params.push(d.toISOString().slice(0, 10));
+    }
   }
 
   if (serviceId) {
@@ -162,10 +190,12 @@ router.get('/upcoming', deskRoles, wrap((req, res) => {
       ...r,
       display_name: patientLabel(r),
       when: scheduling.humanDateTime(r.scheduled_at),
+      time: r.scheduled_at ? r.scheduled_at.slice(11, 16) : '',
       service_label: r.service_name || (r.visit_kind === 'follow_up' ? 'Consultation — follow-up' : 'Consultation — new patient'),
     })),
     services,
     departments,
+    doctors,
     summary,
     today,
     page,
@@ -406,6 +436,40 @@ router.get('/board', deskRoles, wrap((req, res) => {
       ORDER BY a.scheduled_at`
   ).all(date);
   res.json({ date, rows });
+}));
+
+// ------------------------------------------------------------- get single appointment
+router.get('/:id(\\d+)', deskRoles, wrap((req, res) => {
+  const id = int(req.params.id);
+  const row = db.prepare(`
+    SELECT a.*,
+           u.name AS doctor_name,
+           d.name AS department_name,
+           s.name AS service_name,
+           s.code AS service_code,
+           s.price AS service_price,
+           s.category AS service_category,
+           p.uhid,
+           (p.first_name || ' ' || COALESCE(p.last_name, '')) AS patient_name,
+           p.phone AS patient_phone,
+           (SELECT v.id FROM visits v WHERE v.appointment_id = a.id) AS visit_id
+      FROM appointments a
+      LEFT JOIN users u ON u.id = a.doctor_id
+      LEFT JOIN departments d ON d.id = a.department_id
+      LEFT JOIN services s ON s.id = a.service_id
+      LEFT JOIN patients p ON p.id = a.patient_id
+     WHERE a.id = ?
+  `).get(id);
+  if (!row) throw notFound('Appointment not found');
+
+  const formatted = {
+    ...row,
+    display_name: patientLabel(row),
+    when: scheduling.humanDateTime(row.scheduled_at),
+    time: row.scheduled_at ? row.scheduled_at.slice(11, 16) : '',
+    service_label: row.service_name || (row.visit_kind === 'follow_up' ? 'Consultation — follow-up' : 'Consultation — new patient'),
+  };
+  res.json({ row: formatted, ...formatted });
 }));
 
 module.exports = router;

@@ -57,7 +57,33 @@ async function main() {
     assert.strictEqual(matched.service_name, testService.name);
     console.log(`[✓] Successfully retrieved upcoming appointment filtered by service '${matched.service_name}'`);
 
-    // 4. Test summary statistics calculation
+    // 4. Test single appointment query (GET /api/appointments/:id)
+    const singleRow = db.prepare(`
+      SELECT a.*,
+             u.name AS doctor_name,
+             d.name AS department_name,
+             s.name AS service_name,
+             s.code AS service_code,
+             s.price AS service_price,
+             s.category AS service_category,
+             p.uhid,
+             (p.first_name || ' ' || COALESCE(p.last_name, '')) AS patient_name,
+             p.phone AS patient_phone,
+             (SELECT v.id FROM visits v WHERE v.appointment_id = a.id) AS visit_id
+        FROM appointments a
+        LEFT JOIN users u ON u.id = a.doctor_id
+        LEFT JOIN departments d ON d.id = a.department_id
+        LEFT JOIN services s ON s.id = a.service_id
+        LEFT JOIN patients p ON p.id = a.patient_id
+       WHERE a.id = ?
+    `).get(testApptId);
+
+    assert.ok(singleRow, 'Single appointment must be found by ID');
+    assert.strictEqual(singleRow.appt_no, apptNo);
+    assert.strictEqual(singleRow.service_id, testService.id);
+    console.log(`[✓] Successfully queried single appointment by ID (ref: ${singleRow.appt_no})`);
+
+    // 5. Test summary statistics calculation
     const allUpcoming = db.prepare(`
       SELECT a.id, a.scheduled_at, a.status, a.service_id,
              COALESCE(s.name, 'Consultation') AS service_name

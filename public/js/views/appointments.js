@@ -318,7 +318,8 @@
         ${['booked','confirmed'].includes(a.status) ? `
           <button class="btn ghost" data-act="cancel">Cancel appointment</button>
           <button class="btn ghost" data-act="noshow">Mark no-show</button>
-          <button class="btn teal" data-act="confirm">Confirm</button>` : ''}`,
+          ${a.status === 'booked' ? '<button class="btn ghost" data-act="confirm">Confirm</button>' : ''}
+          ${!a.visit_id ? '<button class="btn teal" data-act="checkin">Check in</button>' : ''}` : ''}`,
       async onAction(act) {
         if (act === 'cancel') {
           const reason = prompt('Reason for cancellation?') || 'Cancelled by clinic';
@@ -330,6 +331,31 @@
         } else if (act === 'confirm') {
           await API.patch(`/api/appointments/${a.id}`, { status: 'confirmed' });
           UI.ok('Appointment confirmed.');
+        } else if (act === 'checkin') {
+          if (!a.patient_id) {
+            UI.err('Unregistered patient — please register them first from Patients.');
+            UI.closeModal();
+            APP.navigate('patients', { name: a.guest_name, phone: a.guest_phone });
+            return;
+          }
+          try {
+            const arriveRes = await API.post('/api/visits/arrive', {
+              patientId: a.patient_id,
+              doctorId: a.doctor_id,
+              departmentId: a.department_id,
+              appointmentId: a.id,
+              reasonForVisit: a.reason || 'Appointment visit',
+            });
+            if (arriveRes && arriveRes.queueToken) {
+              UI.ok(`${a.display_name || 'Patient'} checked in — token #${arriveRes.queueToken.label}.`);
+              try { if (window.TokenSlip) await TokenSlip.printToken(arriveRes.queueToken.id); } catch (e) {}
+            } else {
+              UI.ok(`${a.display_name || 'Patient'} checked in and added to waiting room.`);
+            }
+          } catch (err) {
+            UI.err(err.message || 'Could not check in patient');
+            return;
+          }
         } else return;
         APP.reload();
       },

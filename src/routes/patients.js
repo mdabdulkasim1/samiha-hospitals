@@ -87,7 +87,7 @@ function consentMap(body, userId) {
     consent_treatment: 1,
     consent_privacy: bool(body.consentPrivacy, false) ? 1 : 0,
     consent_contact: bool(body.consentContact, false) ? 1 : 0,
-    consent_signed_at: new Date().toISOString(),
+    consent_signed_at: new Date().toISOString().slice(0, 19).replace('T', ' '),
     consent_signed_by: str(body.consentSignedBy) || str(body.firstName),
     consent_taken_by: userId,
   };
@@ -366,7 +366,7 @@ router.post('/', requireRole('reception'), wrap((req, res) => {
   const uhid = generate('uhid');
   const fields = {
     stage,
-    enquiry_at: stage === 'enquiry' ? new Date().toISOString() : null,
+    enquiry_at: stage === 'enquiry' ? new Date().toISOString().slice(0, 19).replace('T', ' ') : null,
     uhid,
     is_uninsured: bool(req.body.isUninsured, true) ? 1 : 0,
     created_by: req.user.id,
@@ -624,7 +624,7 @@ router.patch('/:id', requireRole('reception', 'nurse', 'doctor', 'counselor'), w
     map.consent_privacy = bool(req.body.consentPrivacy) ? 1 : 0;
     map.consent_contact = bool(req.body.consentContact) ? 1 : 0;
     map.consent_signed_by = str(req.body.consentSignedBy);
-    map.consent_signed_at = new Date().toISOString();
+    map.consent_signed_at = new Date().toISOString().slice(0, 19).replace('T', ' ');
     map.consent_taken_by = req.user.id;
   }
 
