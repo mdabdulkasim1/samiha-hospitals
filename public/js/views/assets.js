@@ -68,6 +68,10 @@
             style="max-width:300px">
           ${canCode() ? '<button class="btn ghost sm" id="a-sheet">Print labels</button>'
     + '<button class="btn ghost sm" id="a-mint-all">Create the missing codes</button>' : ''}
+          <!-- The register on paper, to walk the building with. Open to
+               anybody who can see the list: checking what is actually in the
+               room is not a privileged act, and the sheet carries no prices. -->
+          <button class="btn ghost sm" id="a-print" style="margin-left:auto">Print the register</button>
         </div>
           <div class="card-body tight" id="a-list">${UI.loading()}</div></div>`;
 
@@ -108,6 +112,26 @@
           sheet.textContent = `Print ${coded.length} label(s)`;
           sheet.onclick = () => AssetLabel.print(coded);
         }
+        /*
+         * What the filter is showing is what prints, and the sheet says so
+         * at the top. A print that quietly covered the whole register while
+         * the screen showed one category would be checked against the wrong
+         * room and come out wrong every time.
+         */
+        const printBtn = el.querySelector('#a-print');
+        printBtn.disabled = !data.rows.length;
+        printBtn.textContent = `Print the register (${data.rows.length})`;
+        printBtn.onclick = () => CountSheet.assets(data.rows, {
+          filters: {
+            Filter: el.querySelector('#a-q').value.trim(),
+            Category: el.querySelector('#a-cat').value,
+            Calibration: el.querySelector('#a-due').value
+              ? UI.titleise(el.querySelector('#a-due').value.replace('_', ' ')) : '',
+            Status: el.querySelector('#a-status').value
+              ? UI.titleise(el.querySelector('#a-status').value) : '',
+          },
+        });
+
         // Clicking an alert tile filters the list to what it counted.
         el.querySelectorAll('[data-filter]').forEach((t) => t.addEventListener('click', () => {
           el.querySelector('#a-due').value = t.dataset.filter;

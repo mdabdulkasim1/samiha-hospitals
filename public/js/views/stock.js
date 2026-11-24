@@ -518,6 +518,13 @@
             answer to the same question.
           */''}
         ${isPharmacist() ? '<button class="btn sm" id="sr-xl">⤓ Excel</button>' : ''}
+        ${/*
+            The same register on paper, with a column left blank to write the
+            real count in. The spreadsheet is for the office; this is for
+            standing in front of the shelf, which is where stock is actually
+            checked.
+          */''}
+        <button class="btn ghost sm" id="sr-print">Print the list</button>
         ${isPharmacist() ? '<button class="btn ghost sm" id="sr-expiry">Write off expired</button>' : ''}
       </div>
         <div id="sr-totals"></div>
@@ -558,6 +565,24 @@
     const load = async () => {
       const params = filters();
       const data = await API.get('/api/stock/register' + API.qs(params));
+
+      /*
+       * Prints what the screen is showing, under the same period and
+       * filter, and says so at the top. The rate and the value go on the
+       * paper only if they are on the screen — the server leaves them out
+       * for anybody who may not see prices, and the sheet follows.
+       */
+      const printBtn = body.querySelector('#sr-print');
+      printBtn.disabled = !data.rows.length;
+      printBtn.textContent = `Print the list (${data.rows.length})`;
+      printBtn.onclick = () => CountSheet.medicines(data.rows, {
+        withValue: data.totals.stockValue !== null && data.totals.stockValue !== undefined,
+        totals: data.totals,
+        filters: {
+          Period: `${UI.dateShort(data.from)} – ${UI.dateShort(data.to)}`,
+          Filter: params.q,
+        },
+      });
       body.querySelector('#sr-totals').innerHTML = `
         <div class="grid c5" style="padding:12px 16px 0">
           <div class="stat teal"><div class="label">Medicines</div><div class="value">${UI.num(data.totals.medicines)}</div></div>

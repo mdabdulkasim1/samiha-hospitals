@@ -103,6 +103,8 @@
           <input type="search" id="cs-q" placeholder="Gauze, cannula, bin liner…"
             value="${UI.esc(state.q)}" style="max-width:220px">
           <button class="btn sm" id="cs-add">+ Add an item</button>
+          <!-- The shelf on paper, to walk the store with and write on. -->
+          <button class="btn ghost sm" id="cs-print">Print the list</button>
         </div>
         <div class="card-body tight" id="cs-list"></div></div>`;
 
@@ -153,6 +155,25 @@
         typing = setTimeout(() => { state.q = search.value.trim(); draw(); }, 300);
       });
       body.querySelector('#cs-add').addEventListener('click', () => openNewItem(draw));
+
+      /*
+       * Exactly what is on the screen, under exactly the filters in force,
+       * and the sheet says which at the top. A print that quietly covered
+       * the whole store while the screen showed one cupboard would be
+       * checked against the wrong shelf.
+       */
+      const printBtn = body.querySelector('#cs-print');
+      printBtn.disabled = !data.rows.length;
+      printBtn.textContent = `Print the list (${data.rows.length})`;
+      printBtn.addEventListener('click', () => CountSheet.consumables(data.rows, {
+        filters: {
+          Area: state.area
+            ? (meta.areas.find((a) => a.code === state.area) || {}).label || state.area : '',
+          Showing: state.filter === 'low' ? 'Running low'
+            : state.filter === 'out' ? 'Nothing left' : '',
+          Search: state.q,
+        },
+      }));
 
       const adopt = body.querySelector('#cs-adopt');
       if (adopt) {
