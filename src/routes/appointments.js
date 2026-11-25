@@ -141,9 +141,9 @@ router.get('/upcoming', deskRoles, wrap((req, res) => {
            s.price AS service_price,
            s.category AS service_category,
            p.uhid,
-           (p.first_name || ' ' || COALESCE(p.last_name, '')) AS patient_name,
+           TRIM(CONCAT(p.first_name, ' ', COALESCE(p.last_name, ''))) AS patient_name,
            p.phone AS patient_phone,
-           (SELECT v.id FROM visits v WHERE v.appointment_id = a.id) AS visit_id
+           (SELECT v.id FROM visits v WHERE v.appointment_id = a.id ORDER BY v.id DESC LIMIT 1) AS visit_id
       FROM appointments a
       LEFT JOIN users u ON u.id = a.doctor_id
       LEFT JOIN departments d ON d.id = a.department_id
@@ -214,9 +214,9 @@ router.get('/', deskRoles, wrap((req, res) => {
   const rows = db.prepare(
     `SELECT a.*, u.name AS doctor_name, d.name AS department_name,
             s.name AS service_name, s.code AS service_code, s.price AS service_price,
-            p.uhid, (p.first_name || ' ' || COALESCE(p.last_name, '')) AS patient_name,
+            p.uhid, TRIM(CONCAT(p.first_name, ' ', COALESCE(p.last_name, ''))) AS patient_name,
             p.phone AS patient_phone,
-            (SELECT v.id FROM visits v WHERE v.appointment_id = a.id) AS visit_id
+            (SELECT v.id FROM visits v WHERE v.appointment_id = a.id ORDER BY v.id DESC LIMIT 1) AS visit_id
        FROM appointments a
        LEFT JOIN users u ON u.id = a.doctor_id
        LEFT JOIN departments d ON d.id = a.department_id
@@ -257,9 +257,9 @@ router.get('/my-day', deskRoles, wrap((req, res) => {
 
   const rows = db.prepare(
     `SELECT a.*, p.uhid, p.phone AS patient_phone, p.age_years, p.gender, p.allergies,
-            (p.first_name || ' ' || COALESCE(p.last_name, '')) AS patient_name,
-            (SELECT v.id FROM visits v WHERE v.appointment_id = a.id) AS visit_id,
-            (SELECT v.status FROM visits v WHERE v.appointment_id = a.id) AS visit_status
+            TRIM(CONCAT(p.first_name, ' ', COALESCE(p.last_name, ''))) AS patient_name,
+            (SELECT v.id FROM visits v WHERE v.appointment_id = a.id ORDER BY v.id DESC LIMIT 1) AS visit_id,
+            (SELECT v.status FROM visits v WHERE v.appointment_id = a.id ORDER BY v.id DESC LIMIT 1) AS visit_status
        FROM appointments a LEFT JOIN patients p ON p.id = a.patient_id
       WHERE a.doctor_id = ? AND date(a.scheduled_at) = ?
       ORDER BY a.scheduled_at`
@@ -406,7 +406,7 @@ router.patch('/:id', deskRoles, wrap((req, res) => {
   }
   if (req.body.status === 'cancelled' || (req.body.scheduledAt && updated.scheduled_at !== appt.scheduled_at)) {
     const named = updated.patient_id
-      ? db.prepare("SELECT (first_name || ' ' || COALESCE(last_name,'')) AS n FROM patients WHERE id = ?")
+      ? db.prepare("SELECT TRIM(CONCAT(first_name, ' ', COALESCE(last_name,''))) AS n FROM patients WHERE id = ?")
           .get(updated.patient_id)
       : null;
     staffAlerts.appointmentChanged(updated, {
@@ -428,7 +428,7 @@ router.get('/board', deskRoles, wrap((req, res) => {
   const rows = db.prepare(
     `SELECT a.id, a.appt_no, a.scheduled_at, a.token_no, a.status, a.source, a.reason,
             u.name AS doctor_name, p.uhid,
-            COALESCE(p.first_name || ' ' || COALESCE(p.last_name,''), a.guest_name) AS patient_name
+            COALESCE(NULLIF(TRIM(CONCAT(p.first_name, ' ', COALESCE(p.last_name,''))), ''), a.guest_name) AS patient_name
        FROM appointments a
        LEFT JOIN users u ON u.id = a.doctor_id
        LEFT JOIN patients p ON p.id = a.patient_id
@@ -450,9 +450,9 @@ router.get('/:id(\\d+)', deskRoles, wrap((req, res) => {
            s.price AS service_price,
            s.category AS service_category,
            p.uhid,
-           (p.first_name || ' ' || COALESCE(p.last_name, '')) AS patient_name,
+           TRIM(CONCAT(p.first_name, ' ', COALESCE(p.last_name, ''))) AS patient_name,
            p.phone AS patient_phone,
-           (SELECT v.id FROM visits v WHERE v.appointment_id = a.id) AS visit_id
+           (SELECT v.id FROM visits v WHERE v.appointment_id = a.id ORDER BY v.id DESC LIMIT 1) AS visit_id
       FROM appointments a
       LEFT JOIN users u ON u.id = a.doctor_id
       LEFT JOIN departments d ON d.id = a.department_id

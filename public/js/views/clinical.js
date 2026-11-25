@@ -719,9 +719,29 @@
       UI.modal({
         title: 'Add a medicine',
         body: `<form id="rx-form">
-          ${UI.field({ name: 'drugId', label: 'Medicine', required: true,
-            options: [{ value: '', label: '— select from formulary —' }].concat(
-              drugs.map((d) => ({ value: d.id, label: `${d.name} ${d.strength || ''} (${d.form || ''}) — stock ${d.on_hand}` }))) })}
+          <div class="field mb">
+            <label>Medicine <span class="req">*</span></label>
+            <input type="hidden" name="drugId" id="rx-drug-id" value="">
+            
+            <div id="rx-chosen" style="display:none;margin-bottom:12px">
+              <div class="alert ok" style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-radius:8px">
+                <div>
+                  <div id="rx-chosen-name" style="font-size:14.5px;font-weight:700"></div>
+                  <div id="rx-chosen-desc" class="muted small"></div>
+                </div>
+                <button type="button" class="btn ghost sm" id="rx-btn-change" style="margin-left:12px">Change medicine</button>
+              </div>
+            </div>
+
+            <div id="rx-picker-container" class="picker" style="border:1px solid var(--line);border-radius:8px;background:var(--surface)">
+              <div>
+                <input type="search" id="rx-search-input" placeholder="🔍 Type to search medicine name, generic formula, brand..." autocomplete="off" autofocus
+                  style="width:100%;border:0;border-bottom:1px solid var(--line);padding:10px 12px;font-size:13.5px;border-radius:8px 8px 0 0;box-sizing:border-box">
+              </div>
+              <div class="picker-list" id="rx-picker-list" style="max-height:220px;overflow-y:auto"></div>
+            </div>
+          </div>
+
           <div class="grid c3">
             ${UI.field({ name: 'dose', label: 'Dose', placeholder: 'e.g. 1 tablet' })}
             ${UI.field({ name: 'frequency', label: 'Frequency', value: 'BD',
@@ -741,7 +761,19 @@
         <div id="rx-warn"></div>`,
         footer: `<button class="btn ghost" data-act="__close">Cancel</button><button class="btn" data-act="add">Add to prescription</button>`,
         onMount(modal) {
-          // Suggest a quantity from frequency × duration, and warn on allergies.
+          const drugIdInput = modal.querySelector('#rx-drug-id');
+          const chosenBox = modal.querySelector('#rx-chosen');
+          const chosenName = modal.querySelector('#rx-chosen-name');
+          const chosenDesc = modal.querySelector('#rx-chosen-desc');
+          const changeBtn = modal.querySelector('#rx-btn-change');
+          const pickerContainer = modal.querySelector('#rx-picker-container');
+          const searchInput = modal.querySelector('#rx-search-input');
+          const pickerList = modal.querySelector('#rx-picker-list');
+          const warn = modal.querySelector('#rx-warn');
+          const doseInput = modal.querySelector('[name=dose]');
+          const routeSelect = modal.querySelector('[name=route]');
+
+          // Auto-recalc quantity
           const recalc = () => {
             const perDay = { OD: 1, BD: 2, TDS: 3, QID: 4, HS: 1, SOS: 1, STAT: 1 }[modal.querySelector('[name=frequency]').value] || 1;
             const days = Number(modal.querySelector('[name=durationDays]').value) || 0;
@@ -749,24 +781,133 @@
           };
           modal.querySelector('[name=frequency]').addEventListener('change', recalc);
           modal.querySelector('[name=durationDays]').addEventListener('input', recalc);
-          modal.querySelector('[name=drugId]').addEventListener('change', (e) => {
-            const drug = drugs.find((d) => d.id === Number(e.target.value));
-            const warn = modal.querySelector('#rx-warn');
+
+          // Render filtered list of medicines
+          const renderList = (filterText = '') => {
+            const q = filterText.trim().toLowerCase();
+            const hits = !q ? drugs : drugs.filter((d) => {
+              const str = `${d.name} ${d.generic_name || ''} ${d.strength || ''} ${d.form || ''} ${d.code || ''}`.toLowerCase();
+              return str.includes(q);
+            });
+
+            if (!hits.length) {
+              pickerList.innerHTML = `<div class="muted small" style="padding:16px 12px;text-align:center">No medicines found matching "<b>${UI.esc(filterText)}</b>".</div>`;
+              return;
+            }
+
+            pickerList.innerHTML = hits.map((d) => {
+              const inStock = d.on_hand > 0;
+              const isSelected = String(drugIdInput.value) === String(d.id);
+              const isSch = ['H', 'H1', 'X'].includes(String(d.schedule_type || '').toUpperCase());
+              return `
+                <button type="button" class="picker-item${isSelected ? ' on' : ''}" data-drug-id="${d.id}"
+                  style="display:flex;align-items:center;justify-content:space-between;width:100%;padding:9px 12px;border:0;border-bottom:1px solid var(--line);background:transparent;text-align:left;cursor:pointer">
+                  <span class="picker-text" style="flex:1;min-width:0">
+                    <b style="font-size:13.5px">${UI.esc(d.name)} ${UI.esc(d.strength || '')}</b>
+                    <span class="muted small" style="display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+                      ${UI.esc(d.form || 'medicine')}${d.generic_name ? ' · ' + UI.esc(d.generic_name) : ''}
+                    </span>
+                  </span>
+                  <span style="display:flex;gap:6px;align-items:center;flex-shrink:0;margin-left:8px">
+                    ${isSch ? `<span class="badge warn" style="font-size:11px">Sch ${UI.esc(d.schedule_type)}</span>` : ''}
+                    <span class="badge ${inStock ? 'ok' : 'danger'}" style="font-size:11px">${inStock ? `${d.on_hand} in stock` : 'Out of stock'}</span>
+                  </span>
+                </button>`;
+            }).join('');
+
+            pickerList.querySelectorAll('[data-drug-id]').forEach((btn) => {
+              btn.addEventListener('click', () => {
+                selectDrug(Number(btn.dataset.drugId));
+              });
+            });
+          };
+
+          // Selection logic
+          const selectDrug = (id) => {
+            const drug = drugs.find((d) => d.id === id);
+            if (!drug) return;
+
+            drugIdInput.value = drug.id;
+            chosenName.innerHTML = `💊 ${UI.esc(drug.name)} ${UI.esc(drug.strength || '')} <span class="badge teal">${UI.esc(drug.form || 'medicine')}</span>`;
+            chosenDesc.innerHTML = `${drug.generic_name ? UI.esc(drug.generic_name) + ' · ' : ''}<b>${drug.on_hand > 0 ? `${drug.on_hand} in stock` : '<span style="color:var(--danger)">Out of stock in clinic</span>'}</b>`;
+            
+            chosenBox.style.display = 'block';
+            pickerContainer.style.display = 'none';
+
+            // Allergy warning
             const allergies = (visit.allergies || '').toLowerCase();
             const hit = drug && allergies && allergies.split(/[,;]/).some((a) =>
               a.trim().length > 2 && `${drug.name} ${drug.generic_name || ''}`.toLowerCase().includes(a.trim()));
             warn.innerHTML = hit
               ? `<div class="alert danger">⚠ This may conflict with a recorded allergy: <b>${UI.esc(visit.allergies)}</b></div>`
-              : (drug && drug.on_hand <= 0 ? '<div class="alert warn">Out of stock in the clinic pharmacy.</div>' : '');
+              : (drug.on_hand <= 0 ? '<div class="alert warn">Out of stock in the clinic pharmacy.</div>' : '');
+
+            // Smart defaults for Dose and Route
+            const form = (drug.form || '').toLowerCase();
+            if (!doseInput.value || doseInput.value === 'e.g. 1 tablet') {
+              if (form.includes('tablet')) doseInput.value = '1 tablet';
+              else if (form.includes('capsule')) doseInput.value = '1 capsule';
+              else if (form.includes('syrup') || form.includes('suspension')) doseInput.value = '5 ml';
+              else if (form.includes('drop')) doseInput.value = '2 drops';
+              else if (form.includes('inj')) doseInput.value = '1 vial';
+              else if (form.includes('ointment') || form.includes('cream') || form.includes('gel')) doseInput.value = 'Apply locally';
+              else if (form.includes('inhal')) doseInput.value = '2 puffs';
+              else if (form.includes('spray')) doseInput.value = '1 spray';
+              else if (form.includes('sachet')) doseInput.value = '1 sachet';
+            }
+
+            if (form.includes('inj')) routeSelect.value = 'iv';
+            else if (form.includes('ointment') || form.includes('cream') || form.includes('gel') || form.includes('lotion')) routeSelect.value = 'topical';
+            else if (form.includes('inhal') || form.includes('spray')) routeSelect.value = 'inhalation';
+            else if (form.includes('eye') || drug.name.toLowerCase().includes('eye')) routeSelect.value = 'eye';
+            else if (form.includes('ear') || drug.name.toLowerCase().includes('ear')) routeSelect.value = 'ear';
+            else routeSelect.value = 'oral';
+
+            recalc();
+          };
+
+          // Change medicine button
+          changeBtn.addEventListener('click', () => {
+            drugIdInput.value = '';
+            chosenBox.style.display = 'none';
+            pickerContainer.style.display = 'block';
+            warn.innerHTML = '';
+            searchInput.value = '';
+            renderList('');
+            searchInput.focus();
           });
+
+          // Search input handling
+          searchInput.addEventListener('input', (e) => {
+            renderList(e.target.value);
+          });
+
+          // Enter key on search input selects the first visible result
+          searchInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              const first = pickerList.querySelector('[data-drug-id]');
+              if (first) selectDrug(Number(first.dataset.drugId));
+            }
+          });
+
+          // Initial render of full formulary list
+          renderList('');
         },
         onAction(act, modal) {
           if (act !== 'add') return;
+          const drugId = modal.querySelector('#rx-drug-id').value;
+          if (!drugId) {
+            UI.err('Please search and select a medicine from the list.');
+            modal.querySelector('#rx-search-input').focus();
+            return 'keep';
+          }
           const form = modal.querySelector('#rx-form');
           if (!form.reportValidity()) return 'keep';
           const values = UI.formValues(form);
-          const drug = drugs.find((d) => d.id === Number(values.drugId));
-          prescriptions.push({ ...values, drugId: Number(values.drugId), drugName: drug ? drug.name : 'Medicine' });
+          const drug = drugs.find((d) => d.id === Number(drugId));
+          const fullName = drug ? `${drug.name} ${drug.strength || ''}`.trim() : 'Medicine';
+          prescriptions.push({ ...values, drugId: Number(drugId), drugName: fullName });
           drawRx();
         },
       });
