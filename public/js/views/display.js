@@ -44,10 +44,16 @@
    * that mixes the viewport's width and height, so a set that turns out to
    * be 1920 × 1080 simply draws the same layout larger.
    *
-   * Six lines, because a television cannot be scrolled: a seventh row only
-   * shrinks the numbers that are the whole point.
+   * Seven lines, which is what a 1366 x 768 panel carries full screen with
+   * nothing clipped — measured, not guessed: at seven each row has 79px and
+   * the tallest row (a doctor, a specialty and a "Next" line) needs every
+   * one of them. At eight the bottom of each row is cut off, and a
+   * television cannot be scrolled, so what does not fit is not there at
+   * all. The clinic has five consulting rooms and two imaging rooms, so on
+   * a busy morning there is more to show than will go on one screen — see
+   * the ordering below for what gives way.
    */
-  const TV_ROWS = 6;
+  const TV_ROWS = 7;
 
   APP.register('display', {
     title: 'Waiting-room screen',
@@ -164,6 +170,16 @@
    */
   function tableRows(d) {
     const out = d.panels.map((p) => ({
+      /*
+       * A consulting room holds its place; an imaging room gives way.
+       *
+       * There are more rooms than lines now, and the ones that must never
+       * drop off are the ones patients are sent to by number all morning.
+       * The scan and the X-ray rooms are called to a few times a day and
+       * the person going there has usually been told so by a human, so
+       * they sit below the consulting rooms and lose their line first.
+       */
+      consulting: Boolean(p.room.specialties.length || p.room.doctors.length),
       label: p.nowCalling ? p.nowCalling.label : null,
       room: p.room.name,
       floor: p.room.floor,
@@ -177,6 +193,9 @@
       upNext: p.upNext,
       at: p.nowCalling ? p.nowCalling.at : null,
     }));
+
+    // Consulting rooms first, each group still in building order.
+    out.sort((a, b) => Number(b.consulting) - Number(a.consulting));
 
     /*
      * The counters sit under the consulting rooms, because the laboratory
@@ -193,6 +212,7 @@
         waiting: c.waiting,
         upNext: c.upNext,
         at: c.nowCalling ? c.nowCalling.at : null,
+        consulting: false,
       });
     }
     return out;

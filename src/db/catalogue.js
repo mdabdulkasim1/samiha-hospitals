@@ -96,21 +96,23 @@ function sync({ quiet = false } = {}) {
     }
   }
 
-  // -------------------------------------------------------- the four OP rooms
+  // ------------------------------------------------------------- the OP rooms
   /*
    * The building, as the floor plan draws it: out-patient rooms 1 and 2 on
-   * the ground floor, 3 and 4 on the first, numbered straight through
-   * rather than one and two on each floor. OP-3 is the dental room on the
-   * plan, which is why the dentist is put there below.
+   * the ground floor, 3, 4 and 5 on the first, numbered straight through
+   * rather than starting again on each floor. OP-3 is the dental room on
+   * the plan, which is why the dentist is put there below.
    *
    * Only a room the table has never heard of is added, and the rename below
    * carries an older install across. What sits in each room is the clinic's
    * to change at any time, which is the whole point of the screen that
-   * edits it.
+   * edits it — and a room added here is added to an install that already
+   * has the other four, without disturbing them.
    */
   const ROOMS = [
     ['Ground Floor', 1, 'OP-1'], ['Ground Floor', 1, 'OP-2'],
     ['First Floor', 2, 'OP-3'], ['First Floor', 2, 'OP-4'],
+    ['First Floor', 2, 'OP-5'],
     /*
      * The two imaging rooms, from the floor plan: the scan downstairs, the
      * X-ray up. They are rooms a doctor can be allocated to — the

@@ -622,13 +622,29 @@ test('the consulting rooms are numbered through the building, as the plan draws 
   const rooms = queue.rooms().filter((r) => r.name.startsWith('OP-'));
   assert.deepStrictEqual(
     rooms.map((r) => `${r.floor}:${r.name}`),
-    ['Ground Floor:OP-1', 'Ground Floor:OP-2', 'First Floor:OP-3', 'First Floor:OP-4'],
-    'OP-1 and OP-2 downstairs, OP-3 and OP-4 up — not one and two on each floor');
+    ['Ground Floor:OP-1', 'Ground Floor:OP-2',
+      'First Floor:OP-3', 'First Floor:OP-4', 'First Floor:OP-5'],
+    'OP-1 and OP-2 downstairs, OP-3 to OP-5 up — not one and two on each floor');
 
   // The imaging rooms are on the list too, on the floors the plan puts them.
   const all = queue.rooms().map((r) => `${r.floor}:${r.name}`);
   assert.ok(all.includes('Ground Floor:USG'));
   assert.ok(all.includes('First Floor:X-Ray'));
+});
+
+test('a fifth room is there to be filled, and starts empty', () => {
+  /*
+   * OP-5 is added to the building rather than to the allocation: a clinic
+   * that has been running for months has already put its specialties where
+   * it wants them, and a new room must not move any of them. The clinic
+   * fills it from Queue → Set-up.
+   */
+  const op5 = queue.rooms().find((r) => r.name === 'OP-5');
+  assert.ok(op5, 'the fifth consulting room is on the list');
+  assert.strictEqual(op5.floor, 'First Floor');
+  assert.strictEqual(op5.active, 1);
+  assert.strictEqual(op5.categories.length, 0,
+    'and nothing has been moved into it behind the clinic\'s back');
 });
 
 test('each specialty starts in the room the clinic allocated it', () => {
